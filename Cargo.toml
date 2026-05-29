@@ -9,6 +9,7 @@ repository = "https://github.com/jjant/ini-edit"
 keywords = ["ini", "parser", "lossless", "format-preserving", "config"]
 categories = ["config", "parser-implementations"]
 rust-version = "1.85"
+exclude = ["fuzz/", "tests/snapshots/", ".github/"]
 
 [lints.rust]
 missing_docs = "warn"
