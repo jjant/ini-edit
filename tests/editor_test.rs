@@ -4,12 +4,12 @@ use ini_edit::editor::Editor;
 use ini_edit::parse;
 
 #[test]
-fn insert_raw_lines_and_remove_lines() {
+fn append_raw_lines_and_remove_lines() {
     let src = "[config]\nkey = value\n";
     let ed = Editor::new(src);
 
     // Insert a managed block.
-    ed.section("config").insert_raw_lines(&[
+    ed.section("config").append_raw_lines(&[
         "; --- BEGIN MANAGED ---",
         "managed_key = managed_val",
         "; --- END MANAGED ---",
