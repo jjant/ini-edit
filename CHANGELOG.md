@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-05-29
+
+### Added
+
+- Rework raw lines API — verbatim insertion, positional support ([#22](https://github.com/jjant/ini-edit/pull/22))
+- Add criterion benchmarks and coverage workflow ([#18](https://github.com/jjant/ini-edit/pull/18))
+
+### Changed
+
+- Use #[expect] at statement level for panic lints ([#21](https://github.com/jjant/ini-edit/pull/21))
+- Remove stale lint allows, scope remaining ones ([#19](https://github.com/jjant/ini-edit/pull/19))
+
 ## [0.1.0] - 2026-05-29
 
 ### Added
