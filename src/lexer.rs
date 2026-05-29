@@ -169,17 +169,47 @@ impl Lexer<'_> {
         }
         self.eat_horizontal_ws();
 
-        // Value: everything to EOL, trailing ws separated.
-        let raw_len = self
-            .rest
-            .bytes()
-            .take_while(|&b| b != b'\n' && b != b'\r')
-            .count();
-        if raw_len > 0 {
-            let raw = &self.rest[..raw_len];
+        // Value: everything to EOL. If the logical value ends with `\`
+        // (backslash continuation), consume the newline and next line too,
+        // repeating until no trailing backslash. The entire multi-line span
+        // becomes one VALUE_TEXT token (lossless).
+        let value_start = self.rest;
+        let mut total_len: usize = 0;
+        loop {
+            let line_len = self.rest[total_len..]
+                .bytes()
+                .take_while(|&b| b != b'\n' && b != b'\r')
+                .count();
+            let line_end = total_len + line_len;
+            // Check if line ends with backslash (ignoring trailing whitespace).
+            let line_content = &self.rest[total_len..line_end];
+            let trimmed = line_content.trim_end_matches([' ', '\t']);
+            let has_continuation = trimmed.ends_with('\\');
+
+            if has_continuation {
+                // Include the newline in the value span.
+                let nl_len = if self.rest[line_end..].starts_with("\r\n") {
+                    2
+                } else {
+                    usize::from(
+                        self.rest[line_end..].starts_with('\n')
+                            || self.rest[line_end..].starts_with('\r'),
+                    )
+                };
+                total_len = line_end + nl_len;
+                // Continue to next line.
+            } else {
+                total_len = line_end;
+                break;
+            }
+        }
+
+        if total_len > 0 {
+            // Separate trailing whitespace from the last line of the value.
+            let raw = &value_start[..total_len];
             let trimmed = raw.trim_end_matches([' ', '\t']);
             let value_len = trimmed.len();
-            let trail_ws_len = raw_len - value_len;
+            let trail_ws_len = total_len - value_len;
             if value_len > 0 {
                 self.bump(SyntaxKind::VALUE_TEXT, value_len);
             }
@@ -293,5 +323,56 @@ mod tests {
         assert_eq!(toks[0].text, "\u{FEFF}");
         // Parsing continues normally after BOM
         assert_eq!(toks[1].kind, L_BRACK);
+    }
+
+    #[test]
+    fn backslash_continuation() {
+        let input = "k=hello \\\nworld\n";
+        let toks = lex(input);
+        let reconstructed: String = toks.iter().map(|t| t.text).collect();
+        assert_eq!(reconstructed, input);
+        let value_tok = toks.iter().find(|t| t.kind == VALUE_TEXT).unwrap();
+        assert_eq!(value_tok.text, "hello \\\nworld");
+    }
+
+    #[test]
+    fn backslash_continuation_multiple_lines() {
+        let input = "k=a \\\nb \\\nc\n";
+        let toks = lex(input);
+        let reconstructed: String = toks.iter().map(|t| t.text).collect();
+        assert_eq!(reconstructed, input);
+        let value_tok = toks.iter().find(|t| t.kind == VALUE_TEXT).unwrap();
+        assert_eq!(value_tok.text, "a \\\nb \\\nc");
+    }
+
+    #[test]
+    fn backslash_not_at_end_is_literal() {
+        let input = "k=path\\to\\file\n";
+        let toks = lex(input);
+        let reconstructed: String = toks.iter().map(|t| t.text).collect();
+        assert_eq!(reconstructed, input);
+        let value_tok = toks.iter().find(|t| t.kind == VALUE_TEXT).unwrap();
+        assert_eq!(value_tok.text, "path\\to\\file");
+    }
+
+    #[test]
+    fn backslash_continuation_with_crlf() {
+        let input = "k=a \\\r\nb\r\n";
+        let toks = lex(input);
+        let reconstructed: String = toks.iter().map(|t| t.text).collect();
+        assert_eq!(reconstructed, input);
+        let value_tok = toks.iter().find(|t| t.kind == VALUE_TEXT).unwrap();
+        assert_eq!(value_tok.text, "a \\\r\nb");
+    }
+
+    #[test]
+    fn backslash_at_eof_is_literal() {
+        // No newline after backslash — it's just a literal backslash.
+        let input = "k=val\\";
+        let toks = lex(input);
+        let reconstructed: String = toks.iter().map(|t| t.text).collect();
+        assert_eq!(reconstructed, input);
+        let value_tok = toks.iter().find(|t| t.kind == VALUE_TEXT).unwrap();
+        assert_eq!(value_tok.text, "val\\");
     }
 }

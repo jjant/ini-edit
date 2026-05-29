@@ -251,4 +251,10 @@ mod tests {
         assert_round_trip(input);
         assert!(p.errors().is_empty(), "BOM should not cause errors");
     }
+
+    #[test]
+    fn backslash_continuation_round_trips() {
+        assert_round_trip("[s]\nk = hello \\\nworld\n");
+        assert_round_trip("[s]\nk = a \\\nb \\\nc\nnext = val\n");
+    }
 }
