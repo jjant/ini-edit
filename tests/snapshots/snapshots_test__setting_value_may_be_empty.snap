@@ -1,0 +1,25 @@
+---
+source: tests/snapshots_test.rs
+expression: "tree(\"[section 1]\\nsetting 1 =\\nsetting 2 = x\\n\")"
+---
+ROOT 0..38
+  SECTION 0..38
+    SECTION_HEADER 0..11
+      L_BRACK 0..1 "["
+      IDENT 1..10 "section 1"
+      R_BRACK 10..11 "]"
+    NEWLINE 11..12 "\n"
+    ENTRY 12..20
+      KEY 12..19
+        IDENT 12..19 "setting"
+      WHITESPACE 19..20 " "
+      VALUE 20..20
+    LEX_ERROR 20..23 "1 ="
+    NEWLINE 23..24 "\n"
+    ENTRY 24..32
+      KEY 24..31
+        IDENT 24..31 "setting"
+      WHITESPACE 31..32 " "
+      VALUE 32..32
+    LEX_ERROR 32..37 "2 = x"
+    NEWLINE 37..38 "\n"

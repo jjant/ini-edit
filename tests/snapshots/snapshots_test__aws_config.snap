@@ -1,0 +1,55 @@
+---
+source: tests/snapshots_test.rs
+expression: "tree(\"# AWS config\\n[default]\\nregion = us-west-2\\noutput = json\\n[profile dev-user]\\nregion = us-east-1\\noutput = text\\n\")"
+---
+ROOT 0..108
+  COMMENT 0..12 "# AWS config"
+  NEWLINE 12..13 "\n"
+  SECTION 13..56
+    SECTION_HEADER 13..22
+      L_BRACK 13..14 "["
+      IDENT 14..21 "default"
+      R_BRACK 21..22 "]"
+    NEWLINE 22..23 "\n"
+    ENTRY 23..42
+      KEY 23..29
+        IDENT 23..29 "region"
+      WHITESPACE 29..30 " "
+      EQ 30..31 "="
+      WHITESPACE 31..32 " "
+      VALUE 32..41
+        VALUE_TEXT 32..41 "us-west-2"
+      NEWLINE 41..42 "\n"
+    ENTRY 42..56
+      KEY 42..48
+        IDENT 42..48 "output"
+      WHITESPACE 48..49 " "
+      EQ 49..50 "="
+      WHITESPACE 50..51 " "
+      VALUE 51..55
+        VALUE_TEXT 51..55 "json"
+      NEWLINE 55..56 "\n"
+  SECTION 56..108
+    SECTION_HEADER 56..74
+      L_BRACK 56..57 "["
+      IDENT 57..73 "profile dev-user"
+      R_BRACK 73..74 "]"
+    NEWLINE 74..75 "\n"
+    ENTRY 75..94
+      KEY 75..81
+        IDENT 75..81 "region"
+      WHITESPACE 81..82 " "
+      EQ 82..83 "="
+      WHITESPACE 83..84 " "
+      VALUE 84..93
+        VALUE_TEXT 84..93 "us-east-1"
+      NEWLINE 93..94 "\n"
+    ENTRY 94..108
+      KEY 94..100
+        IDENT 94..100 "output"
+      WHITESPACE 100..101 " "
+      EQ 101..102 "="
+      WHITESPACE 102..103 " "
+      VALUE 103..107
+        VALUE_TEXT 103..107 "text"
+      NEWLINE 107..108 "\n"
