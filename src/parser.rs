@@ -243,4 +243,12 @@ mod tests {
     fn root_kind() {
         assert_eq!(parse("").syntax().kind(), SyntaxKind::ROOT);
     }
+
+    #[test]
+    fn utf8_bom_round_trips_without_errors() {
+        let input = "\u{FEFF}[author]\nE-MAIL = u@gogs.io\n";
+        let p = parse(input);
+        assert_round_trip(input);
+        assert!(p.errors().is_empty(), "BOM should not cause errors");
+    }
 }

@@ -26,6 +26,10 @@ pub fn lex(input: &str) -> Vec<Token<'_>> {
         rest: input,
         tokens: Vec::new(),
     };
+    // Skip UTF-8 BOM if present, emitting it as whitespace (trivia).
+    if lexer.rest.starts_with('\u{FEFF}') {
+        lexer.bump(SyntaxKind::WHITESPACE, 3);
+    }
     while !lexer.rest.is_empty() {
         lexer.lex_line();
     }
@@ -275,5 +279,19 @@ mod tests {
     fn crlf() {
         let toks = lex("k=v\r\n");
         assert_eq!(toks.last().unwrap().text, "\r\n");
+    }
+
+    #[test]
+    fn utf8_bom() {
+        let input = "\u{FEFF}[author]\nE-MAIL = u@gogs.io\n";
+        let toks = lex(input);
+        // Round-trip
+        let reconstructed: String = toks.iter().map(|t| t.text).collect();
+        assert_eq!(reconstructed, input);
+        // BOM is emitted as whitespace (trivia), not an error
+        assert_eq!(toks[0].kind, WHITESPACE);
+        assert_eq!(toks[0].text, "\u{FEFF}");
+        // Parsing continues normally after BOM
+        assert_eq!(toks[1].kind, L_BRACK);
     }
 }
