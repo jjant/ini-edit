@@ -44,7 +44,6 @@ impl Editor {
     /// Get a handle to a section. Creates the section at the end of the
     /// file if it doesn't exist.
     #[must_use]
-    #[allow(clippy::missing_panics_doc)] // Panic is unreachable: we just spliced the section in.
     pub fn section(&self, name: &str) -> SectionEditor<'_> {
         if let Some(section) = self.find_section(name) {
             return SectionEditor {
@@ -61,6 +60,7 @@ impl Editor {
         self.root
             .splice_children(child_count..child_count, vec![new_section.clone().into()]);
 
+        #[expect(clippy::missing_panics_doc, reason = "we just spliced the section in")]
         let section = self.find_section(name).expect("just inserted");
         SectionEditor {
             editor: self,
@@ -89,9 +89,12 @@ pub struct SectionEditor<'a> {
 
 impl SectionEditor<'_> {
     /// Set a key's value. Updates in-place if exists, appends if not.
-    #[allow(clippy::missing_panics_doc)] // Parser always creates a VALUE node inside ENTRY.
     pub fn set(&self, key: &str, value: &str) {
         if let Some(entry) = self.find_entry(key) {
+            #[expect(
+                clippy::missing_panics_doc,
+                reason = "parser always creates a VALUE node inside ENTRY"
+            )]
             let value_node = entry.value_node().expect("entry has VALUE node");
             let value_syntax = value_node.syntax().clone();
 
