@@ -44,3 +44,18 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo build
       - run: cargo test
+
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install cargo-fuzz
+      - name: Fuzz (5s on PR, 30s on push to main)
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            cargo +nightly fuzz run round_trip -- -max_total_time=30
+          else
+            cargo +nightly fuzz run round_trip -- -max_total_time=5
+          fi
