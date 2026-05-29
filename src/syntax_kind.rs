@@ -62,6 +62,7 @@ pub enum IniLang {}
 impl Language for IniLang {
     type Kind = SyntaxKind;
 
+    #[allow(clippy::missing_panics_doc)] // Panic is unreachable: rowan only passes values we produced via kind_to_raw.
     fn kind_from_raw(raw: rowan::SyntaxKind) -> Self::Kind {
         match raw.0 {
             0 => SyntaxKind::WHITESPACE,
