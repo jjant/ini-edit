@@ -1,6 +1,6 @@
 [package]
 name = "ini-edit"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "A lossless, format-preserving INI parser built on rowan — parse, inspect, and edit INI files without losing comments, whitespace, or ordering"
 license = "MIT"
