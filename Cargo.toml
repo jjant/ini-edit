@@ -1,0 +1,27 @@
+[package]
+name = "ini-edit"
+version = "0.1.0"
+edition = "2024"
+description = "A lossless, format-preserving INI parser built on rowan — parse, inspect, and edit INI files without losing comments, whitespace, or ordering"
+license = "MIT"
+repository = "https://github.com/jjantdev/ini-edit"
+keywords = ["ini", "parser", "lossless", "format-preserving", "config"]
+categories = ["config", "parser-implementations"]
+rust-version = "1.85"
+
+[lints.rust]
+missing_docs = "warn"
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+# `SyntaxKind` in `syntax_kind` module — intentional naming.
+module_name_repetitions = "allow"
+# Most fallible fns return Option, not Result.
+missing_errors_doc = "allow"
+# Only panics are in unreachable paths (kind_from_raw).
+missing_panics_doc = "allow"
+
+[dependencies]
+rowan = "0.16"
