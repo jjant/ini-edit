@@ -156,63 +156,49 @@ impl SectionEditor<'_> {
         self.node.detach();
     }
 
-    /// Insert raw text lines at the end of this section.
+    /// Append raw text lines at the end of this section.
     ///
-    /// Each line is parsed and inserted as a proper tree node (entry or
-    /// comment). Lines that don't parse as either are inserted as comments
-    /// to preserve them losslessly.
-    pub fn insert_raw_lines(&self, lines: &[&str]) {
+    /// Lines are inserted **verbatim** — no parsing, no reformatting.
+    /// A newline is appended to each line that doesn't already end with one.
+    pub fn append_raw_lines(&self, lines: &[&str]) {
+        let child_count = self.node.children_with_tokens().count();
+        self.splice_raw_lines_at(child_count, lines);
+    }
+
+    /// Insert raw text lines at a specific child index within this section.
+    ///
+    /// Index 0 is the section header. Lines are inserted **verbatim**.
+    /// A newline is appended to each line that doesn't already end with one.
+    pub fn insert_raw_lines_at(&self, index: usize, lines: &[&str]) {
+        self.splice_raw_lines_at(index, lines);
+    }
+
+    fn splice_raw_lines_at(&self, index: usize, lines: &[&str]) {
+        let mut elements: Vec<crate::SyntaxElement> = Vec::new();
         for line in lines {
-            let text = if line.ends_with('\n') {
+            let text = if line.ends_with('\n') || line.ends_with('\r') {
                 (*line).to_string()
             } else {
                 format!("{line}\n")
             };
+            // Emit the line content (without newline) as a COMMENT token
+            // and the newline separately. COMMENT is used as a generic
+            // "opaque text" kind — it preserves the content verbatim.
+            let content = text.trim_end_matches(['\n', '\r']);
+            let nl = if text.ends_with("\r\n") { "\r\n" } else { "\n" };
 
-            let child_count = self.node.children_with_tokens().count();
-            let trimmed = text.trim_start();
-
-            if trimmed.starts_with(';') || trimmed.starts_with('#') {
-                // Comment line: parse as tokens.
-                let comment_text = text.trim_end_matches(['\n', '\r']);
-                let comment_green = {
-                    let mut b = rowan::GreenNodeBuilder::new();
-                    b.start_node(SyntaxKind::ENTRY.into()); // wrapper node
-                    b.token(SyntaxKind::COMMENT.into(), comment_text);
-                    b.token(SyntaxKind::NEWLINE.into(), "\n");
-                    b.finish_node();
-                    b.finish()
-                };
-                let node = SyntaxNode::new_root(comment_green).clone_for_update();
-                // Splice the children (COMMENT + NEWLINE) directly, not the wrapper.
-                let children: Vec<crate::SyntaxElement> = node.children_with_tokens().collect();
-                self.node
-                    .splice_children(child_count..child_count, children);
-            } else if let Some(eq_pos) = trimmed.find('=') {
-                // Entry line.
-                let k = trimmed[..eq_pos].trim();
-                let v = trimmed[eq_pos + 1..].trim_end_matches(['\n', '\r']).trim();
-                let entry_green = green_builders::entry_node(k, v);
-                let entry_node = SyntaxNode::new_root(entry_green).clone_for_update();
-                self.node
-                    .splice_children(child_count..child_count, vec![entry_node.into()]);
-            } else {
-                // Unknown line — preserve as comment.
-                let raw = text.trim_end_matches(['\n', '\r']);
-                let green = {
-                    let mut b = rowan::GreenNodeBuilder::new();
-                    b.start_node(SyntaxKind::ENTRY.into());
-                    b.token(SyntaxKind::COMMENT.into(), raw);
-                    b.token(SyntaxKind::NEWLINE.into(), "\n");
-                    b.finish_node();
-                    b.finish()
-                };
-                let node = SyntaxNode::new_root(green).clone_for_update();
-                let children: Vec<crate::SyntaxElement> = node.children_with_tokens().collect();
-                self.node
-                    .splice_children(child_count..child_count, children);
-            }
+            let green = {
+                let mut b = rowan::GreenNodeBuilder::new();
+                b.start_node(SyntaxKind::ENTRY.into());
+                b.token(SyntaxKind::COMMENT.into(), content);
+                b.token(SyntaxKind::NEWLINE.into(), nl);
+                b.finish_node();
+                b.finish()
+            };
+            let node = SyntaxNode::new_root(green).clone_for_update();
+            elements.extend(node.children_with_tokens());
         }
+        self.node.splice_children(index..index, elements);
     }
 
     /// Remove a range of child elements (0-indexed within this section).
@@ -325,21 +311,21 @@ mod tests {
     }
 
     #[test]
-    fn insert_raw_lines_entries() {
+    fn append_raw_lines_entries() {
         let ed = Editor::new("[s]\nk = v\n");
         ed.section("s")
-            .insert_raw_lines(&["new_key=new_val", "another = thing"]);
+            .append_raw_lines(&["new_key=new_val", "another = thing"]);
         let out = ed.finish();
-        assert!(out.contains("new_key = new_val"), "got: {out}");
+        assert!(out.contains("new_key=new_val"), "got: {out}");
         assert!(out.contains("another = thing"), "got: {out}");
         assert!(out.contains("k = v"));
     }
 
     #[test]
-    fn insert_raw_lines_comments() {
+    fn append_raw_lines_comments() {
         let ed = Editor::new("[s]\nk = v\n");
         ed.section("s")
-            .insert_raw_lines(&["; marker start", "; marker end"]);
+            .append_raw_lines(&["; marker start", "; marker end"]);
         let out = ed.finish();
         assert!(out.contains("; marker start"), "got: {out}");
         assert!(out.contains("; marker end"), "got: {out}");
@@ -372,11 +358,36 @@ mod tests {
     }
 
     #[test]
-    fn insert_raw_unknown_line() {
+    fn append_raw_unknown_line() {
         let ed = Editor::new("[s]\nk = v\n");
         ed.section("s")
-            .insert_raw_lines(&["just some text without equals"]);
+            .append_raw_lines(&["just some text without equals"]);
         let out = ed.finish();
         assert!(out.contains("just some text without equals"), "got: {out}");
+    }
+
+    #[test]
+    fn insert_raw_lines_at_position() {
+        let ed = Editor::new("[s]\na = 1\nb = 2\n");
+        // Insert between ENTRY(a) at index 2 and ENTRY(b) at index 3
+        ed.section("s").insert_raw_lines_at(3, &["; injected"]);
+        let out = ed.finish();
+        // The injected line should appear between a and b.
+        let a_pos = out.find("a = 1").unwrap();
+        let inj_pos = out.find("; injected").unwrap();
+        let b_pos = out.find("b = 2").unwrap();
+        assert!(a_pos < inj_pos, "got: {out}");
+        assert!(inj_pos < b_pos, "got: {out}");
+    }
+
+    #[test]
+    fn append_raw_lines_are_verbatim() {
+        // Verify no reformatting happens — exact text preserved.
+        let ed = Editor::new("[s]\n");
+        ed.section("s")
+            .append_raw_lines(&["key=value_no_spaces", "  indented=line"]);
+        let out = ed.finish();
+        assert!(out.contains("key=value_no_spaces\n"), "got: {out}");
+        assert!(out.contains("  indented=line\n"), "got: {out}");
     }
 }
