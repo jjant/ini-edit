@@ -1,6 +1,7 @@
 //! A lossless, format-preserving INI parser built on [`rowan`].
 
 pub mod ast;
+pub mod editor;
 pub mod lexer;
 pub mod parser;
 pub mod syntax_kind;
