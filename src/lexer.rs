@@ -375,4 +375,24 @@ mod tests {
         let value_tok = toks.iter().find(|t| t.kind == VALUE_TEXT).unwrap();
         assert_eq!(value_tok.text, "val\\");
     }
+
+    #[test]
+    fn bare_cr_line_ending() {
+        let input = "k=v\r[s]\rx=y\r";
+        let toks = lex(input);
+        let reconstructed: String = toks.iter().map(|t| t.text).collect();
+        assert_eq!(reconstructed, input);
+    }
+
+    #[test]
+    fn line_without_separator() {
+        // A bare identifier followed by more text but no = or : triggers LEX_ERROR
+        // for the trailing content.
+        let input = "=value_no_key\n";
+        let toks = lex(input);
+        let reconstructed: String = toks.iter().map(|t| t.text).collect();
+        assert_eq!(reconstructed, input);
+        // The `=` isn't a valid start for a key, so the whole line becomes error.
+        assert!(toks.iter().any(|t| t.kind == LEX_ERROR));
+    }
 }
