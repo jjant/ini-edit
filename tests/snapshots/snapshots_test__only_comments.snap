@@ -1,0 +1,11 @@
+---
+source: tests/snapshots_test.rs
+expression: "tree(\"# comment1\\n; comment2\\n# comment3\\n\")"
+---
+ROOT 0..33
+  COMMENT 0..10 "# comment1"
+  NEWLINE 10..11 "\n"
+  COMMENT 11..21 "; comment2"
+  NEWLINE 21..22 "\n"
+  COMMENT 22..32 "# comment3"
+  NEWLINE 32..33 "\n"

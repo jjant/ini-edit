@@ -25,3 +25,6 @@ missing_panics_doc = "allow"
 
 [dependencies]
 rowan = "0.16"
+
+[dev-dependencies]
+insta = "1"

@@ -1,0 +1,11 @@
+---
+source: tests/snapshots_test.rs
+expression: "tree(\"[section with no content]\\n\")"
+---
+ROOT 0..26
+  SECTION 0..26
+    SECTION_HEADER 0..25
+      L_BRACK 0..1 "["
+      IDENT 1..24 "section with no content"
+      R_BRACK 24..25 "]"
+    NEWLINE 25..26 "\n"

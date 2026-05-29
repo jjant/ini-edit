@@ -1,0 +1,18 @@
+---
+source: tests/snapshots_test.rs
+expression: "tree(\"[s]\\r\\nk=v\\r\\n\")"
+---
+ROOT 0..10
+  SECTION 0..10
+    SECTION_HEADER 0..3
+      L_BRACK 0..1 "["
+      IDENT 1..2 "s"
+      R_BRACK 2..3 "]"
+    NEWLINE 3..5 "\r\n"
+    ENTRY 5..10
+      KEY 5..6
+        IDENT 5..6 "k"
+      EQ 6..7 "="
+      VALUE 7..8
+        VALUE_TEXT 7..8 "v"
+      NEWLINE 8..10 "\r\n"
