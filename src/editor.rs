@@ -215,10 +215,19 @@ impl SectionEditor<'_> {
     /// Index 0 is the section header. Entries, comments, and whitespace
     /// tokens each count as one element.
     pub fn remove_lines(&self, range: std::ops::Range<usize>) {
-        let child_count = self.node.children_with_tokens().count();
-        let clamped_end = range.end.min(child_count);
-        if range.start < clamped_end {
-            self.node.splice_children(range.start..clamped_end, vec![]);
+        // Collect then detach — splice_children has issues with large ranges
+        // in rowan's mutable tree (indices shift during removal).
+        let to_remove: Vec<_> = self
+            .node
+            .children_with_tokens()
+            .skip(range.start)
+            .take(range.end - range.start)
+            .collect();
+        for child in to_remove {
+            match child {
+                rowan::NodeOrToken::Node(n) => n.detach(),
+                rowan::NodeOrToken::Token(t) => t.detach(),
+            }
         }
     }
 
