@@ -3,6 +3,7 @@
 [![crates.io](https://img.shields.io/crates/v/ini-edit.svg)](https://crates.io/crates/ini-edit)
 [![docs.rs](https://docs.rs/ini-edit/badge.svg)](https://docs.rs/ini-edit)
 [![CI](https://github.com/jjant/ini-edit/actions/workflows/ci.yml/badge.svg)](https://github.com/jjant/ini-edit/actions)
+[![codecov](https://codecov.io/gh/jjant/ini-edit/graph/badge.svg)](https://codecov.io/gh/jjant/ini-edit)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 **A lossless, format-preserving INI parser and editor for Rust.**
