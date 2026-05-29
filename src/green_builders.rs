@@ -4,27 +4,9 @@
 //! well-formed INI syntax fragments that can be spliced into an existing
 //! tree via rowan's `splice_children` / `replace_with`.
 
-use rowan::{GreenNode, GreenNodeBuilder, GreenToken, NodeOrToken};
+use rowan::{GreenNode, GreenNodeBuilder};
 
 use crate::syntax_kind::SyntaxKind;
-
-/// Build a green token of the given kind.
-#[must_use]
-pub fn token(kind: SyntaxKind, text: &str) -> GreenToken {
-    GreenToken::new(kind.into(), text)
-}
-
-/// Build a newline token (`\n`).
-#[must_use]
-pub fn newline() -> GreenToken {
-    token(SyntaxKind::NEWLINE, "\n")
-}
-
-/// Build a whitespace token.
-#[must_use]
-pub fn whitespace(text: &str) -> GreenToken {
-    token(SyntaxKind::WHITESPACE, text)
-}
 
 /// Build a KEY node wrapping an IDENT token.
 #[must_use]
@@ -73,18 +55,6 @@ pub fn entry_node(key: &str, value: &str) -> GreenNode {
     builder.finish()
 }
 
-/// Build a `SECTION_HEADER` node: `[name]`
-#[must_use]
-pub fn section_header_node(name: &str) -> GreenNode {
-    let mut builder = GreenNodeBuilder::new();
-    builder.start_node(SyntaxKind::SECTION_HEADER.into());
-    builder.token(SyntaxKind::L_BRACK.into(), "[");
-    builder.token(SyntaxKind::IDENT.into(), name);
-    builder.token(SyntaxKind::R_BRACK.into(), "]");
-    builder.finish_node();
-    builder.finish()
-}
-
 /// Build a complete SECTION node: `[name]\n` (empty, no entries).
 #[must_use]
 pub fn empty_section_node(name: &str) -> GreenNode {
@@ -100,17 +70,6 @@ pub fn empty_section_node(name: &str) -> GreenNode {
     builder.token(SyntaxKind::NEWLINE.into(), "\n");
     builder.finish_node();
     builder.finish()
-}
-
-/// Collect the children of a green node as a vec of `NodeOrToken`.
-#[must_use]
-pub fn green_children(node: &GreenNode) -> Vec<NodeOrToken<GreenNode, GreenToken>> {
-    node.children()
-        .map(|child| match child {
-            NodeOrToken::Node(n) => NodeOrToken::Node(n.to_owned()),
-            NodeOrToken::Token(t) => NodeOrToken::Token(t.to_owned()),
-        })
-        .collect()
 }
 
 #[cfg(test)]
@@ -135,12 +94,6 @@ mod tests {
     fn entry_node_empty_value() {
         let node = entry_node("key", "");
         assert_eq!(text_of(&node), "key = \n");
-    }
-
-    #[test]
-    fn section_header_renders() {
-        let node = section_header_node("server");
-        assert_eq!(text_of(&node), "[server]");
     }
 
     #[test]
