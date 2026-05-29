@@ -257,4 +257,18 @@ mod tests {
         assert_round_trip("[s]\nk = hello \\\nworld\n");
         assert_round_trip("[s]\nk = a \\\nb \\\nc\nnext = val\n");
     }
+
+    #[test]
+    fn green_accessor() {
+        let p = parse("[s]\nk=v\n");
+        assert!(p.green().children().len() > 0);
+    }
+
+    #[test]
+    fn unexpected_token_at_root() {
+        // A stray `]` at root level triggers the error path.
+        let p = parse("]\n[s]\nk=v\n");
+        assert!(!p.errors().is_empty());
+        assert_round_trip("]\n[s]\nk=v\n");
+    }
 }

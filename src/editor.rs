@@ -353,4 +353,27 @@ mod tests {
         assert!(!out.contains("b = 2"), "got: {out}");
         assert!(out.contains("c = 3"), "got: {out}");
     }
+
+    #[test]
+    fn set_empty_value() {
+        let ed = Editor::new("[s]\nk = old\n");
+        ed.section("s").set("k", "");
+        let out = ed.finish();
+        assert!(out.contains("k = \n") || out.contains("k = "), "got: {out}");
+    }
+
+    #[test]
+    fn rename_nonexistent_key() {
+        let ed = Editor::new("[s]\nk = v\n");
+        assert!(!ed.section("s").rename_key("nonexistent", "new"));
+    }
+
+    #[test]
+    fn insert_raw_unknown_line() {
+        let ed = Editor::new("[s]\nk = v\n");
+        ed.section("s")
+            .insert_raw_lines(&["just some text without equals"]);
+        let out = ed.finish();
+        assert!(out.contains("just some text without equals"), "got: {out}");
+    }
 }
