@@ -44,15 +44,40 @@ pub struct ParseError {
     pub offset: usize,
 }
 
+/// Options for configuring the parser.
+#[derive(Debug, Clone, Default)]
+pub struct ParseOptions {
+    /// When `true`, keys without a `=` or `:` separator are accepted without
+    /// producing an error. Their [`Entry::value()`](crate::ast::Entry::value)
+    /// returns `None` (as opposed to `Some("")` for `key =`).
+    ///
+    /// This supports MySQL-style flag keys:
+    ///
+    /// ```ini
+    /// [mysqldump]
+    /// quick
+    /// quote-names
+    /// max_allowed_packet = 64M
+    /// ```
+    pub allow_no_value: bool,
+}
+
 /// Parse an INI source string.
 #[must_use]
 pub fn parse(input: &str) -> Parse {
+    parse_with(input, &ParseOptions::default())
+}
+
+/// Parse an INI source string with custom options.
+#[must_use]
+pub fn parse_with(input: &str, options: &ParseOptions) -> Parse {
     let tokens = lex(input);
     let mut p = Parser {
         tokens,
         cursor: 0,
         builder: GreenNodeBuilder::new(),
         errors: Vec::new(),
+        options,
     };
     p.parse_root();
     Parse {
@@ -66,6 +91,7 @@ struct Parser<'a> {
     cursor: usize,
     builder: GreenNodeBuilder<'static>,
     errors: Vec<ParseError>,
+    options: &'a ParseOptions,
 }
 
 impl Parser<'_> {
@@ -165,7 +191,11 @@ impl Parser<'_> {
         }
         match self.peek() {
             Some(SyntaxKind::EQ | SyntaxKind::COLON) => self.bump(),
-            _ => self.error("expected '=' or ':'"),
+            _ => {
+                if !self.options.allow_no_value {
+                    self.error("expected '=' or ':'");
+                }
+            }
         }
         if self.peek() == Some(SyntaxKind::WHITESPACE) {
             self.bump();

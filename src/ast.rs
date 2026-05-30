@@ -107,9 +107,19 @@ impl Entry {
         self.0.children().find_map(Value::cast)
     }
 
-    /// The value text (`Some("")` for empty values, `None` only if malformed).
+    /// The value text. Returns `Some("")` for empty values (`key =`),
+    /// `None` for bare keys without a separator (`key` alone).
     #[must_use]
     pub fn value(&self) -> Option<String> {
+        // A bare key has no EQ or COLON token — distinguish from empty value
+        let has_separator = self
+            .0
+            .children_with_tokens()
+            .filter_map(rowan::NodeOrToken::into_token)
+            .any(|t| t.kind() == SyntaxKind::EQ || t.kind() == SyntaxKind::COLON);
+        if !has_separator {
+            return None;
+        }
         self.value_node().map(|v| v.text().unwrap_or_default())
     }
 

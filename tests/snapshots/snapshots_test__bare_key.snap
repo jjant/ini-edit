@@ -1,0 +1,16 @@
+---
+source: tests/snapshots_test.rs
+expression: "tree_allow_no_value(\"[s]\\nflag\\n\")"
+---
+ROOT 0..9
+  SECTION 0..9
+    SECTION_HEADER 0..3
+      L_BRACK 0..1 "["
+      IDENT 1..2 "s"
+      R_BRACK 2..3 "]"
+    NEWLINE 3..4 "\n"
+    ENTRY 4..9
+      KEY 4..8
+        IDENT 4..8 "flag"
+      VALUE 8..8
+      NEWLINE 8..9 "\n"
