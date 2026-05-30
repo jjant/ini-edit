@@ -1,0 +1,52 @@
+[Unit]
+Description=My Application Service
+Documentation=https://example.com/docs
+After=network-online.target postgresql.service redis.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=notify
+User=appuser
+Group=appgroup
+WorkingDirectory=/opt/myapp
+Environment=NODE_ENV=production
+Environment=PORT=3000
+Environment=DATABASE_URL=postgres://user:p@ss#word@localhost:5432/mydb?sslmode=require
+EnvironmentFile=-/etc/myapp/env
+ExecStartPre=/opt/myapp/bin/migrate
+ExecStart=/opt/myapp/bin/server \
+    --config /etc/myapp/config.toml \
+    --log-level info \
+    --workers 4
+ExecReload=/bin/kill -HUP $MAINPID
+ExecStop=/bin/kill -TERM $MAINPID
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=30
+TimeoutStopSec=30
+WatchdogSec=10
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ReadWritePaths=/var/log/myapp /var/lib/myapp
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+MemoryMax=2G
+CPUQuota=200%
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=myapp
+
+[Install]
+WantedBy=multi-user.target

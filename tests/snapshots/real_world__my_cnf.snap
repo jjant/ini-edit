@@ -1,0 +1,580 @@
+---
+source: tests/real_world.rs
+expression: dump(MY_CNF)
+---
+errors:
+  - ParseError { message: "expected '=' or ':'", offset: 218 }
+  - ParseError { message: "expected '=' or ':'", offset: 456 }
+  - ParseError { message: "expected '=' or ':'", offset: 1664 }
+  - ParseError { message: "expected '=' or ':'", offset: 1676 }
+  - ParseError { message: "expected '=' or ':'", offset: 1725 }
+
+ROOT
+  COMMENT "# MySQL configuration file"
+  NEWLINE "\n"
+  COMMENT "# /etc/mysql/my.cnf or ~/.my.cnf"
+  NEWLINE "\n"
+  NEWLINE "\n"
+  SECTION
+    SECTION_HEADER
+      L_BRACK "["
+      IDENT "client"
+      R_BRACK "]"
+    NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "port"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "3306"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "socket"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "/var/run/mysqld/mysqld.sock"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "default-character-set"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "utf8mb4"
+      NEWLINE "\n"
+    NEWLINE "\n"
+  SECTION
+    SECTION_HEADER
+      L_BRACK "["
+      IDENT "mysqld_safe"
+      R_BRACK "]"
+    NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "socket"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "/var/run/mysqld/mysqld.sock"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "nice"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "0"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "syslog"
+      VALUE
+      NEWLINE "\n"
+    NEWLINE "\n"
+  SECTION
+    SECTION_HEADER
+      L_BRACK "["
+      IDENT "mysqld"
+      R_BRACK "]"
+    NEWLINE "\n"
+    COMMENT "# Basic Settings"
+    NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "user"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "mysql"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "pid-file"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "/var/run/mysqld/mysqld.pid"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "socket"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "/var/run/mysqld/mysqld.sock"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "port"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "3306"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "basedir"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "/usr"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "datadir"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "/var/lib/mysql"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "tmpdir"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "/tmp"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "lc-messages-dir"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "/usr/share/mysql"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "skip-external-locking"
+      VALUE
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "bind-address"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "127.0.0.1"
+      NEWLINE "\n"
+    NEWLINE "\n"
+    COMMENT "# Character Set"
+    NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "character-set-server"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "utf8mb4"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "collation-server"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "utf8mb4_unicode_ci"
+      NEWLINE "\n"
+    NEWLINE "\n"
+    COMMENT "# Fine Tuning"
+    NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "key_buffer_size"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "256M"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "max_allowed_packet"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "64M"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "thread_stack"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "192K"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "thread_cache_size"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "8"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "max_connections"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "151"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "table_open_cache"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "4000"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "table_definition_cache"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "2000"
+      NEWLINE "\n"
+    NEWLINE "\n"
+    COMMENT "# InnoDB"
+    NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "default-storage-engine"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "InnoDB"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "innodb_buffer_pool_size"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "1G"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "innodb_buffer_pool_instances"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "4"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "innodb_log_file_size"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "256M"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "innodb_log_buffer_size"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "16M"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "innodb_flush_log_at_trx_commit"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "1"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "innodb_flush_method"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "O_DIRECT"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "innodb_file_per_table"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "1"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "innodb_io_capacity"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "2000"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "innodb_io_capacity_max"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "4000"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "innodb_read_io_threads"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "4"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "innodb_write_io_threads"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "4"
+      NEWLINE "\n"
+    NEWLINE "\n"
+    COMMENT "# Query Cache (deprecated in 8.0, kept for 5.7 compat)"
+    NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "query_cache_type"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "0"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "query_cache_size"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "0"
+      NEWLINE "\n"
+    NEWLINE "\n"
+    COMMENT "# Logging"
+    NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "log_error"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "/var/log/mysql/error.log"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "slow_query_log"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "1"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "slow_query_log_file"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "/var/log/mysql/slow.log"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "long_query_time"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "2"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "log_queries_not_using_indexes"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "1"
+      NEWLINE "\n"
+    NEWLINE "\n"
+    COMMENT "# Binary Logging (for replication)"
+    NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "server-id"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "1"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "log_bin"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "/var/log/mysql/mysql-bin"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "binlog_format"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "ROW"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "expire_logs_days"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "14"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "max_binlog_size"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "100M"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "binlog_row_image"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "minimal"
+      NEWLINE "\n"
+    NEWLINE "\n"
+    COMMENT "# Replication"
+    NEWLINE "\n"
+    COMMENT ";relay-log = /var/log/mysql/relay-bin"
+    NEWLINE "\n"
+    COMMENT ";read_only = 1"
+    NEWLINE "\n"
+    COMMENT ";log_slave_updates = 1"
+    NEWLINE "\n"
+    NEWLINE "\n"
+  SECTION
+    SECTION_HEADER
+      L_BRACK "["
+      IDENT "mysqldump"
+      R_BRACK "]"
+    NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "quick"
+      VALUE
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "quote-names"
+      VALUE
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "max_allowed_packet"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "64M"
+      NEWLINE "\n"
+    NEWLINE "\n"
+  SECTION
+    SECTION_HEADER
+      L_BRACK "["
+      IDENT "mysql"
+      R_BRACK "]"
+    NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "no-auto-rehash"
+      VALUE
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "default-character-set"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "utf8mb4"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "prompt"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "\\\\u@\\\\h [\\\\d]>\\\\_"
+      NEWLINE "\n"
+    NEWLINE "\n"
+  SECTION
+    SECTION_HEADER
+      L_BRACK "["
+      IDENT "isamchk"
+      R_BRACK "]"
+    NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "key_buffer"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "16M"
+      NEWLINE "\n"

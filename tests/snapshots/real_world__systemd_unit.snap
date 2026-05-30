@@ -1,0 +1,302 @@
+---
+source: tests/real_world.rs
+expression: dump(SYSTEMD_UNIT)
+---
+errors: none
+
+ROOT
+  SECTION
+    SECTION_HEADER
+      L_BRACK "["
+      IDENT "Unit"
+      R_BRACK "]"
+    NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "Description"
+      EQ "="
+      VALUE
+        VALUE_TEXT "My Application Service"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "Documentation"
+      EQ "="
+      VALUE
+        VALUE_TEXT "https://example.com/docs"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "After"
+      EQ "="
+      VALUE
+        VALUE_TEXT "network-online.target postgresql.service redis.service"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "Wants"
+      EQ "="
+      VALUE
+        VALUE_TEXT "network-online.target"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "Requires"
+      EQ "="
+      VALUE
+        VALUE_TEXT "postgresql.service"
+      NEWLINE "\n"
+    NEWLINE "\n"
+  SECTION
+    SECTION_HEADER
+      L_BRACK "["
+      IDENT "Service"
+      R_BRACK "]"
+    NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "Type"
+      EQ "="
+      VALUE
+        VALUE_TEXT "notify"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "User"
+      EQ "="
+      VALUE
+        VALUE_TEXT "appuser"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "Group"
+      EQ "="
+      VALUE
+        VALUE_TEXT "appgroup"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "WorkingDirectory"
+      EQ "="
+      VALUE
+        VALUE_TEXT "/opt/myapp"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "Environment"
+      EQ "="
+      VALUE
+        VALUE_TEXT "NODE_ENV=production"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "Environment"
+      EQ "="
+      VALUE
+        VALUE_TEXT "PORT=3000"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "Environment"
+      EQ "="
+      VALUE
+        VALUE_TEXT "DATABASE_URL=postgres://user:p@ss#word@localhost:5432/mydb?sslmode=require"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "EnvironmentFile"
+      EQ "="
+      VALUE
+        VALUE_TEXT "-/etc/myapp/env"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "ExecStartPre"
+      EQ "="
+      VALUE
+        VALUE_TEXT "/opt/myapp/bin/migrate"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "ExecStart"
+      EQ "="
+      VALUE
+        VALUE_TEXT "/opt/myapp/bin/server \\\n    --config /etc/myapp/config.toml \\\n    --log-level info \\\n    --workers 4"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "ExecReload"
+      EQ "="
+      VALUE
+        VALUE_TEXT "/bin/kill -HUP $MAINPID"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "ExecStop"
+      EQ "="
+      VALUE
+        VALUE_TEXT "/bin/kill -TERM $MAINPID"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "Restart"
+      EQ "="
+      VALUE
+        VALUE_TEXT "on-failure"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "RestartSec"
+      EQ "="
+      VALUE
+        VALUE_TEXT "5"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "TimeoutStartSec"
+      EQ "="
+      VALUE
+        VALUE_TEXT "30"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "TimeoutStopSec"
+      EQ "="
+      VALUE
+        VALUE_TEXT "30"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "WatchdogSec"
+      EQ "="
+      VALUE
+        VALUE_TEXT "10"
+      NEWLINE "\n"
+    NEWLINE "\n"
+    COMMENT "# Security hardening"
+    NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "NoNewPrivileges"
+      EQ "="
+      VALUE
+        VALUE_TEXT "true"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "ProtectSystem"
+      EQ "="
+      VALUE
+        VALUE_TEXT "strict"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "ProtectHome"
+      EQ "="
+      VALUE
+        VALUE_TEXT "true"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "PrivateTmp"
+      EQ "="
+      VALUE
+        VALUE_TEXT "true"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "PrivateDevices"
+      EQ "="
+      VALUE
+        VALUE_TEXT "true"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "ReadWritePaths"
+      EQ "="
+      VALUE
+        VALUE_TEXT "/var/log/myapp /var/lib/myapp"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "CapabilityBoundingSet"
+      EQ "="
+      VALUE
+        VALUE_TEXT "CAP_NET_BIND_SERVICE"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "AmbientCapabilities"
+      EQ "="
+      VALUE
+        VALUE_TEXT "CAP_NET_BIND_SERVICE"
+      NEWLINE "\n"
+    NEWLINE "\n"
+    COMMENT "# Resource limits"
+    NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "LimitNOFILE"
+      EQ "="
+      VALUE
+        VALUE_TEXT "65536"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "LimitNPROC"
+      EQ "="
+      VALUE
+        VALUE_TEXT "4096"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "MemoryMax"
+      EQ "="
+      VALUE
+        VALUE_TEXT "2G"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "CPUQuota"
+      EQ "="
+      VALUE
+        VALUE_TEXT "200%"
+      NEWLINE "\n"
+    NEWLINE "\n"
+    COMMENT "# Logging"
+    NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "StandardOutput"
+      EQ "="
+      VALUE
+        VALUE_TEXT "journal"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "StandardError"
+      EQ "="
+      VALUE
+        VALUE_TEXT "journal"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "SyslogIdentifier"
+      EQ "="
+      VALUE
+        VALUE_TEXT "myapp"
+      NEWLINE "\n"
+    NEWLINE "\n"
+  SECTION
+    SECTION_HEADER
+      L_BRACK "["
+      IDENT "Install"
+      R_BRACK "]"
+    NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "WantedBy"
+      EQ "="
+      VALUE
+        VALUE_TEXT "multi-user.target"
+      NEWLINE "\n"

@@ -1,0 +1,102 @@
+# This is Git's per-user configuration file.
+[user]
+	name = Jane Developer
+	email = jane@example.com
+	signingkey = ABCDEF1234567890
+
+[core]
+	editor = nvim
+	autocrlf = input
+	whitespace = fix,-indent-with-non-tab,trailing-space,cr-at-eol
+	pager = delta
+	excludesfile = ~/.gitignore_global
+	attributesfile = ~/.gitattributes
+
+[init]
+	defaultBranch = main
+
+[color]
+	ui = auto
+
+[color "branch"]
+	current = yellow reverse
+	local = yellow
+	remote = green
+
+[color "diff"]
+	meta = yellow bold
+	frag = magenta bold
+	old = red bold
+	new = green bold
+
+[color "status"]
+	added = yellow
+	changed = green
+	untracked = cyan
+
+[push]
+	default = current
+	autoSetupRemote = true
+
+[pull]
+	rebase = true
+
+[fetch]
+	prune = true
+
+[rebase]
+	autoStash = true
+
+[merge]
+	conflictstyle = diff3
+	tool = nvim
+
+[mergetool "nvim"]
+	cmd = nvim -d $LOCAL $REMOTE $MERGED -c '$wincmd w' -c 'wincmd J'
+
+[diff]
+	algorithm = histogram
+	colorMoved = default
+
+[alias]
+	st = status
+	co = checkout
+	br = branch
+	ci = commit
+	lg = log --graph --pretty=format:'%Cred%h%Creset -%C(yellow)%d%Creset %s %Cgreen(%cr) %C(bold blue)<%an>%Creset' --abbrev-commit
+	unstage = reset HEAD --
+	last = log -1 HEAD
+	amend = commit --amend --no-edit
+	wip = !git add -A && git commit -m "WIP"
+	undo = reset --soft HEAD~1
+
+[url "git@github.com:"]
+	insteadOf = https://github.com/
+
+[remote "origin"]
+	url = git@github.com:user/repo.git
+	fetch = +refs/heads/*:refs/remotes/origin/*
+
+[branch "main"]
+	remote = origin
+	merge = refs/heads/main
+
+[filter "lfs"]
+	clean = git-lfs clean -- %f
+	smudge = git-lfs smudge -- %f
+	process = git-lfs filter-process
+	required = true
+
+[credential]
+	helper = osxkeychain
+
+[gpg]
+	program = gpg2
+
+[commit]
+	gpgsign = true
+
+[delta]
+	navigate = true
+	light = false
+	line-numbers = true
