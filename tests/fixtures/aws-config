@@ -1,0 +1,56 @@
+# AWS CLI configuration file
+# See: https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html
+
+[default]
+region = us-east-1
+output = json
+cli_pager = less
+cli_auto_prompt = on-partial
+retry_mode = standard
+max_attempts = 3
+
+[profile dev]
+region = us-west-2
+output = yaml
+role_arn = arn:aws:iam::123456789012:role/DevRole
+source_profile = default
+duration_seconds = 3600
+
+[profile staging]
+region = eu-west-1
+output = json
+role_arn = arn:aws:iam::987654321098:role/StagingRole
+source_profile = default
+mfa_serial = arn:aws:iam::123456789012:mfa/jane
+cli_pager =
+
+[profile production]
+region = us-east-1
+output = json
+role_arn = arn:aws:iam::111222333444:role/ProdReadOnly
+source_profile = default
+mfa_serial = arn:aws:iam::123456789012:mfa/jane
+duration_seconds = 900
+
+[profile sso-dev]
+sso_start_url = https://my-company.awsapps.com/start
+sso_region = us-east-1
+sso_account_id = 123456789012
+sso_role_name = DeveloperAccess
+region = us-west-2
+output = json
+
+[profile cross-account]
+role_arn = arn:aws:iam::555666777888:role/CrossAccountRole
+credential_source = Environment
+
+[profile ec2-instance]
+credential_source = Ec2InstanceMetadata
+region = ap-southeast-1
+
+[profile with-endpoint]
+region = us-east-1
+endpoint_url = http://localhost:4566
+s3 =
+    addressing_style = path
+    multipart_threshold = 64MB

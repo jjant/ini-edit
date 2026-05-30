@@ -1,0 +1,1152 @@
+---
+source: tests/real_world.rs
+expression: dump(PHP_INI)
+---
+errors: none
+
+ROOT
+  SECTION
+    SECTION_HEADER
+      L_BRACK "["
+      IDENT "PHP"
+      R_BRACK "]"
+    NEWLINE "\n"
+    COMMENT ";;;;;;;;;;;;;;;;;;;"
+    NEWLINE "\n"
+    COMMENT "; About php.ini   ;"
+    NEWLINE "\n"
+    COMMENT ";;;;;;;;;;;;;;;;;;;"
+    NEWLINE "\n"
+    NEWLINE "\n"
+    COMMENT "; PHP's initialization file, generally called php.ini, is responsible for"
+    NEWLINE "\n"
+    COMMENT "; configuring many of the aspects of PHP's behavior."
+    NEWLINE "\n"
+    NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "engine"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "On"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "short_open_tag"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "Off"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "precision"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "14"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "output_buffering"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "4096"
+      NEWLINE "\n"
+    NEWLINE "\n"
+    COMMENT "; Implicit flush tells PHP to tell the output layer to flush itself"
+    NEWLINE "\n"
+    COMMENT "; automatically after every output block."
+    NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "implicit_flush"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "Off"
+      NEWLINE "\n"
+    NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "zend.enable_gc"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "On"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "zend.exception_ignore_args"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "On"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "zend.exception_string_param_max_len"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "0"
+      NEWLINE "\n"
+    NEWLINE "\n"
+    COMMENT ";;;;;;;;;;;;;;;;;"
+    NEWLINE "\n"
+    COMMENT "; Miscellaneous ;"
+    NEWLINE "\n"
+    COMMENT ";;;;;;;;;;;;;;;;;"
+    NEWLINE "\n"
+    NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "expose_php"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "Off"
+      NEWLINE "\n"
+    NEWLINE "\n"
+    COMMENT ";;;;;;;;;;;;;;;;;;;"
+    NEWLINE "\n"
+    COMMENT "; Resource Limits ;"
+    NEWLINE "\n"
+    COMMENT ";;;;;;;;;;;;;;;;;;;"
+    NEWLINE "\n"
+    NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "max_execution_time"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "30"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "max_input_time"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "60"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "memory_limit"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "128M"
+      NEWLINE "\n"
+    NEWLINE "\n"
+    COMMENT ";;;;;;;;;;;;;;;;;;;;;;;;;;;;;;"
+    NEWLINE "\n"
+    COMMENT "; Error handling and logging ;"
+    NEWLINE "\n"
+    COMMENT ";;;;;;;;;;;;;;;;;;;;;;;;;;;;;;"
+    NEWLINE "\n"
+    NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "error_reporting"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "E_ALL & ~E_DEPRECATED & ~E_STRICT"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "display_errors"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "Off"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "display_startup_errors"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "Off"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "log_errors"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "On"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "log_errors_max_len"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "1024"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "ignore_repeated_errors"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "Off"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "ignore_repeated_source"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "Off"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "report_memleaks"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "On"
+      NEWLINE "\n"
+    NEWLINE "\n"
+    COMMENT ";error_log = syslog"
+    NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "error_log"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "/var/log/php/error.log"
+      NEWLINE "\n"
+    NEWLINE "\n"
+    COMMENT ";;;;;;;;;;;;;;;;;"
+    NEWLINE "\n"
+    COMMENT "; Data Handling ;"
+    NEWLINE "\n"
+    COMMENT ";;;;;;;;;;;;;;;;;"
+    NEWLINE "\n"
+    NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "variables_order"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "\"GPCS\""
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "request_order"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "\"GP\""
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "register_argc_argv"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "Off"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "auto_globals_jit"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "On"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "post_max_size"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "8M"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "auto_prepend_file"
+      WHITESPACE " "
+      EQ "="
+      VALUE
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "auto_append_file"
+      WHITESPACE " "
+      EQ "="
+      VALUE
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "default_mimetype"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "\"text/html\""
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "default_charset"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "\"UTF-8\""
+      NEWLINE "\n"
+    NEWLINE "\n"
+    COMMENT ";;;;;;;;;;;;;;;;;;;;;;;;;"
+    NEWLINE "\n"
+    COMMENT "; Paths and Directories ;"
+    NEWLINE "\n"
+    COMMENT ";;;;;;;;;;;;;;;;;;;;;;;;;"
+    NEWLINE "\n"
+    NEWLINE "\n"
+    COMMENT "; UNIX: \"/path1:/path2\""
+    NEWLINE "\n"
+    COMMENT ";include_path = \".:/usr/share/php\""
+    NEWLINE "\n"
+    NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "doc_root"
+      WHITESPACE " "
+      EQ "="
+      VALUE
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "user_dir"
+      WHITESPACE " "
+      EQ "="
+      VALUE
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "enable_dl"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "Off"
+      NEWLINE "\n"
+    NEWLINE "\n"
+    COMMENT "; cgi.fix_pathinfo provides *real* PATH_INFO/PATH_TRANSLATED support for CGI."
+    NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "cgi.fix_pathinfo"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "0"
+      NEWLINE "\n"
+    NEWLINE "\n"
+    COMMENT ";;;;;;;;;;;;;;;;"
+    NEWLINE "\n"
+    COMMENT "; File Uploads ;"
+    NEWLINE "\n"
+    COMMENT ";;;;;;;;;;;;;;;;"
+    NEWLINE "\n"
+    NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "file_uploads"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "On"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "upload_max_filesize"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "2M"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "max_file_uploads"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "20"
+      NEWLINE "\n"
+    NEWLINE "\n"
+    COMMENT ";;;;;;;;;;;;;;;;;;"
+    NEWLINE "\n"
+    COMMENT "; Fopen wrappers ;"
+    NEWLINE "\n"
+    COMMENT ";;;;;;;;;;;;;;;;;;"
+    NEWLINE "\n"
+    NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "allow_url_fopen"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "On"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "allow_url_include"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "Off"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "default_socket_timeout"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "60"
+      NEWLINE "\n"
+    NEWLINE "\n"
+    COMMENT ";;;;;;;;;;;;;;;;;;;"
+    NEWLINE "\n"
+    COMMENT "; Module Settings ;"
+    NEWLINE "\n"
+    COMMENT ";;;;;;;;;;;;;;;;;;;"
+    NEWLINE "\n"
+    NEWLINE "\n"
+  SECTION
+    SECTION_HEADER
+      L_BRACK "["
+      IDENT "CLI Server"
+      R_BRACK "]"
+    NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "cli_server.color"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "On"
+      NEWLINE "\n"
+    NEWLINE "\n"
+  SECTION
+    SECTION_HEADER
+      L_BRACK "["
+      IDENT "Date"
+      R_BRACK "]"
+    NEWLINE "\n"
+    COMMENT "; Defines the default timezone used by the date functions"
+    NEWLINE "\n"
+    COMMENT ";date.timezone ="
+    NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "date.timezone"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "\"UTC\""
+      NEWLINE "\n"
+    NEWLINE "\n"
+  SECTION
+    SECTION_HEADER
+      L_BRACK "["
+      IDENT "Pdo_mysql"
+      R_BRACK "]"
+    NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "pdo_mysql.default_socket"
+      WHITESPACE " "
+      EQ "="
+      VALUE
+      NEWLINE "\n"
+    NEWLINE "\n"
+  SECTION
+    SECTION_HEADER
+      L_BRACK "["
+      IDENT "mail function"
+      R_BRACK "]"
+    NEWLINE "\n"
+    COMMENT "; For Win32 only."
+    NEWLINE "\n"
+    COMMENT ";SMTP = localhost"
+    NEWLINE "\n"
+    COMMENT ";smtp_port = 25"
+    NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "sendmail_path"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "/usr/sbin/sendmail -t -i"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "mail.add_x_header"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "Off"
+      NEWLINE "\n"
+    NEWLINE "\n"
+  SECTION
+    SECTION_HEADER
+      L_BRACK "["
+      IDENT "ODBC"
+      R_BRACK "]"
+    NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "odbc.allow_persistent"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "On"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "odbc.check_persistent"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "On"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "odbc.max_persistent"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "-1"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "odbc.max_links"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "-1"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "odbc.defaultlrl"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "4096"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "odbc.defaultbinmode"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "1"
+      NEWLINE "\n"
+    NEWLINE "\n"
+  SECTION
+    SECTION_HEADER
+      L_BRACK "["
+      IDENT "MySQLi"
+      R_BRACK "]"
+    NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "mysqli.max_persistent"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "-1"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "mysqli.allow_persistent"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "On"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "mysqli.max_links"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "-1"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "mysqli.default_port"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "3306"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "mysqli.default_socket"
+      WHITESPACE " "
+      EQ "="
+      VALUE
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "mysqli.default_host"
+      WHITESPACE " "
+      EQ "="
+      VALUE
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "mysqli.default_user"
+      WHITESPACE " "
+      EQ "="
+      VALUE
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "mysqli.default_pw"
+      WHITESPACE " "
+      EQ "="
+      VALUE
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "mysqli.reconnect"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "Off"
+      NEWLINE "\n"
+    NEWLINE "\n"
+  SECTION
+    SECTION_HEADER
+      L_BRACK "["
+      IDENT "mysqlnd"
+      R_BRACK "]"
+    NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "mysqlnd.collect_statistics"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "On"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "mysqlnd.collect_memory_statistics"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "Off"
+      NEWLINE "\n"
+    NEWLINE "\n"
+  SECTION
+    SECTION_HEADER
+      L_BRACK "["
+      IDENT "PostgreSQL"
+      R_BRACK "]"
+    NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "pgsql.allow_persistent"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "On"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "pgsql.auto_reset_persistent"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "Off"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "pgsql.max_persistent"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "-1"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "pgsql.max_links"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "-1"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "pgsql.ignore_notice"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "0"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "pgsql.log_notice"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "0"
+      NEWLINE "\n"
+    NEWLINE "\n"
+  SECTION
+    SECTION_HEADER
+      L_BRACK "["
+      IDENT "bcmath"
+      R_BRACK "]"
+    NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "bcmath.scale"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "0"
+      NEWLINE "\n"
+    NEWLINE "\n"
+  SECTION
+    SECTION_HEADER
+      L_BRACK "["
+      IDENT "Session"
+      R_BRACK "]"
+    NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "session.save_handler"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "files"
+      NEWLINE "\n"
+    COMMENT ";session.save_path = \"/tmp\""
+    NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "session.use_strict_mode"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "1"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "session.use_cookies"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "1"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "session.use_only_cookies"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "1"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "session.name"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "PHPSESSID"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "session.auto_start"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "0"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "session.cookie_lifetime"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "0"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "session.cookie_path"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "/"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "session.cookie_domain"
+      WHITESPACE " "
+      EQ "="
+      VALUE
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "session.cookie_httponly"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "1"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "session.cookie_samesite"
+      WHITESPACE " "
+      EQ "="
+      VALUE
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "session.serialize_handler"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "php"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "session.gc_probability"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "0"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "session.gc_divisor"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "1000"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "session.gc_maxlifetime"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "1440"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "session.referer_check"
+      WHITESPACE " "
+      EQ "="
+      VALUE
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "session.cache_limiter"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "nocache"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "session.cache_expire"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "180"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "session.use_trans_sid"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "0"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "session.sid_length"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "26"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "session.sid_bits_per_character"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "5"
+      NEWLINE "\n"
+    NEWLINE "\n"
+  SECTION
+    SECTION_HEADER
+      L_BRACK "["
+      IDENT "Assertion"
+      R_BRACK "]"
+    NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "zend.assertions"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "-1"
+      NEWLINE "\n"
+    NEWLINE "\n"
+  SECTION
+    SECTION_HEADER
+      L_BRACK "["
+      IDENT "Tidy"
+      R_BRACK "]"
+    NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "tidy.clean_output"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "Off"
+      NEWLINE "\n"
+    NEWLINE "\n"
+  SECTION
+    SECTION_HEADER
+      L_BRACK "["
+      IDENT "soap"
+      R_BRACK "]"
+    NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "soap.wsdl_cache_enabled"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "1"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "soap.wsdl_cache_dir"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "\"/tmp\""
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "soap.wsdl_cache_ttl"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "86400"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "soap.wsdl_cache_limit"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "5"
+      NEWLINE "\n"
+    NEWLINE "\n"
+  SECTION
+    SECTION_HEADER
+      L_BRACK "["
+      IDENT "ldap"
+      R_BRACK "]"
+    NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "ldap.max_links"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "-1"
+      NEWLINE "\n"
+    NEWLINE "\n"
+  SECTION
+    SECTION_HEADER
+      L_BRACK "["
+      IDENT "opcache"
+      R_BRACK "]"
+    NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "opcache.enable"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "1"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "opcache.enable_cli"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "0"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "opcache.memory_consumption"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "128"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "opcache.interned_strings_buffer"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "8"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "opcache.max_accelerated_files"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "10000"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "opcache.revalidate_freq"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "2"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "opcache.save_comments"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "1"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "opcache.jit_buffer_size"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "100M"
+      NEWLINE "\n"
+    ENTRY
+      KEY
+        IDENT "opcache.jit"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "1255"
+      NEWLINE "\n"

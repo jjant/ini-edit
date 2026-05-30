@@ -1,49 +1,80 @@
-//! Real-world fixture tests — large INI files from open source projects.
+//! Real-world fixture tests — full CST snapshots.
+//!
+//! Each fixture is parsed and the entire concrete syntax tree is snapshotted,
+//! including every whitespace token, comment, and newline. This proves the
+//! lossless parser accounts for every byte.
 
-use ini_edit::ast::{AstNode, File};
-use ini_edit::parse;
+use std::fmt::Write as _;
 
-/// Gitea's app.example.ini (~3000 lines, MIT licensed).
-/// Source: <https://github.com/go-gitea/gitea/blob/main/custom/conf/app.example.ini>
+use ini_edit::{SyntaxNode, parse};
+
+fn cst(node: &SyntaxNode, indent: usize) -> String {
+    let mut out = String::new();
+    let pad = "  ".repeat(indent);
+    let _ = writeln!(out, "{pad}{:?}", node.kind());
+    for child in node.children_with_tokens() {
+        match child {
+            rowan::NodeOrToken::Node(n) => out.push_str(&cst(&n, indent + 1)),
+            rowan::NodeOrToken::Token(t) => {
+                let child_pad = "  ".repeat(indent + 1);
+                let _ = writeln!(out, "{child_pad}{:?} {:?}", t.kind(), t.text());
+            }
+        }
+    }
+    out
+}
+
+fn dump(input: &str) -> String {
+    let p = parse(input);
+    assert_eq!(p.syntax().text().to_string(), input, "round-trip failed");
+
+    let mut out = String::new();
+    if p.errors().is_empty() {
+        let _ = writeln!(out, "errors: none");
+    } else {
+        let _ = writeln!(out, "errors:");
+        for e in p.errors() {
+            let _ = writeln!(out, "  - {e:?}");
+        }
+    }
+    let _ = writeln!(out);
+    out.push_str(&cst(&p.syntax(), 0));
+    out
+}
+
+const GITCONFIG: &str = include_str!("fixtures/gitconfig");
+const PHP_INI: &str = include_str!("fixtures/php.ini");
+const AWS_CONFIG: &str = include_str!("fixtures/aws-config");
+const SYSTEMD_UNIT: &str = include_str!("fixtures/systemd-unit.service");
+const MY_CNF: &str = include_str!("fixtures/my.cnf");
 const GITEA: &str = include_str!("fixtures/gitea-app.example.ini");
 
 #[test]
-fn gitea_round_trips() {
-    let p = parse(GITEA);
-    assert_eq!(p.syntax().text().to_string(), GITEA);
+fn gitea() {
+    insta::assert_snapshot!(dump(GITEA));
 }
 
 #[test]
-fn gitea_no_errors() {
-    let p = parse(GITEA);
-    assert!(
-        p.errors().is_empty(),
-        "expected no errors, got: {:?}",
-        p.errors()
-    );
+fn gitconfig() {
+    insta::assert_snapshot!(dump(GITCONFIG));
 }
 
 #[test]
-fn gitea_ast_traversal() {
-    let p = parse(GITEA);
-    let file = File::cast(p.syntax()).unwrap();
+fn php_ini() {
+    insta::assert_snapshot!(dump(PHP_INI));
+}
 
-    let sections: Vec<_> = file.sections().collect();
-    assert!(
-        sections.len() >= 5,
-        "expected several sections, got {}",
-        sections.len()
-    );
+#[test]
+fn aws_config() {
+    insta::assert_snapshot!(dump(AWS_CONFIG));
+}
 
-    // Spot-check known sections exist.
-    let names: Vec<_> = sections
-        .iter()
-        .filter_map(ini_edit::ast::Section::name)
-        .collect();
-    assert!(names.contains(&"server".to_string()));
-    assert!(names.contains(&"database".to_string()));
+#[test]
+fn systemd_unit() {
+    insta::assert_snapshot!(dump(SYSTEMD_UNIT));
+}
 
-    // Verify AST traversal doesn't panic on any section/entry.
-    let total_entries: usize = sections.iter().map(|s| s.entries().count()).sum();
-    let _ = total_entries;
+#[test]
+fn my_cnf() {
+    insta::assert_snapshot!(dump(MY_CNF));
 }

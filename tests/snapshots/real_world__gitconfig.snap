@@ -1,0 +1,729 @@
+---
+source: tests/real_world.rs
+expression: dump(GITCONFIG)
+---
+errors: none
+
+ROOT
+  COMMENT "# This is Git's per-user configuration file."
+  NEWLINE "\n"
+  SECTION
+    SECTION_HEADER
+      L_BRACK "["
+      IDENT "user"
+      R_BRACK "]"
+    NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "name"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "Jane Developer"
+      NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "email"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "jane@example.com"
+      NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "signingkey"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "ABCDEF1234567890"
+      NEWLINE "\n"
+    NEWLINE "\n"
+  SECTION
+    SECTION_HEADER
+      L_BRACK "["
+      IDENT "core"
+      R_BRACK "]"
+    NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "editor"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "nvim"
+      NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "autocrlf"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "input"
+      NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "whitespace"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "fix,-indent-with-non-tab,trailing-space,cr-at-eol"
+      NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "pager"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "delta"
+      NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "excludesfile"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "~/.gitignore_global"
+      NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "attributesfile"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "~/.gitattributes"
+      NEWLINE "\n"
+    NEWLINE "\n"
+  SECTION
+    SECTION_HEADER
+      L_BRACK "["
+      IDENT "init"
+      R_BRACK "]"
+    NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "defaultBranch"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "main"
+      NEWLINE "\n"
+    NEWLINE "\n"
+  SECTION
+    SECTION_HEADER
+      L_BRACK "["
+      IDENT "color"
+      R_BRACK "]"
+    NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "ui"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "auto"
+      NEWLINE "\n"
+    NEWLINE "\n"
+  SECTION
+    SECTION_HEADER
+      L_BRACK "["
+      IDENT "color \"branch\""
+      R_BRACK "]"
+    NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "current"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "yellow reverse"
+      NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "local"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "yellow"
+      NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "remote"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "green"
+      NEWLINE "\n"
+    NEWLINE "\n"
+  SECTION
+    SECTION_HEADER
+      L_BRACK "["
+      IDENT "color \"diff\""
+      R_BRACK "]"
+    NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "meta"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "yellow bold"
+      NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "frag"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "magenta bold"
+      NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "old"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "red bold"
+      NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "new"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "green bold"
+      NEWLINE "\n"
+    NEWLINE "\n"
+  SECTION
+    SECTION_HEADER
+      L_BRACK "["
+      IDENT "color \"status\""
+      R_BRACK "]"
+    NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "added"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "yellow"
+      NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "changed"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "green"
+      NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "untracked"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "cyan"
+      NEWLINE "\n"
+    NEWLINE "\n"
+  SECTION
+    SECTION_HEADER
+      L_BRACK "["
+      IDENT "push"
+      R_BRACK "]"
+    NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "default"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "current"
+      NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "autoSetupRemote"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "true"
+      NEWLINE "\n"
+    NEWLINE "\n"
+  SECTION
+    SECTION_HEADER
+      L_BRACK "["
+      IDENT "pull"
+      R_BRACK "]"
+    NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "rebase"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "true"
+      NEWLINE "\n"
+    NEWLINE "\n"
+  SECTION
+    SECTION_HEADER
+      L_BRACK "["
+      IDENT "fetch"
+      R_BRACK "]"
+    NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "prune"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "true"
+      NEWLINE "\n"
+    NEWLINE "\n"
+  SECTION
+    SECTION_HEADER
+      L_BRACK "["
+      IDENT "rebase"
+      R_BRACK "]"
+    NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "autoStash"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "true"
+      NEWLINE "\n"
+    NEWLINE "\n"
+  SECTION
+    SECTION_HEADER
+      L_BRACK "["
+      IDENT "merge"
+      R_BRACK "]"
+    NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "conflictstyle"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "diff3"
+      NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "tool"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "nvim"
+      NEWLINE "\n"
+    NEWLINE "\n"
+  SECTION
+    SECTION_HEADER
+      L_BRACK "["
+      IDENT "mergetool \"nvim\""
+      R_BRACK "]"
+    NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "cmd"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "nvim -d $LOCAL $REMOTE $MERGED -c '$wincmd w' -c 'wincmd J'"
+      NEWLINE "\n"
+    NEWLINE "\n"
+  SECTION
+    SECTION_HEADER
+      L_BRACK "["
+      IDENT "diff"
+      R_BRACK "]"
+    NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "algorithm"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "histogram"
+      NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "colorMoved"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "default"
+      NEWLINE "\n"
+    NEWLINE "\n"
+  SECTION
+    SECTION_HEADER
+      L_BRACK "["
+      IDENT "alias"
+      R_BRACK "]"
+    NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "st"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "status"
+      NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "co"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "checkout"
+      NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "br"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "branch"
+      NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "ci"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "commit"
+      NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "lg"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "log --graph --pretty=format:'%Cred%h%Creset -%C(yellow)%d%Creset %s %Cgreen(%cr) %C(bold blue)<%an>%Creset' --abbrev-commit"
+      NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "unstage"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "reset HEAD --"
+      NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "last"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "log -1 HEAD"
+      NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "amend"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "commit --amend --no-edit"
+      NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "wip"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "!git add -A && git commit -m \"WIP\""
+      NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "undo"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "reset --soft HEAD~1"
+      NEWLINE "\n"
+    NEWLINE "\n"
+  SECTION
+    SECTION_HEADER
+      L_BRACK "["
+      IDENT "url \"git@github.com:\""
+      R_BRACK "]"
+    NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "insteadOf"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "https://github.com/"
+      NEWLINE "\n"
+    NEWLINE "\n"
+  SECTION
+    SECTION_HEADER
+      L_BRACK "["
+      IDENT "remote \"origin\""
+      R_BRACK "]"
+    NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "url"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "git@github.com:user/repo.git"
+      NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "fetch"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "+refs/heads/*:refs/remotes/origin/*"
+      NEWLINE "\n"
+    NEWLINE "\n"
+  SECTION
+    SECTION_HEADER
+      L_BRACK "["
+      IDENT "branch \"main\""
+      R_BRACK "]"
+    NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "remote"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "origin"
+      NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "merge"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "refs/heads/main"
+      NEWLINE "\n"
+    NEWLINE "\n"
+  SECTION
+    SECTION_HEADER
+      L_BRACK "["
+      IDENT "filter \"lfs\""
+      R_BRACK "]"
+    NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "clean"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "git-lfs clean -- %f"
+      NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "smudge"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "git-lfs smudge -- %f"
+      NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "process"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "git-lfs filter-process"
+      NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "required"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "true"
+      NEWLINE "\n"
+    NEWLINE "\n"
+  SECTION
+    SECTION_HEADER
+      L_BRACK "["
+      IDENT "credential"
+      R_BRACK "]"
+    NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "helper"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "osxkeychain"
+      NEWLINE "\n"
+    NEWLINE "\n"
+  SECTION
+    SECTION_HEADER
+      L_BRACK "["
+      IDENT "gpg"
+      R_BRACK "]"
+    NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "program"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "gpg2"
+      NEWLINE "\n"
+    NEWLINE "\n"
+  SECTION
+    SECTION_HEADER
+      L_BRACK "["
+      IDENT "commit"
+      R_BRACK "]"
+    NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "gpgsign"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "true"
+      NEWLINE "\n"
+    NEWLINE "\n"
+  SECTION
+    SECTION_HEADER
+      L_BRACK "["
+      IDENT "delta"
+      R_BRACK "]"
+    NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "navigate"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "true"
+      NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "light"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "false"
+      NEWLINE "\n"
+    WHITESPACE "\t"
+    ENTRY
+      KEY
+        IDENT "line-numbers"
+      WHITESPACE " "
+      EQ "="
+      WHITESPACE " "
+      VALUE
+        VALUE_TEXT "true"
+      NEWLINE "\n"
