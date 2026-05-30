@@ -662,15 +662,16 @@ fn bare_keys_without_flag_produce_errors() {
 }
 
 /// With the flag enabled, bare keys parse without errors.
-/// TODO: implement `ParseOptions { allow_no_value: true }` in a separate PR.
 #[test]
-#[ignore = "not yet implemented: allow_no_value flag"]
 fn bare_keys_with_flag_no_errors() {
     let src = "[mysqldump]\nquick\nquote-names\nmax_allowed_packet = 64M\n";
 
-    // Future API sketch:
-    // let p = ini_edit::parse_with(src, ParseOptions { allow_no_value: true });
-    let p = parse(src);
+    let p = ini_edit::parse_with(
+        src,
+        &ini_edit::ParseOptions {
+            allow_no_value: true,
+        },
+    );
 
     assert_eq!(p.syntax().text().to_string(), src);
     assert!(p.errors().is_empty(), "errors: {:?}", p.errors());

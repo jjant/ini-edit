@@ -36,5 +36,5 @@ pub mod lexer;
 pub mod parser;
 pub mod syntax_kind;
 
-pub use parser::{Parse, ParseError, parse};
+pub use parser::{Parse, ParseError, ParseOptions, parse, parse_with};
 pub use syntax_kind::{IniLang, SyntaxElement, SyntaxKind, SyntaxNode, SyntaxToken};

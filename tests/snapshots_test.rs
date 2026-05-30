@@ -133,3 +133,27 @@ fn crlf_line_endings() {
 fn value_with_equals_and_brackets() {
     insta::assert_snapshot!(tree("[s]\nurl = https://x.com?a=1&b=[2]\n"));
 }
+
+// ─── Bare keys (allow_no_value) ─────────────────────────────────────────────
+
+fn tree_allow_no_value(input: &str) -> String {
+    let p = ini_edit::parse_with(
+        input,
+        &ini_edit::ParseOptions {
+            allow_no_value: true,
+        },
+    );
+    assert_eq!(p.syntax().text().to_string(), input);
+    assert!(p.errors().is_empty(), "errors: {:?}", p.errors());
+    dump(&p.syntax(), 0)
+}
+
+#[test]
+fn bare_key() {
+    insta::assert_snapshot!(tree_allow_no_value("[s]\nflag\n"));
+}
+
+#[test]
+fn bare_key_mixed_with_values() {
+    insta::assert_snapshot!(tree_allow_no_value("[s]\nflag\nkey = value\n"));
+}

@@ -86,6 +86,7 @@ INI has no formal spec. `ini-edit` makes these choices:
 | Line endings | `\n`, `\r\n`, `\r` all preserved |
 | UTF-8 BOM | Handled (treated as whitespace) |
 | Malformed input | Always produces a tree; errors reported separately |
+| Bare keys (no value) | Opt-in via `parse_with(.., &ParseOptions { allow_no_value: true })` |
 
 ## Comparison
 
