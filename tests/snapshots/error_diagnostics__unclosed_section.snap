@@ -1,0 +1,9 @@
+---
+source: tests/error_diagnostics.rs
+expression: "errors(\"[unclosed\\nk = v\\n\")"
+---
+INI parse error at line 1, column 10
+  |
+  1 | [unclosed
+  |          ^
+  = expected ']'
