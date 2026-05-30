@@ -100,6 +100,102 @@ criterion_group!(
     bench_parse,
     bench_round_trip,
     bench_ast_traversal,
-    bench_edit
+    bench_edit,
+    bench_compare_parse,
+    bench_compare_edit,
 );
 criterion_main!(benches);
+
+fn bench_compare_parse(c: &mut Criterion) {
+    let mut group = c.benchmark_group("compare_parse");
+
+    // Small input
+    group.throughput(Throughput::Bytes(SMALL.len() as u64));
+    group.bench_with_input(BenchmarkId::new("ini_edit", "small"), &SMALL, |b, src| {
+        b.iter(|| ini_edit::parse(black_box(src)));
+    });
+    group.bench_with_input(BenchmarkId::new("rust_ini", "small"), &SMALL, |b, src| {
+        b.iter(|| ini::Ini::load_from_str(black_box(src)));
+    });
+    group.bench_with_input(
+        BenchmarkId::new("configparser", "small"),
+        &SMALL,
+        |b, src| {
+            b.iter(|| {
+                let mut c = configparser::ini::Ini::new();
+                c.read(black_box(src.to_string()))
+            });
+        },
+    );
+    group.bench_with_input(BenchmarkId::new("ini_core", "small"), &SMALL, |b, src| {
+        b.iter(|| {
+            for item in ini_core::Parser::new(black_box(src)) {
+                black_box(item);
+            }
+        });
+    });
+
+    // Large input (Gitea 129KB)
+    group.throughput(Throughput::Bytes(GITEA.len() as u64));
+    group.bench_with_input(BenchmarkId::new("ini_edit", "gitea"), &GITEA, |b, src| {
+        b.iter(|| ini_edit::parse(black_box(src)));
+    });
+    group.bench_with_input(BenchmarkId::new("rust_ini", "gitea"), &GITEA, |b, src| {
+        b.iter(|| ini::Ini::load_from_str(black_box(src)));
+    });
+    group.bench_with_input(
+        BenchmarkId::new("configparser", "gitea"),
+        &GITEA,
+        |b, src| {
+            b.iter(|| {
+                let mut c = configparser::ini::Ini::new();
+                c.read(black_box(src.to_string()))
+            });
+        },
+    );
+    group.bench_with_input(BenchmarkId::new("ini_core", "gitea"), &GITEA, |b, src| {
+        b.iter(|| {
+            for item in ini_core::Parser::new(black_box(src)) {
+                black_box(item);
+            }
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_compare_edit(c: &mut Criterion) {
+    let mut group = c.benchmark_group("compare_edit");
+
+    // ini_edit: parse + set + serialize
+    group.bench_function("ini_edit/set_value", |b| {
+        b.iter(|| {
+            let ed = Editor::new(black_box(SMALL));
+            ed.section("server").set("port", "9090");
+            black_box(ed.finish());
+        });
+    });
+
+    // rust-ini: parse + set + serialize
+    group.bench_function("rust_ini/set_value", |b| {
+        b.iter(|| {
+            let mut ini = ini::Ini::load_from_str(black_box(SMALL)).unwrap();
+            ini.set_to(Some("server"), "port".into(), "9090".into());
+            let mut buf = Vec::new();
+            ini.write_to(&mut buf).unwrap();
+            black_box(buf);
+        });
+    });
+
+    // configparser: parse + set + serialize
+    group.bench_function("configparser/set_value", |b| {
+        b.iter(|| {
+            let mut c = configparser::ini::Ini::new();
+            c.read(black_box(SMALL.to_string())).unwrap();
+            c.set("server", "port", Some("9090".into()));
+            black_box(c.writes());
+        });
+    });
+
+    group.finish();
+}
