@@ -1,0 +1,9 @@
+---
+source: tests/error_diagnostics.rs
+expression: "errors(\"[]\\nk = v\\n\")"
+---
+INI parse error at line 1, column 2
+  |
+  1 | []
+  |  ^
+  = expected section name
