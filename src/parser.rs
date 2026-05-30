@@ -44,6 +44,42 @@ pub struct ParseError {
     pub offset: usize,
 }
 
+impl ParseError {
+    /// Compute 1-based line and column from the byte offset and source text.
+    #[must_use]
+    pub fn line_col(&self, source: &str) -> (usize, usize) {
+        let mut line = 1;
+        let mut col = 1;
+        for (i, ch) in source.char_indices() {
+            if i >= self.offset {
+                break;
+            }
+            if ch == '\n' {
+                line += 1;
+                col = 1;
+            } else {
+                col += 1;
+            }
+        }
+        (line, col)
+    }
+
+    /// Format the error with source context, showing line/column and a caret.
+    #[must_use]
+    pub fn display(&self, source: &str) -> String {
+        use std::fmt::Write;
+        let (line, col) = self.line_col(source);
+        let source_line = source.split('\n').nth(line - 1).unwrap_or("");
+        let mut out = String::new();
+        let _ = writeln!(out, "INI parse error at line {line}, column {col}");
+        let _ = writeln!(out, "  |");
+        let _ = writeln!(out, "{line:>3} | {source_line}");
+        let _ = writeln!(out, "  | {}^", " ".repeat(col - 1));
+        let _ = write!(out, "  = {}", self.message);
+        out
+    }
+}
+
 /// Options for configuring the parser.
 #[derive(Debug, Clone, Default)]
 pub struct ParseOptions {
@@ -300,5 +336,27 @@ mod tests {
         let p = parse("]\n[s]\nk=v\n");
         assert!(!p.errors().is_empty());
         assert_round_trip("]\n[s]\nk=v\n");
+    }
+
+    #[test]
+    fn error_line_col() {
+        let src = "[s]\nk=v\n[unclosed\n";
+        let p = parse(src);
+        let err = &p.errors()[0];
+        let (line, col) = err.line_col(src);
+        assert_eq!(line, 3);
+        assert_eq!(col, 10); // after "[unclosed" (9 chars), expecting ']'
+    }
+
+    #[test]
+    fn error_display_format() {
+        let src = "[s]\nk=v\n[unclosed\n";
+        let p = parse(src);
+        let err = &p.errors()[0];
+        let rendered = err.display(src);
+        assert!(rendered.contains("line 3, column 10"));
+        assert!(rendered.contains("[unclosed"));
+        assert!(rendered.contains('^'));
+        assert!(rendered.contains("expected ']'"));
     }
 }
