@@ -169,11 +169,14 @@ impl SectionEditor<'_> {
     ///
     /// Index 0 is the section header. Lines are inserted **verbatim**.
     /// A newline is appended to each line that doesn't already end with one.
+    /// If `index` exceeds the number of children, lines are appended at the end.
     pub fn insert_raw_lines_at(&self, index: usize, lines: &[&str]) {
         self.splice_raw_lines_at(index, lines);
     }
 
     fn splice_raw_lines_at(&self, index: usize, lines: &[&str]) {
+        let child_count = self.node.children_with_tokens().count();
+        let index = index.min(child_count);
         let mut elements: Vec<crate::SyntaxElement> = Vec::new();
         for line in lines {
             let text = if line.ends_with('\n') || line.ends_with('\r') {
