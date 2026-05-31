@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.2.1] - 2026-05-31
 
+### Added
+
+- Snapshot tests for error diagnostics ([#29](https://github.com/jjant/ini-edit/pull/29))
+- Line/column display for `ParseError` ([#28](https://github.com/jjant/ini-edit/pull/28))
+- Benchmark comparison against `rust-ini` ([#27](https://github.com/jjant/ini-edit/pull/27))
+- `allow_no_value` parse option for bare keys ([#26](https://github.com/jjant/ini-edit/pull/26))
+- Real-world INI fixture tests ([#25](https://github.com/jjant/ini-edit/pull/25))
+- Editor fuzz target and edge case tests ([#24](https://github.com/jjant/ini-edit/pull/24))
+
+### Fixed
+
+- Out-of-bounds panic in editor surfaced by fuzzing ([#24](https://github.com/jjant/ini-edit/pull/24))
+
 ## [0.2.0] - 2026-05-29
 
 ### Added
