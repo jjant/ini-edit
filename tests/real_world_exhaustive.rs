@@ -670,6 +670,7 @@ fn bare_keys_with_flag_no_errors() {
         src,
         &ini_edit::ParseOptions {
             allow_no_value: true,
+            ..Default::default()
         },
     );
 

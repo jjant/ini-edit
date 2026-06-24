@@ -131,6 +131,22 @@ impl Entry {
             .filter_map(rowan::NodeOrToken::into_token)
             .any(|t| t.kind() == SyntaxKind::COLON)
     }
+
+    /// The trailing inline comment (e.g. `; note`), including its leading
+    /// marker, if one is present.
+    ///
+    /// Only populated when the source was parsed with
+    /// [`ParseOptions::inline_comments`](crate::ParseOptions::inline_comments)
+    /// enabled; otherwise the marker is part of [`value()`](Self::value) and
+    /// this returns `None`.
+    #[must_use]
+    pub fn inline_comment(&self) -> Option<String> {
+        self.0
+            .children_with_tokens()
+            .filter_map(rowan::NodeOrToken::into_token)
+            .find(|t| t.kind() == SyntaxKind::COMMENT)
+            .map(|t| t.text().to_string())
+    }
 }
 
 impl Key {
@@ -208,5 +224,28 @@ mod tests {
         let f = ast("g=1\n[s]\nk=2\n");
         assert_eq!(f.preamble_entries().count(), 1);
         assert_eq!(f.sections().next().unwrap().entries().count(), 1);
+    }
+
+    #[test]
+    fn inline_comment_accessor() {
+        use crate::{ParseOptions, parse_with};
+        let opts = ParseOptions {
+            inline_comments: true,
+            ..Default::default()
+        };
+        let f = File::cast(parse_with("[s]\nk = 1   ; note\n", &opts).syntax()).unwrap();
+        let e = f.sections().next().unwrap().entries().next().unwrap();
+        assert_eq!(e.key().as_deref(), Some("k"));
+        assert_eq!(e.value().as_deref(), Some("1"));
+        assert_eq!(e.inline_comment().as_deref(), Some("; note"));
+    }
+
+    #[test]
+    fn no_inline_comment_when_disabled() {
+        // Default parse leaves the marker in the value and reports no comment.
+        let f = ast("[s]\nk = 1   ; note\n");
+        let e = f.sections().next().unwrap().entries().next().unwrap();
+        assert_eq!(e.value().as_deref(), Some("1   ; note"));
+        assert_eq!(e.inline_comment(), None);
     }
 }

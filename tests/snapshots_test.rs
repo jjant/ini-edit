@@ -141,6 +141,7 @@ fn tree_allow_no_value(input: &str) -> String {
         input,
         &ini_edit::ParseOptions {
             allow_no_value: true,
+            ..Default::default()
         },
     );
     assert_eq!(p.syntax().text().to_string(), input);
