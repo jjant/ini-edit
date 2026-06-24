@@ -73,6 +73,16 @@ pub fn empty_section_node(name: &str) -> GreenNode {
     builder.finish()
 }
 
+/// Build a `BLANK_LINE` node: a single newline.
+#[must_use]
+pub fn blank_line_node() -> GreenNode {
+    let mut builder = GreenNodeBuilder::new();
+    builder.start_node(SyntaxKind::BLANK_LINE.into());
+    builder.token(SyntaxKind::NEWLINE.into(), "\n");
+    builder.finish_node();
+    builder.finish()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

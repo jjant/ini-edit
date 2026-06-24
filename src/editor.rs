@@ -63,13 +63,21 @@ impl Editor {
             };
         }
 
-        // Create new section at end of root.
+        // Create the section at the end of the file. It always starts on its
+        // own line, separated from existing content by one blank line.
         let new_section_green = green_builders::empty_section_node(name);
         let new_section = SyntaxNode::new_root(new_section_green).clone_for_update();
 
+        let mut elements: Vec<crate::SyntaxElement> = Vec::new();
+        for _ in 0..self.separator_blank_lines() {
+            let blank = SyntaxNode::new_root(green_builders::blank_line_node()).clone_for_update();
+            elements.push(blank.into());
+        }
+        elements.push(new_section.clone().into());
+
         let child_count = self.root.children_with_tokens().count();
         self.root
-            .splice_children(child_count..child_count, vec![new_section.clone().into()]);
+            .splice_children(child_count..child_count, elements);
 
         #[expect(clippy::missing_panics_doc, reason = "we just spliced the section in")]
         let section = self.find_section(name).expect("just inserted");
@@ -77,6 +85,34 @@ impl Editor {
             editor: self,
             node: section.syntax().clone(),
         }
+    }
+
+    /// Number of blank-line nodes to insert before a newly-created section so
+    /// that it begins on its own line and is separated from existing content by
+    /// exactly one blank line.
+    ///
+    /// - `0` when the file is empty or already ends with a blank line.
+    /// - `1` when the last line is terminated but not blank (adds the blank).
+    /// - `2` when the last line has no terminating newline (terminates it, then
+    ///   adds the blank) — this prevents gluing the new `[section]` onto the
+    ///   previous line.
+    fn separator_blank_lines(&self) -> usize {
+        let Some(last_token) = self.root.last_token() else {
+            return 0; // empty file
+        };
+        if last_token.kind() != SyntaxKind::NEWLINE {
+            return 2; // unterminated last line
+        }
+        usize::from(!self.ends_with_blank_line())
+    }
+
+    /// Whether the file's last line is already blank.
+    fn ends_with_blank_line(&self) -> bool {
+        let last_line = match self.root.last_child() {
+            Some(node) if node.kind() == SyntaxKind::SECTION => node.last_child(),
+            other => other,
+        };
+        last_line.is_some_and(|n| n.kind() == SyntaxKind::BLANK_LINE)
     }
 
     /// Render the final output.
@@ -744,5 +780,51 @@ mod tests {
         // Mutate, then re-fetch to observe the change.
         ed.section("s").append_entry("b", "2");
         assert_eq!(ed.file().sections().next().unwrap().entries().count(), 2);
+    }
+
+    // --- section creation: separation and no gluing ---
+
+    #[test]
+    fn create_section_inserts_blank_line_separator() {
+        let ed = Editor::new("[server]\nhost = 0.0.0.0\n");
+        ed.section("logging").append_entry("level", "info");
+        assert_eq!(
+            ed.finish(),
+            "[server]\nhost = 0.0.0.0\n\n[logging]\nlevel = info\n"
+        );
+    }
+
+    #[test]
+    fn create_section_does_not_glue_unterminated_line() {
+        // Previous content has no trailing newline — the new section must still
+        // start on its own line.
+        let ed = Editor::new("[server]\nhost = 0.0.0.0");
+        ed.section("logging").append_entry("level", "info");
+        assert_eq!(
+            ed.finish(),
+            "[server]\nhost = 0.0.0.0\n\n[logging]\nlevel = info\n"
+        );
+    }
+
+    #[test]
+    fn create_section_no_double_blank_line() {
+        // File already ends with a blank line — don't add a second one.
+        let ed = Editor::new("[server]\nk = v\n\n");
+        ed.section("logging").append_entry("level", "info");
+        assert_eq!(ed.finish(), "[server]\nk = v\n\n[logging]\nlevel = info\n");
+    }
+
+    #[test]
+    fn create_section_in_empty_file_has_no_leading_blank() {
+        let ed = Editor::new("");
+        ed.section("a").append_entry("k", "v");
+        assert_eq!(ed.finish(), "[a]\nk = v\n");
+    }
+
+    #[test]
+    fn create_section_after_preamble() {
+        let ed = Editor::new("g = 1\n");
+        ed.section("s").append_entry("k", "v");
+        assert_eq!(ed.finish(), "g = 1\n\n[s]\nk = v\n");
     }
 }
