@@ -124,13 +124,46 @@ impl SectionEditor<'_> {
         }
     }
 
-    /// Append a new entry at the end of this section (canonical format).
+    /// Append a new entry to this section (canonical `key = value` format).
+    ///
+    /// The entry is inserted after the section's last content line (entry or
+    /// comment) and **before** any trailing blank lines that separate this
+    /// section from the next, so it joins the section's body rather than
+    /// drifting below the blank-line gap. If the preceding content line has no
+    /// terminating newline (e.g. at end of file), a separating newline is
+    /// inserted first.
     pub fn append_entry(&self, key: &str, value: &str) {
-        let new_entry_green = green_builders::entry_node(key, value);
-        let new_entry = SyntaxNode::new_root(new_entry_green).clone_for_update();
-        let child_count = self.node.children_with_tokens().count();
-        self.node
-            .splice_children(child_count..child_count, vec![new_entry.into()]);
+        let (index, needs_newline) = self.content_end();
+        let entry = SyntaxNode::new_root(green_builders::entry_node(key, value)).clone_for_update();
+        let mut elements: Vec<crate::SyntaxElement> = Vec::new();
+        if needs_newline {
+            elements.push(Self::newline_element());
+        }
+        elements.push(entry.into());
+        self.node.splice_children(index..index, elements);
+    }
+
+    /// Insert a new entry after the `line`-th logical content line within this
+    /// section (1-based). Logical content lines are entries and comments; the
+    /// `[section]` header is not counted, so `line == 0` inserts before the
+    /// first content line (right after the header). A `line` value at or beyond
+    /// the number of content lines appends after the last one, exactly like
+    /// [`append_entry`](Self::append_entry).
+    ///
+    /// In contrast to [`insert_raw_lines_at`](Self::insert_raw_lines_at) — which
+    /// takes a raw child index (counting the header and blank lines) and inserts
+    /// verbatim, opaque text — this counts only content lines and inserts a
+    /// parsed entry, so the result is found by [`set`](Self::set),
+    /// [`remove_entry`](Self::remove_entry), and [`rename_key`](Self::rename_key).
+    pub fn insert_entry_at_line(&self, line: usize, key: &str, value: &str) {
+        let (index, needs_newline) = self.after_content_line(line);
+        let entry = SyntaxNode::new_root(green_builders::entry_node(key, value)).clone_for_update();
+        let mut elements: Vec<crate::SyntaxElement> = Vec::new();
+        if needs_newline {
+            elements.push(Self::newline_element());
+        }
+        elements.push(entry.into());
+        self.node.splice_children(index..index, elements);
     }
 
     /// Remove an entry by key name. Returns true if found and removed.
@@ -167,13 +200,20 @@ impl SectionEditor<'_> {
         self.node.detach();
     }
 
-    /// Append raw text lines at the end of this section.
+    /// Append raw text lines to this section's body.
     ///
-    /// Lines are inserted **verbatim** — no parsing, no reformatting.
-    /// A newline is appended to each line that doesn't already end with one.
+    /// Lines are inserted **verbatim** — no parsing, no reformatting. A newline
+    /// is appended to each line that doesn't already end with one. Like
+    /// [`append_entry`](Self::append_entry), lines land after the last content
+    /// line and before any trailing blank lines.
     pub fn append_raw_lines(&self, lines: &[&str]) {
-        let child_count = self.node.children_with_tokens().count();
-        self.splice_raw_lines_at(child_count, lines);
+        let (index, needs_newline) = self.content_end();
+        let mut elements: Vec<crate::SyntaxElement> = Vec::new();
+        if needs_newline {
+            elements.push(Self::newline_element());
+        }
+        elements.extend(Self::raw_line_elements(lines));
+        self.node.splice_children(index..index, elements);
     }
 
     /// Insert raw text lines at a specific child index within this section.
@@ -182,12 +222,16 @@ impl SectionEditor<'_> {
     /// A newline is appended to each line that doesn't already end with one.
     /// If `index` exceeds the number of children, lines are appended at the end.
     pub fn insert_raw_lines_at(&self, index: usize, lines: &[&str]) {
-        self.splice_raw_lines_at(index, lines);
-    }
-
-    fn splice_raw_lines_at(&self, index: usize, lines: &[&str]) {
         let child_count = self.node.children_with_tokens().count();
         let index = index.min(child_count);
+        let elements = Self::raw_line_elements(lines);
+        self.node.splice_children(index..index, elements);
+    }
+
+    /// Build the verbatim child elements for a set of raw lines. Each line
+    /// becomes a `COMMENT_LINE` node: its content is an opaque `COMMENT` token
+    /// followed by its newline, keeping the line-node invariant intact.
+    fn raw_line_elements(lines: &[&str]) -> Vec<crate::SyntaxElement> {
         let mut elements: Vec<crate::SyntaxElement> = Vec::new();
         for line in lines {
             let text = if line.ends_with('\n') || line.ends_with('\r') {
@@ -195,10 +239,10 @@ impl SectionEditor<'_> {
             } else {
                 format!("{line}\n")
             };
-            // Emit the line content (without newline) as a COMMENT token and
-            // the newline separately, wrapped in a COMMENT_LINE node so the
-            // line-node invariant holds. COMMENT is used as a generic "opaque
-            // text" kind — it preserves the content verbatim.
+            // Emit the line content (without newline) as a COMMENT token
+            // and the newline separately, wrapped in a COMMENT_LINE node.
+            // COMMENT is used as a generic "opaque text" kind — it preserves
+            // the content verbatim.
             let content = text.trim_end_matches(['\n', '\r']);
             let nl = if text.ends_with("\r\n") { "\r\n" } else { "\n" };
 
@@ -213,7 +257,86 @@ impl SectionEditor<'_> {
             let node = SyntaxNode::new_root(green).clone_for_update();
             elements.push(node.into());
         }
-        self.node.splice_children(index..index, elements);
+        elements
+    }
+
+    /// A standalone `NEWLINE` token element, used to separate appended content
+    /// from a preceding line that lacks its own terminator.
+    fn newline_element() -> crate::SyntaxElement {
+        let mut b = rowan::GreenNodeBuilder::new();
+        b.start_node(SyntaxKind::ROOT.into());
+        b.token(SyntaxKind::NEWLINE.into(), "\n");
+        b.finish_node();
+        let wrapper = SyntaxNode::new_root(b.finish()).clone_for_update();
+        wrapper
+            .children_with_tokens()
+            .next()
+            .expect("wrapper contains one newline token")
+    }
+
+    /// Insertion point at the end of the section's logical content: just after
+    /// the last entry/comment/header line, but before any trailing blank lines.
+    /// Returns `(child_index, needs_newline)`.
+    fn content_end(&self) -> (usize, bool) {
+        let children: Vec<crate::SyntaxElement> = self.node.children_with_tokens().collect();
+        // A SECTION always has at least its header, so a content line always
+        // exists; fall back to the first child defensively.
+        let k = children
+            .iter()
+            .rposition(|el| {
+                el.as_node().is_some_and(|n| {
+                    matches!(
+                        n.kind(),
+                        SyntaxKind::ENTRY | SyntaxKind::COMMENT_LINE | SyntaxKind::SECTION_HEADER
+                    )
+                })
+            })
+            .unwrap_or(0);
+        Self::after_element(&children, k)
+    }
+
+    /// Insertion point just after the `n`-th logical content line (1-based),
+    /// where content lines are entries and comments (header excluded). `n == 0`
+    /// (or an empty body) inserts right after the header; `n` is clamped to the
+    /// number of content lines. Returns `(child_index, needs_newline)`.
+    fn after_content_line(&self, n: usize) -> (usize, bool) {
+        let children: Vec<crate::SyntaxElement> = self.node.children_with_tokens().collect();
+        let header = children
+            .iter()
+            .position(|el| {
+                el.as_node()
+                    .is_some_and(|node| node.kind() == SyntaxKind::SECTION_HEADER)
+            })
+            .unwrap_or(0);
+        let content: Vec<usize> = children
+            .iter()
+            .enumerate()
+            .filter(|(_, el)| {
+                el.as_node().is_some_and(|node| {
+                    matches!(node.kind(), SyntaxKind::ENTRY | SyntaxKind::COMMENT_LINE)
+                })
+            })
+            .map(|(i, _)| i)
+            .collect();
+
+        if n == 0 || content.is_empty() {
+            return Self::after_element(&children, header);
+        }
+        let n = n.min(content.len());
+        Self::after_element(&children, content[n - 1])
+    }
+
+    /// Compute the insertion point immediately after the line node at
+    /// `children[k]`. In the line-node model every line node owns its
+    /// terminating newline, so this is simply the next index — with
+    /// `needs_newline` set when the line has no terminator (end of file).
+    fn after_element(children: &[crate::SyntaxElement], k: usize) -> (usize, bool) {
+        // Content lines are always nodes that own their terminating newline.
+        let ends_with_newline = children[k]
+            .as_node()
+            .and_then(rowan::SyntaxNode::last_token)
+            .is_some_and(|t| t.kind() == SyntaxKind::NEWLINE);
+        (k + 1, !ends_with_newline)
     }
 
     /// Remove a range of child line nodes (0-indexed within this section).
@@ -431,6 +554,118 @@ mod tests {
         assert_eq!(ed.finish(), "[s]\nnew = v ; note\n");
     }
 
+    // --- content-aware append ---
+
+    #[test]
+    fn append_entry_before_trailing_blank_line() {
+        let ed =
+            Editor::new("[server]\nhost = 0.0.0.0\nport = 8080\n\n[database]\nurl = localhost\n");
+        ed.section("server").append_entry("tls", "on");
+        assert_eq!(
+            ed.finish(),
+            "[server]\nhost = 0.0.0.0\nport = 8080\ntls = on\n\n[database]\nurl = localhost\n"
+        );
+    }
+
+    #[test]
+    fn append_entry_no_trailing_blank() {
+        let ed = Editor::new("[s]\na = 1\n");
+        ed.section("s").append_entry("b", "2");
+        assert_eq!(ed.finish(), "[s]\na = 1\nb = 2\n");
+    }
+
+    #[test]
+    fn append_entry_eof_without_newline() {
+        // Last line has no terminator — a separating newline must be added.
+        let ed = Editor::new("[s]\nhost = 0.0.0.0");
+        ed.section("s").append_entry("port", "8080");
+        assert_eq!(ed.finish(), "[s]\nhost = 0.0.0.0\nport = 8080\n");
+    }
+
+    #[test]
+    fn append_entry_into_empty_section() {
+        let ed = Editor::new("[s]\n");
+        ed.section("s").append_entry("k", "v");
+        assert_eq!(ed.finish(), "[s]\nk = v\n");
+    }
+
+    #[test]
+    fn append_entry_after_trailing_comment() {
+        // A trailing comment counts as content; the new entry goes after it,
+        // before the blank line.
+        let ed = Editor::new("[s]\na = 1\n; trailing note\n\n[next]\n");
+        ed.section("s").append_entry("b", "2");
+        assert_eq!(
+            ed.finish(),
+            "[s]\na = 1\n; trailing note\nb = 2\n\n[next]\n"
+        );
+    }
+
+    #[test]
+    fn append_entry_set_path_respects_trailing_blank() {
+        // `set` on a missing key uses the same content-aware append.
+        let ed = Editor::new("[s]\na = 1\n\n[next]\n");
+        ed.section("s").set("b", "2");
+        assert_eq!(ed.finish(), "[s]\na = 1\nb = 2\n\n[next]\n");
+    }
+
+    #[test]
+    fn append_raw_lines_before_trailing_blank() {
+        let ed = Editor::new("[s]\na = 1\n\n[next]\n");
+        ed.section("s").append_raw_lines(&["raw = line"]);
+        assert_eq!(ed.finish(), "[s]\na = 1\nraw = line\n\n[next]\n");
+    }
+
+    // --- logical-line insert ---
+
+    #[test]
+    fn insert_entry_at_line_middle() {
+        let ed = Editor::new("[s]\na = 1\nb = 2\nc = 3\n");
+        // After the 2nd logical content line (b).
+        ed.section("s").insert_entry_at_line(2, "x", "9");
+        assert_eq!(ed.finish(), "[s]\na = 1\nb = 2\nx = 9\nc = 3\n");
+    }
+
+    #[test]
+    fn insert_entry_at_line_zero_is_before_first() {
+        let ed = Editor::new("[s]\na = 1\nb = 2\n");
+        ed.section("s").insert_entry_at_line(0, "x", "9");
+        assert_eq!(ed.finish(), "[s]\nx = 9\na = 1\nb = 2\n");
+    }
+
+    #[test]
+    fn insert_entry_at_line_beyond_end_appends() {
+        let ed = Editor::new("[s]\na = 1\nb = 2\n\n[next]\n");
+        ed.section("s").insert_entry_at_line(99, "x", "9");
+        // Clamped to append, still before the trailing blank line.
+        assert_eq!(ed.finish(), "[s]\na = 1\nb = 2\nx = 9\n\n[next]\n");
+    }
+
+    #[test]
+    fn insert_entry_at_line_counts_comments() {
+        let ed = Editor::new("[s]\na = 1\n; note\nb = 2\n");
+        // Content lines: 1=a, 2=; note, 3=b. Insert after line 2 (the comment).
+        ed.section("s").insert_entry_at_line(2, "x", "9");
+        assert_eq!(ed.finish(), "[s]\na = 1\n; note\nx = 9\nb = 2\n");
+    }
+
+    #[test]
+    fn insert_entry_at_line_eof_without_newline() {
+        // Inserting after a line that lacks a terminator adds a separating one.
+        let ed = Editor::new("[s]\na = 1");
+        ed.section("s").insert_entry_at_line(1, "b", "2");
+        assert_eq!(ed.finish(), "[s]\na = 1\nb = 2\n");
+    }
+
+    #[test]
+    fn insert_entry_at_line_into_empty_section() {
+        let ed = Editor::new("[s]\n");
+        ed.section("s").insert_entry_at_line(1, "k", "v");
+        assert_eq!(ed.finish(), "[s]\nk = v\n");
+    }
+
+    // --- coverage for raw-line and edge paths ---
+
     #[test]
     fn remove_entry_missing_returns_false() {
         let ed = Editor::new("[s]\nk = v\n");
@@ -440,13 +675,20 @@ mod tests {
 
     #[test]
     fn append_raw_lines_preserves_existing_newline() {
-        // A line that already ends in a newline is inserted verbatim, with no
-        // extra newline appended.
+        // A line that already ends in a newline is inserted verbatim.
         let ed = Editor::new("[s]\nk = v\n");
         ed.section("s").append_raw_lines(&["already = newlined\n"]);
         let out = ed.finish();
         assert!(out.contains("already = newlined\n"), "got: {out}");
         assert!(!out.contains("newlined\n\n"), "got: {out}");
+    }
+
+    #[test]
+    fn append_raw_lines_eof_without_newline() {
+        // Appending raw lines after an unterminated last line adds a separator.
+        let ed = Editor::new("[s]\nk = v");
+        ed.section("s").append_raw_lines(&["raw = line"]);
+        assert_eq!(ed.finish(), "[s]\nk = v\nraw = line\n");
     }
 
     #[test]
@@ -458,7 +700,6 @@ mod tests {
         // Children: 0 SECTION_HEADER, 1 LEX_ERROR token, 2 NEWLINE token,
         //   3 ENTRY(k). Remove the two loose error tokens.
         ed.section("s").remove_lines(1..3);
-        let out = ed.finish();
-        assert_eq!(out, "[s]\nk = v\n", "got: {out}");
+        assert_eq!(ed.finish(), "[s]\nk = v\n");
     }
 }
