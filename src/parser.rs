@@ -5,7 +5,7 @@
 
 use rowan::GreenNodeBuilder;
 
-use crate::lexer::{Token, lex};
+use crate::lexer::{Token, lex_with};
 use crate::syntax_kind::{SyntaxKind, SyntaxNode};
 
 /// Result of parsing an INI source string.
@@ -96,6 +96,25 @@ pub struct ParseOptions {
     /// max_allowed_packet = 64M
     /// ```
     pub allow_no_value: bool,
+
+    /// When `true`, a `;`/`#` marker on an entry line that is preceded by
+    /// whitespace (and is not at the start of the value) begins a trailing
+    /// inline comment instead of being part of the value. The comment is
+    /// exposed via [`Entry::inline_comment()`](crate::ast::Entry::inline_comment).
+    ///
+    /// The rule is whitespace-adjacency, which preserves markers that are not
+    /// whitespace-separated and markers at the value start:
+    ///
+    /// ```ini
+    /// retain = 1            ; comment, value is "1"
+    /// url    = http://x/#f  ; comment, value is "http://x/#f"
+    /// conn   = a=1;b=2      ; comment, value is "a=1;b=2"
+    /// color  = #fff         ; comment, value is "#fff"
+    /// ```
+    ///
+    /// Disabled by default: the safest behavior for a lossless parser is to
+    /// leave value bytes uninterpreted.
+    pub inline_comments: bool,
 }
 
 /// Parse an INI source string.
@@ -107,7 +126,7 @@ pub fn parse(input: &str) -> Parse {
 /// Parse an INI source string with custom options.
 #[must_use]
 pub fn parse_with(input: &str, options: &ParseOptions) -> Parse {
-    let tokens = lex(input);
+    let tokens = lex_with(input, options.inline_comments);
     let mut p = Parser {
         tokens,
         cursor: 0,
@@ -246,6 +265,11 @@ impl Parser<'_> {
         if self.peek() == Some(SyntaxKind::WHITESPACE) {
             self.bump();
         }
+        // A trailing inline comment (only emitted by the lexer when
+        // `inline_comments` is enabled) belongs to the entry, before its newline.
+        if self.peek() == Some(SyntaxKind::COMMENT) {
+            self.bump();
+        }
         if self.peek() == Some(SyntaxKind::NEWLINE) {
             self.bump();
         }
@@ -358,5 +382,37 @@ mod tests {
         assert!(rendered.contains("[unclosed"));
         assert!(rendered.contains('^'));
         assert!(rendered.contains("expected ']'"));
+    }
+
+    fn inline() -> ParseOptions {
+        ParseOptions {
+            inline_comments: true,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn inline_comment_round_trips() {
+        let input = "[s]\nk = 1   ; note\nj = 2\n";
+        let p = parse_with(input, &inline());
+        assert_eq!(p.syntax().text().to_string(), input);
+        assert!(p.errors().is_empty(), "errors: {:?}", p.errors());
+    }
+
+    #[test]
+    fn inline_comment_round_trips_real_world() {
+        let input = "[boot]\nBootproject.RetainMismatch.Init=1   ; HANDLES MISMATCHES\n";
+        let p = parse_with(input, &inline());
+        assert_eq!(p.syntax().text().to_string(), input);
+        assert!(p.errors().is_empty(), "errors: {:?}", p.errors());
+    }
+
+    #[test]
+    fn inline_comment_default_off_round_trips_into_value() {
+        // With the option off, the marker stays in the value but still round-trips.
+        let input = "[s]\nk = 1   ; note\n";
+        let p = parse(input);
+        assert_eq!(p.syntax().text().to_string(), input);
+        assert!(p.errors().is_empty());
     }
 }

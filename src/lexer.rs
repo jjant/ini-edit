@@ -20,11 +20,26 @@ pub struct Token<'a> {
 }
 
 /// Lex an entire input string into a flat token stream.
+///
+/// Equivalent to [`lex_with`] with inline comments disabled.
 #[must_use]
 pub fn lex(input: &str) -> Vec<Token<'_>> {
+    lex_with(input, false)
+}
+
+/// Lex an entire input string into a flat token stream, with options.
+///
+/// When `inline_comments` is `true`, a `;`/`#` marker on an entry line that is
+/// preceded by whitespace (and is not at the start of the value) ends the value
+/// and begins a trailing [`COMMENT`](SyntaxKind::COMMENT) token. Markers that
+/// are not whitespace-adjacent (`a=1;b=2`) or that sit at the value start
+/// (`color = #fff`) remain part of the value.
+#[must_use]
+pub fn lex_with(input: &str, inline_comments: bool) -> Vec<Token<'_>> {
     let mut lexer = Lexer {
         rest: input,
         tokens: Vec::new(),
+        inline_comments,
     };
     // Skip UTF-8 BOM if present, emitting it as whitespace (trivia).
     if lexer.rest.starts_with('\u{FEFF}') {
@@ -39,6 +54,7 @@ pub fn lex(input: &str) -> Vec<Token<'_>> {
 struct Lexer<'a> {
     rest: &'a str,
     tokens: Vec<Token<'a>>,
+    inline_comments: bool,
 }
 
 impl Lexer<'_> {
@@ -205,16 +221,37 @@ impl Lexer<'_> {
         }
 
         if total_len > 0 {
-            // Separate trailing whitespace from the last line of the value.
             let raw = &value_start[..total_len];
-            let trimmed = raw.trim_end_matches([' ', '\t']);
-            let value_len = trimmed.len();
-            let trail_ws_len = total_len - value_len;
-            if value_len > 0 {
-                self.bump(SyntaxKind::VALUE_TEXT, value_len);
-            }
-            if trail_ws_len > 0 {
-                self.bump(SyntaxKind::WHITESPACE, trail_ws_len);
+
+            // When inline comments are enabled, a whitespace-preceded `;`/`#`
+            // marker on the final physical line ends the value and starts a
+            // trailing comment.
+            let split = if self.inline_comments {
+                find_inline_comment(raw)
+            } else {
+                None
+            };
+
+            if let Some((value_len, ws_len)) = split {
+                if value_len > 0 {
+                    self.bump(SyntaxKind::VALUE_TEXT, value_len);
+                }
+                if ws_len > 0 {
+                    self.bump(SyntaxKind::WHITESPACE, ws_len);
+                }
+                let comment_len = total_len - value_len - ws_len;
+                self.bump(SyntaxKind::COMMENT, comment_len);
+            } else {
+                // Separate trailing whitespace from the last line of the value.
+                let trimmed = raw.trim_end_matches([' ', '\t']);
+                let value_len = trimmed.len();
+                let trail_ws_len = total_len - value_len;
+                if value_len > 0 {
+                    self.bump(SyntaxKind::VALUE_TEXT, value_len);
+                }
+                if trail_ws_len > 0 {
+                    self.bump(SyntaxKind::WHITESPACE, trail_ws_len);
+                }
             }
         }
         self.eat_newline();
@@ -230,6 +267,43 @@ impl Lexer<'_> {
             self.bump(SyntaxKind::LEX_ERROR, len);
         }
     }
+}
+
+/// Locate a trailing inline comment within a value span.
+///
+/// Scans the final physical line of `raw` for the first run of spaces/tabs that
+/// is immediately followed by a `;` or `#` marker and is not at the start of
+/// that line. Returns `(value_len, ws_len)`: the byte length of the value
+/// preceding the whitespace run, and the length of the whitespace run itself.
+/// The comment spans from `value_len + ws_len` to the end of `raw`.
+///
+/// Returns `None` when there is no such marker, which leaves the whole span as
+/// the value. This protects markers that are not whitespace-adjacent
+/// (`a=1;b=2`), markers at the value start (`#fff`), and `;`/`#` on earlier
+/// continued lines (only the final physical line is inspected).
+fn find_inline_comment(raw: &str) -> Option<(usize, usize)> {
+    let bytes = raw.as_bytes();
+    // Only the final physical line of a (possibly continued) value is eligible.
+    let final_line_start = raw.rfind(['\n', '\r']).map_or(0, |i| i + 1);
+
+    let mut i = final_line_start;
+    while i < bytes.len() {
+        if bytes[i] == b' ' || bytes[i] == b'\t' {
+            let ws_start = i;
+            while i < bytes.len() && (bytes[i] == b' ' || bytes[i] == b'\t') {
+                i += 1;
+            }
+            if i < bytes.len()
+                && (bytes[i] == b';' || bytes[i] == b'#')
+                && ws_start > final_line_start
+            {
+                return Some((ws_start, i - ws_start));
+            }
+        } else {
+            i += 1;
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -394,5 +468,115 @@ mod tests {
         assert_eq!(reconstructed, input);
         // The `=` isn't a valid start for a key, so the whole line becomes error.
         assert!(toks.iter().any(|t| t.kind == LEX_ERROR));
+    }
+
+    // --- inline comments (opt-in) ---
+
+    fn val<'a>(toks: &'a [Token<'a>]) -> Option<&'a str> {
+        toks.iter().find(|t| t.kind == VALUE_TEXT).map(|t| t.text)
+    }
+    fn com<'a>(toks: &'a [Token<'a>]) -> Option<&'a str> {
+        toks.iter().find(|t| t.kind == COMMENT).map(|t| t.text)
+    }
+
+    #[test]
+    fn inline_comment_basic() {
+        let toks = lex_with("k = 1   ; note\n", true);
+        assert_eq!(
+            toks.iter().map(|t| t.kind).collect::<Vec<_>>(),
+            vec![
+                IDENT, WHITESPACE, EQ, WHITESPACE, VALUE_TEXT, WHITESPACE, COMMENT, NEWLINE
+            ]
+        );
+        assert_eq!(val(&toks), Some("1"));
+        assert_eq!(com(&toks), Some("; note"));
+    }
+
+    #[test]
+    fn inline_comment_disabled_by_default() {
+        let toks = lex("k = 1   ; note\n");
+        assert_eq!(val(&toks), Some("1   ; note"));
+        assert!(com(&toks).is_none());
+    }
+
+    #[test]
+    fn inline_comment_requires_whitespace_before_marker() {
+        // Connection-string style — no space before `;` keeps it in the value.
+        let toks = lex_with("conn = a=1;b=2;c=3\n", true);
+        assert_eq!(val(&toks), Some("a=1;b=2;c=3"));
+        assert!(com(&toks).is_none());
+    }
+
+    #[test]
+    fn inline_comment_marker_at_value_start_is_value() {
+        let toks = lex_with("color = #fff\n", true);
+        assert_eq!(val(&toks), Some("#fff"));
+        assert!(com(&toks).is_none());
+    }
+
+    #[test]
+    fn inline_comment_hash_after_value() {
+        let toks = lex_with("color = #fff ; my color\n", true);
+        assert_eq!(val(&toks), Some("#fff"));
+        assert_eq!(com(&toks), Some("; my color"));
+    }
+
+    #[test]
+    fn inline_comment_url_with_fragment_preserved() {
+        let toks = lex_with("url = http://example.com/#section\n", true);
+        assert_eq!(val(&toks), Some("http://example.com/#section"));
+        assert!(com(&toks).is_none());
+    }
+
+    #[test]
+    fn inline_comment_value_with_internal_spaces() {
+        let toks = lex_with("name = John Smith ; note\n", true);
+        assert_eq!(val(&toks), Some("John Smith"));
+        assert_eq!(com(&toks), Some("; note"));
+    }
+
+    #[test]
+    fn inline_comment_no_value_before_marker_stays_value() {
+        // After the separator, the post-`=` whitespace is consumed, so a marker
+        // at the very start of the value region is treated as value.
+        let toks = lex_with("k =    ; not a comment\n", true);
+        assert_eq!(val(&toks), Some("; not a comment"));
+        assert!(com(&toks).is_none());
+    }
+
+    #[test]
+    fn inline_comment_real_world_boot_project() {
+        let input =
+            "Bootproject.RetainMismatch.Init=1           ; HANDLES RETAIN VARIABLE MISMATCHES\n";
+        let toks = lex_with(input, true);
+        let reconstructed: String = toks.iter().map(|t| t.text).collect();
+        assert_eq!(reconstructed, input);
+        assert_eq!(val(&toks), Some("1"));
+        assert_eq!(com(&toks), Some("; HANDLES RETAIN VARIABLE MISMATCHES"));
+    }
+
+    #[test]
+    fn inline_comment_lossless_mixed() {
+        let input = "k = 1   ; note\ncolor=#fff ; c\nconn = a;b\nurl = http://x/#f\n";
+        let toks = lex_with(input, true);
+        let reconstructed: String = toks.iter().map(|t| t.text).collect();
+        assert_eq!(reconstructed, input);
+    }
+
+    #[test]
+    fn inline_comment_on_final_continuation_line() {
+        let input = "k = a \\\nb ; note\n";
+        let toks = lex_with(input, true);
+        let reconstructed: String = toks.iter().map(|t| t.text).collect();
+        assert_eq!(reconstructed, input);
+        assert_eq!(val(&toks), Some("a \\\nb"));
+        assert_eq!(com(&toks), Some("; note"));
+    }
+
+    #[test]
+    fn inline_comment_tab_before_marker() {
+        let toks = lex_with("k = v\t; note\n", true);
+        assert_eq!(val(&toks), Some("v"));
+        assert_eq!(com(&toks), Some("; note"));
     }
 }

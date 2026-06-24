@@ -23,8 +23,8 @@
 
 use crate::ast::{AstNode, Entry, File, Section};
 use crate::green_builders;
-use crate::parse;
 use crate::syntax_kind::{SyntaxKind, SyntaxNode};
+use crate::{ParseOptions, parse_with};
 
 /// A format-preserving editor for INI files.
 #[derive(Debug)]
@@ -36,7 +36,18 @@ impl Editor {
     /// Create an editor from source text.
     #[must_use]
     pub fn new(src: &str) -> Self {
-        let p = parse(src);
+        Self::with_parse_options(src, &ParseOptions::default())
+    }
+
+    /// Create an editor from source text using custom [`ParseOptions`].
+    ///
+    /// Use this to edit files whose features require opt-in parsing, e.g.
+    /// [`inline_comments`](crate::ParseOptions::inline_comments) — passing the
+    /// same options the file was authored with ensures inline comments are
+    /// preserved across edits rather than absorbed into values.
+    #[must_use]
+    pub fn with_parse_options(src: &str, options: &ParseOptions) -> Self {
+        let p = parse_with(src, options);
         let root = p.syntax().clone_for_update();
         Self { root }
     }
@@ -392,5 +403,27 @@ mod tests {
         let out = ed.finish();
         assert!(out.contains("key=value_no_spaces\n"), "got: {out}");
         assert!(out.contains("  indented=line\n"), "got: {out}");
+    }
+
+    #[test]
+    fn set_preserves_inline_comment() {
+        let opts = ParseOptions {
+            inline_comments: true,
+            ..Default::default()
+        };
+        let ed = Editor::with_parse_options("[s]\nretain = 1   ; keep this note\n", &opts);
+        ed.section("s").set("retain", "0");
+        assert_eq!(ed.finish(), "[s]\nretain = 0   ; keep this note\n");
+    }
+
+    #[test]
+    fn rename_key_preserves_inline_comment() {
+        let opts = ParseOptions {
+            inline_comments: true,
+            ..Default::default()
+        };
+        let ed = Editor::with_parse_options("[s]\nold = v ; note\n", &opts);
+        assert!(ed.section("s").rename_key("old", "new"));
+        assert_eq!(ed.finish(), "[s]\nnew = v ; note\n");
     }
 }
