@@ -150,9 +150,11 @@ impl SectionEditor<'_> {
     /// the number of content lines appends after the last one, exactly like
     /// [`append_entry`](Self::append_entry).
     ///
-    /// Unlike [`insert_raw_lines_at`](Self::insert_raw_lines_at), this addresses
-    /// positions by logical line rather than by raw child-token index, so
-    /// callers don't need to reason about the tree's tokenization.
+    /// In contrast to [`insert_raw_lines_at`](Self::insert_raw_lines_at) — which
+    /// takes a raw child index (counting the header and blank lines) and inserts
+    /// verbatim, opaque text — this counts only content lines and inserts a
+    /// parsed entry, so the result is found by [`set`](Self::set),
+    /// [`remove_entry`](Self::remove_entry), and [`rename_key`](Self::rename_key).
     pub fn insert_entry_at_line(&self, line: usize, key: &str, value: &str) {
         let (index, needs_newline) = self.after_content_line(line);
         let entry = SyntaxNode::new_root(green_builders::entry_node(key, value)).clone_for_update();
