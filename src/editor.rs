@@ -430,4 +430,35 @@ mod tests {
         assert!(ed.section("s").rename_key("old", "new"));
         assert_eq!(ed.finish(), "[s]\nnew = v ; note\n");
     }
+
+    #[test]
+    fn remove_entry_missing_returns_false() {
+        let ed = Editor::new("[s]\nk = v\n");
+        assert!(!ed.section("s").remove_entry("absent"));
+        assert!(ed.finish().contains("k = v"));
+    }
+
+    #[test]
+    fn append_raw_lines_preserves_existing_newline() {
+        // A line that already ends in a newline is inserted verbatim, with no
+        // extra newline appended.
+        let ed = Editor::new("[s]\nk = v\n");
+        ed.section("s").append_raw_lines(&["already = newlined\n"]);
+        let out = ed.finish();
+        assert!(out.contains("already = newlined\n"), "got: {out}");
+        assert!(!out.contains("newlined\n\n"), "got: {out}");
+    }
+
+    #[test]
+    fn remove_lines_detaches_loose_tokens() {
+        // A line starting with `=` lexes to a loose LEX_ERROR token (plus its
+        // newline) directly under the section, so remove_lines must detach
+        // tokens as well as line nodes.
+        let ed = Editor::new("[s]\n=bad\nk = v\n");
+        // Children: 0 SECTION_HEADER, 1 LEX_ERROR token, 2 NEWLINE token,
+        //   3 ENTRY(k). Remove the two loose error tokens.
+        ed.section("s").remove_lines(1..3);
+        let out = ed.finish();
+        assert_eq!(out, "[s]\nk = v\n", "got: {out}");
+    }
 }

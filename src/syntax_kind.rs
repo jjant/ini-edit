@@ -103,3 +103,40 @@ pub type SyntaxNode = rowan::SyntaxNode<IniLang>;
 pub type SyntaxToken = rowan::SyntaxToken<IniLang>;
 /// Either a node or a token.
 pub type SyntaxElement = rowan::SyntaxElement<IniLang>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rowan::Language;
+
+    #[test]
+    fn is_trivia_classifies_tokens() {
+        assert!(SyntaxKind::WHITESPACE.is_trivia());
+        assert!(SyntaxKind::NEWLINE.is_trivia());
+        assert!(SyntaxKind::COMMENT.is_trivia());
+        assert!(!SyntaxKind::IDENT.is_trivia());
+        assert!(!SyntaxKind::ENTRY.is_trivia());
+    }
+
+    #[test]
+    fn kind_raw_round_trip() {
+        for kind in [
+            SyntaxKind::WHITESPACE,
+            SyntaxKind::COMMENT,
+            SyntaxKind::SECTION,
+            SyntaxKind::ENTRY,
+            SyntaxKind::VALUE,
+            SyntaxKind::COMMENT_LINE,
+            SyntaxKind::BLANK_LINE,
+        ] {
+            let raw = IniLang::kind_to_raw(kind);
+            assert_eq!(IniLang::kind_from_raw(raw), kind);
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "kind out of range")]
+    fn kind_from_raw_out_of_range_panics() {
+        let _ = IniLang::kind_from_raw(rowan::SyntaxKind(999));
+    }
+}

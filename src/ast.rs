@@ -274,4 +274,21 @@ mod tests {
         assert_eq!(e.value().as_deref(), Some("1   ; note"));
         assert_eq!(e.inline_comment(), None);
     }
+
+    #[test]
+    fn comment_lines_and_blank_lines() {
+        let f = ast("[s]\n; first\nk = v\n# second\n\n");
+        let sec = f.sections().next().unwrap();
+
+        let first = sec.comment_lines().next().unwrap();
+        assert_eq!(first.token().unwrap().kind(), SyntaxKind::COMMENT);
+        assert_eq!(first.text().as_deref(), Some("; first"));
+        assert_eq!(first.syntax().text().to_string(), "; first\n");
+
+        let texts: Vec<_> = sec.comment_lines().filter_map(|c| c.text()).collect();
+        assert_eq!(texts, vec!["; first".to_string(), "# second".to_string()]);
+
+        let blank = sec.syntax().children().find_map(BlankLine::cast).unwrap();
+        assert_eq!(blank.syntax().text().to_string(), "\n");
+    }
 }

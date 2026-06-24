@@ -540,4 +540,23 @@ mod tests {
             .count();
         assert_eq!(blanks, 3);
     }
+
+    #[test]
+    fn error_line_inside_section_round_trips() {
+        // A line starting with `=` lexes to a LEX_ERROR token, exercising the
+        // section-level error path.
+        let input = "[s]\n=bad\nk = v\n";
+        let p = parse(input);
+        assert_eq!(p.syntax().text().to_string(), input);
+        assert!(!p.errors().is_empty());
+    }
+
+    #[test]
+    fn error_line_at_root_round_trips() {
+        // Same, but in the preamble — exercises the root-level error path.
+        let input = "=oops\n[s]\nk = v\n";
+        let p = parse(input);
+        assert_eq!(p.syntax().text().to_string(), input);
+        assert!(!p.errors().is_empty());
+    }
 }
