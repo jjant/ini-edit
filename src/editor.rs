@@ -167,23 +167,7 @@ impl SectionEditor<'_> {
     /// Set a key's value. Updates in-place if exists, appends if not.
     pub fn set(&self, key: &str, value: &str) {
         if let Some(entry) = self.find_entry(key) {
-            #[expect(
-                clippy::missing_panics_doc,
-                reason = "parser always creates a VALUE node inside ENTRY"
-            )]
-            let value_node = entry.value_node().expect("entry has VALUE node");
-            let value_syntax = value_node.syntax().clone();
-
-            // splice_children: replace all children of VALUE with new content.
-            let old_count = value_syntax.children_with_tokens().count();
-            let new_children: Vec<crate::SyntaxElement> = if value.is_empty() {
-                vec![]
-            } else {
-                let fresh =
-                    SyntaxNode::new_root(green_builders::value_node(value)).clone_for_update();
-                fresh.children_with_tokens().collect()
-            };
-            value_syntax.splice_children(0..old_count, new_children);
+            replace_value(entry.syntax(), value);
         } else {
             self.append_entry(key, value);
         }
@@ -242,22 +226,50 @@ impl SectionEditor<'_> {
         }
     }
 
-    /// Rename a key (preserving its value and formatting).
+    /// Rename a key, preserving its value and formatting.
+    ///
+    /// Returns `false` and makes **no change** if `old_key` is not found, or if
+    /// `new_key` already exists on a different entry — renaming is refused
+    /// rather than silently creating a duplicate key. Renaming a key to its
+    /// current name is a successful no-op.
+    ///
+    /// For unconditional, position-targeted renaming that bypasses this guard
+    /// (e.g. when intermediate states transiently collide), use
+    /// [`entries_mut`](Self::entries_mut).
     #[must_use]
     pub fn rename_key(&self, old_key: &str, new_key: &str) -> bool {
-        if let Some(entry) = self.find_entry(old_key) {
-            if let Some(key_node) = entry.key_node() {
-                let key_syntax = key_node.syntax().clone();
-                let old_count = key_syntax.children_with_tokens().count();
-                let fresh =
-                    SyntaxNode::new_root(green_builders::key_node(new_key)).clone_for_update();
-                let new_children: Vec<crate::SyntaxElement> =
-                    fresh.children_with_tokens().collect();
-                key_syntax.splice_children(0..old_count, new_children);
-                return true;
-            }
+        let Some(entry) = self.find_entry(old_key) else {
+            return false;
+        };
+        // Refuse to create a duplicate key.
+        if old_key != new_key && self.find_entry(new_key).is_some() {
+            return false;
         }
-        false
+        replace_key(entry.syntax(), new_key);
+        true
+    }
+
+    /// Handles to each entry in this section, in document order, for
+    /// position-targeted mutation.
+    ///
+    /// Because handles address entries by position rather than by key name,
+    /// they stay unambiguous even when duplicate keys are present — useful for
+    /// batch renames whose intermediate states would transiently collide.
+    ///
+    /// The returned handles are a snapshot taken when this is called. Mutating
+    /// one (e.g. [`EntryEditor::set_key`]) does not invalidate the others, so
+    /// it's safe to iterate the vector and mutate as you go.
+    #[must_use]
+    pub fn entries_mut(&self) -> Vec<EntryEditor> {
+        self.node
+            .children()
+            .filter_map(Entry::cast)
+            .enumerate()
+            .map(|(index, entry)| EntryEditor {
+                node: entry.syntax().clone(),
+                index,
+            })
+            .collect()
     }
 
     /// Remove this entire section (header + all entries).
@@ -430,6 +442,87 @@ impl SectionEditor<'_> {
         let section = Section::cast(self.node.clone())?;
         section.entries().find(|e| e.key().as_deref() == Some(key))
     }
+}
+
+/// A handle to a specific entry within a section, for position-targeted
+/// mutation that doesn't depend on key names.
+///
+/// Obtained from [`SectionEditor::entries_mut`]. Because it targets an entry by
+/// identity rather than by key lookup, it operates unambiguously even when
+/// several entries share a key, and its mutators (`set_key`/`set_value`) make
+/// no duplicate-key checks — the caller is in control.
+pub struct EntryEditor {
+    node: SyntaxNode,
+    index: usize,
+}
+
+impl EntryEditor {
+    /// This entry's 0-based position among its section's entries.
+    #[must_use]
+    pub fn index(&self) -> usize {
+        self.index
+    }
+
+    /// The current key text.
+    #[must_use]
+    pub fn key(&self) -> Option<String> {
+        Entry::cast(self.node.clone())?.key()
+    }
+
+    /// The current value text. Returns `None` for a bare key with no separator.
+    #[must_use]
+    pub fn value(&self) -> Option<String> {
+        Entry::cast(self.node.clone())?.value()
+    }
+
+    /// Replace this entry's key, preserving its value and formatting.
+    ///
+    /// Unlike [`SectionEditor::rename_key`], this targets exactly this entry
+    /// and does **not** guard against creating duplicate keys.
+    pub fn set_key(&self, new_key: &str) {
+        replace_key(&self.node, new_key);
+    }
+
+    /// Replace this entry's value, preserving its key and formatting. An empty
+    /// string clears the value (`key =`).
+    pub fn set_value(&self, value: &str) {
+        replace_value(&self.node, value);
+    }
+
+    /// Remove this entry from its section.
+    pub fn remove(self) {
+        self.node.detach();
+    }
+}
+
+/// Replace the key identifier of an `ENTRY` node in place.
+fn replace_key(entry: &SyntaxNode, new_key: &str) {
+    let key_node = Entry::cast(entry.clone())
+        .and_then(|e| e.key_node())
+        .expect("an ENTRY always has a KEY node");
+    let key_syntax = key_node.syntax().clone();
+    let old_count = key_syntax.children_with_tokens().count();
+    let fresh = SyntaxNode::new_root(green_builders::key_node(new_key)).clone_for_update();
+    let new_children: Vec<crate::SyntaxElement> = fresh.children_with_tokens().collect();
+    key_syntax.splice_children(0..old_count, new_children);
+}
+
+/// Replace the value of an `ENTRY` node in place. An empty string clears it.
+fn replace_value(entry: &SyntaxNode, value: &str) {
+    let value_node = Entry::cast(entry.clone())
+        .and_then(|e| e.value_node())
+        .expect("an ENTRY always has a VALUE node");
+    let value_syntax = value_node.syntax().clone();
+    let old_count = value_syntax.children_with_tokens().count();
+    let new_children: Vec<crate::SyntaxElement> = if value.is_empty() {
+        vec![]
+    } else {
+        SyntaxNode::new_root(green_builders::value_node(value))
+            .clone_for_update()
+            .children_with_tokens()
+            .collect()
+    };
+    value_syntax.splice_children(0..old_count, new_children);
 }
 
 #[cfg(test)]
@@ -826,5 +919,104 @@ mod tests {
         let ed = Editor::new("g = 1\n");
         ed.section("s").append_entry("k", "v");
         assert_eq!(ed.finish(), "g = 1\n\n[s]\nk = v\n");
+    }
+
+    // --- duplicate-key safety + entry handles ---
+
+    #[test]
+    fn rename_key_refuses_duplicate() {
+        let ed = Editor::new("[paths]\na = 1\nb = 2\n");
+        // Renaming b -> a would collide with the existing a; refuse, no change.
+        assert!(!ed.section("paths").rename_key("b", "a"));
+        assert_eq!(ed.finish(), "[paths]\na = 1\nb = 2\n");
+    }
+
+    #[test]
+    fn rename_key_to_same_name_is_noop_success() {
+        let ed = Editor::new("[s]\nk = v\n");
+        assert!(ed.section("s").rename_key("k", "k"));
+        assert_eq!(ed.finish(), "[s]\nk = v\n");
+    }
+
+    #[test]
+    fn rename_key_still_works_without_collision() {
+        let ed = Editor::new("[s]\nold = v\n");
+        assert!(ed.section("s").rename_key("old", "new"));
+        assert_eq!(ed.finish(), "[s]\nnew = v\n");
+        assert!(!ed.section("s").rename_key("absent", "x"));
+    }
+
+    #[test]
+    fn entries_mut_positional_rename() {
+        let ed = Editor::new("[paths]\na = 1\nb = 2\nc = 3\n");
+        for entry in ed.section("paths").entries_mut() {
+            let i = entry.index();
+            entry.set_key(&format!("k{i}"));
+        }
+        assert_eq!(ed.finish(), "[paths]\nk0 = 1\nk1 = 2\nk2 = 3\n");
+    }
+
+    #[test]
+    fn entries_mut_disambiguates_duplicate_keys() {
+        let ed = Editor::new("[s]\na = 1\na = 2\n");
+        let entries = ed.section("s").entries_mut();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].value().as_deref(), Some("1"));
+        assert_eq!(entries[1].value().as_deref(), Some("2"));
+        // Target the second `a` by position — name lookup couldn't.
+        entries[1].set_key("b");
+        assert_eq!(ed.finish(), "[s]\na = 1\nb = 2\n");
+    }
+
+    #[test]
+    fn entry_editor_accessors() {
+        let ed = Editor::new("[s]\nhost = localhost\nport = 8080\n");
+        let entries = ed.section("s").entries_mut();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].index(), 0);
+        assert_eq!(entries[0].key().as_deref(), Some("host"));
+        assert_eq!(entries[0].value().as_deref(), Some("localhost"));
+        assert_eq!(entries[1].index(), 1);
+        assert_eq!(entries[1].key().as_deref(), Some("port"));
+    }
+
+    #[test]
+    fn entry_editor_value_none_for_bare_key() {
+        let opts = ParseOptions {
+            allow_no_value: true,
+            ..Default::default()
+        };
+        let ed = Editor::with_parse_options("[s]\nflag\n", &opts);
+        let entries = ed.section("s").entries_mut();
+        assert_eq!(entries[0].key().as_deref(), Some("flag"));
+        assert_eq!(entries[0].value(), None);
+    }
+
+    #[test]
+    fn entry_editor_set_value() {
+        let ed = Editor::new("[s]\na = 1\nb = 2\n");
+        let entries = ed.section("s").entries_mut();
+        entries[0].set_value("10");
+        entries[1].set_value(""); // clear the value
+        assert_eq!(ed.finish(), "[s]\na = 10\nb = \n");
+    }
+
+    #[test]
+    fn entry_editor_remove() {
+        let ed = Editor::new("[s]\na = 1\nb = 2\nc = 3\n");
+        // Remove the middle entry by position.
+        ed.section("s")
+            .entries_mut()
+            .into_iter()
+            .nth(1)
+            .unwrap()
+            .remove();
+        assert_eq!(ed.finish(), "[s]\na = 1\nc = 3\n");
+    }
+
+    #[test]
+    fn entries_mut_empty_section_is_empty() {
+        let ed = Editor::new("[s]\n");
+        assert!(ed.section("s").entries_mut().is_empty());
     }
 }
