@@ -85,6 +85,35 @@ impl Editor {
         self.root.text().to_string()
     }
 
+    /// A read-only typed view over the editor's current tree.
+    ///
+    /// Inspect sections and entries before or between edits without parsing the
+    /// source a second time. The returned [`File`] reflects the tree at the
+    /// time of the call; fetch it again after mutating to observe changes.
+    ///
+    /// ```
+    /// use ini_edit::editor::Editor;
+    ///
+    /// let ed = Editor::new("[server]\nhost = 0.0.0.0\nport = 8080\n");
+    ///
+    /// // Read using the same parse that backs the editor — no second parse.
+    /// let names: Vec<_> = ed.file().sections().filter_map(|s| s.name()).collect();
+    /// assert_eq!(names, ["server"]);
+    ///
+    /// // Then mutate the same tree.
+    /// ed.section("server").set("port", "9090");
+    /// assert!(ed.finish().contains("port = 9090"));
+    /// ```
+    #[must_use]
+    pub fn file(&self) -> File {
+        #[expect(
+            clippy::missing_panics_doc,
+            reason = "the editor root is always a ROOT node produced by the parser"
+        )]
+        let file = File::cast(self.root.clone()).expect("editor root is a ROOT node");
+        file
+    }
+
     fn find_section(&self, name: &str) -> Option<Section> {
         let file = File::cast(self.root.clone())?;
         file.sections().find(|s| s.name().as_deref() == Some(name))
@@ -701,5 +730,19 @@ mod tests {
         //   3 ENTRY(k). Remove the two loose error tokens.
         ed.section("s").remove_lines(1..3);
         assert_eq!(ed.finish(), "[s]\nk = v\n");
+    }
+
+    #[test]
+    fn file_read_view_reflects_mutations() {
+        let ed = Editor::new("[s]\na = 1\n");
+        // Read structure from the editor's own tree (no second parse).
+        let file = ed.file();
+        let section = file.sections().next().unwrap();
+        assert_eq!(section.name().as_deref(), Some("s"));
+        assert_eq!(section.entries().count(), 1);
+
+        // Mutate, then re-fetch to observe the change.
+        ed.section("s").append_entry("b", "2");
+        assert_eq!(ed.file().sections().next().unwrap().entries().count(), 2);
     }
 }
