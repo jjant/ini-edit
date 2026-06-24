@@ -4,11 +4,11 @@ expression: "tree(\"[セクション]\\nキー = 値\\n\")"
 ---
 ROOT 0..31
   SECTION 0..31
-    SECTION_HEADER 0..17
+    SECTION_HEADER 0..18
       L_BRACK 0..1 "["
       IDENT 1..16 "セクション"
       R_BRACK 16..17 "]"
-    NEWLINE 17..18 "\n"
+      NEWLINE 17..18 "\n"
     ENTRY 18..31
       KEY 18..24
         IDENT 18..24 "キー"

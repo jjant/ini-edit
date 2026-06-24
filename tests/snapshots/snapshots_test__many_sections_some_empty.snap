@@ -3,14 +3,15 @@ source: tests/snapshots_test.rs
 expression: "tree(\"# comment\\n[a section title]\\nfoo = bar\\n[section 2]\\nfoo = bar\\n[section 3 which is empty]\\n[section4]\\nfoo = bar\\n\")"
 ---
 ROOT 0..108
-  COMMENT 0..9 "# comment"
-  NEWLINE 9..10 "\n"
+  COMMENT_LINE 0..10
+    COMMENT 0..9 "# comment"
+    NEWLINE 9..10 "\n"
   SECTION 10..38
-    SECTION_HEADER 10..27
+    SECTION_HEADER 10..28
       L_BRACK 10..11 "["
       IDENT 11..26 "a section title"
       R_BRACK 26..27 "]"
-    NEWLINE 27..28 "\n"
+      NEWLINE 27..28 "\n"
     ENTRY 28..38
       KEY 28..31
         IDENT 28..31 "foo"
@@ -21,11 +22,11 @@ ROOT 0..108
         VALUE_TEXT 34..37 "bar"
       NEWLINE 37..38 "\n"
   SECTION 38..60
-    SECTION_HEADER 38..49
+    SECTION_HEADER 38..50
       L_BRACK 38..39 "["
       IDENT 39..48 "section 2"
       R_BRACK 48..49 "]"
-    NEWLINE 49..50 "\n"
+      NEWLINE 49..50 "\n"
     ENTRY 50..60
       KEY 50..53
         IDENT 50..53 "foo"
@@ -36,17 +37,17 @@ ROOT 0..108
         VALUE_TEXT 56..59 "bar"
       NEWLINE 59..60 "\n"
   SECTION 60..87
-    SECTION_HEADER 60..86
+    SECTION_HEADER 60..87
       L_BRACK 60..61 "["
       IDENT 61..85 "section 3 which is empty"
       R_BRACK 85..86 "]"
-    NEWLINE 86..87 "\n"
+      NEWLINE 86..87 "\n"
   SECTION 87..108
-    SECTION_HEADER 87..97
+    SECTION_HEADER 87..98
       L_BRACK 87..88 "["
       IDENT 88..96 "section4"
       R_BRACK 96..97 "]"
-    NEWLINE 97..98 "\n"
+      NEWLINE 97..98 "\n"
     ENTRY 98..108
       KEY 98..101
         IDENT 98..101 "foo"

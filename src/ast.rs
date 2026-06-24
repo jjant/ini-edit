@@ -39,6 +39,10 @@ ast_node!(/// The key portion of an entry.
     Key, KEY);
 ast_node!(/// The value portion of an entry.
     Value, VALUE);
+ast_node!(/// A full-line comment with its terminating newline.
+    CommentLine, COMMENT_LINE);
+ast_node!(/// A blank line (whitespace and/or a newline).
+    BlankLine, BLANK_LINE);
 
 impl File {
     /// Entries before any `[section]` header.
@@ -68,6 +72,11 @@ impl Section {
     /// Entries in this section.
     pub fn entries(&self) -> impl Iterator<Item = Entry> + '_ {
         self.0.children().filter_map(Entry::cast)
+    }
+
+    /// Full-line comments in this section (in document order).
+    pub fn comment_lines(&self) -> impl Iterator<Item = CommentLine> + '_ {
+        self.0.children().filter_map(CommentLine::cast)
     }
 }
 
@@ -183,6 +192,23 @@ impl Value {
     }
 }
 
+impl CommentLine {
+    /// The `COMMENT` token (including its leading `;`/`#` marker).
+    #[must_use]
+    pub fn token(&self) -> Option<SyntaxToken> {
+        self.0
+            .children_with_tokens()
+            .filter_map(rowan::NodeOrToken::into_token)
+            .find(|t| t.kind() == SyntaxKind::COMMENT)
+    }
+
+    /// The comment text, including its leading `;`/`#` marker.
+    #[must_use]
+    pub fn text(&self) -> Option<String> {
+        self.token().map(|t| t.text().to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -247,5 +273,22 @@ mod tests {
         let e = f.sections().next().unwrap().entries().next().unwrap();
         assert_eq!(e.value().as_deref(), Some("1   ; note"));
         assert_eq!(e.inline_comment(), None);
+    }
+
+    #[test]
+    fn comment_lines_and_blank_lines() {
+        let f = ast("[s]\n; first\nk = v\n# second\n\n");
+        let sec = f.sections().next().unwrap();
+
+        let first = sec.comment_lines().next().unwrap();
+        assert_eq!(first.token().unwrap().kind(), SyntaxKind::COMMENT);
+        assert_eq!(first.text().as_deref(), Some("; first"));
+        assert_eq!(first.syntax().text().to_string(), "; first\n");
+
+        let texts: Vec<_> = sec.comment_lines().filter_map(|c| c.text()).collect();
+        assert_eq!(texts, vec!["; first".to_string(), "# second".to_string()]);
+
+        let blank = sec.syntax().children().find_map(BlankLine::cast).unwrap();
+        assert_eq!(blank.syntax().text().to_string(), "\n");
     }
 }

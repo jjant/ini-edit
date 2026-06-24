@@ -4,10 +4,10 @@ expression: "tree(\"[]\\nk=v\\n\")"
 ---
 ROOT 0..7
   SECTION 0..7
-    SECTION_HEADER 0..2
+    SECTION_HEADER 0..3
       L_BRACK 0..1 "["
       R_BRACK 1..2 "]"
-    NEWLINE 2..3 "\n"
+      NEWLINE 2..3 "\n"
     ENTRY 3..7
       KEY 3..4
         IDENT 3..4 "k"

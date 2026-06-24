@@ -56,18 +56,19 @@ pub fn entry_node(key: &str, value: &str) -> GreenNode {
 }
 
 /// Build a complete SECTION node: `[name]\n` (empty, no entries).
+///
+/// In the line-node model the `SECTION_HEADER` owns its terminating newline.
 #[must_use]
 pub fn empty_section_node(name: &str) -> GreenNode {
     let mut builder = GreenNodeBuilder::new();
     builder.start_node(SyntaxKind::SECTION.into());
-    // header
+    // header (owns its trailing newline)
     builder.start_node(SyntaxKind::SECTION_HEADER.into());
     builder.token(SyntaxKind::L_BRACK.into(), "[");
     builder.token(SyntaxKind::IDENT.into(), name);
     builder.token(SyntaxKind::R_BRACK.into(), "]");
-    builder.finish_node();
-    // newline after header
     builder.token(SyntaxKind::NEWLINE.into(), "\n");
+    builder.finish_node();
     builder.finish_node();
     builder.finish()
 }

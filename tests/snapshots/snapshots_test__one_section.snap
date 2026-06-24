@@ -4,11 +4,11 @@ expression: "tree(\"[a section title]\\nfoo = bar\\n\")"
 ---
 ROOT 0..28
   SECTION 0..28
-    SECTION_HEADER 0..17
+    SECTION_HEADER 0..18
       L_BRACK 0..1 "["
       IDENT 1..16 "a section title"
       R_BRACK 16..17 "]"
-    NEWLINE 17..18 "\n"
+      NEWLINE 17..18 "\n"
     ENTRY 18..28
       KEY 18..21
         IDENT 18..21 "foo"

@@ -3,18 +3,21 @@ source: tests/snapshots_test.rs
 expression: "tree(\"; comment1\\n[section1]\\n; comment2\\n# comment3\\nkey1=val1\\n\")"
 ---
 ROOT 0..54
-  COMMENT 0..10 "; comment1"
-  NEWLINE 10..11 "\n"
+  COMMENT_LINE 0..11
+    COMMENT 0..10 "; comment1"
+    NEWLINE 10..11 "\n"
   SECTION 11..54
-    SECTION_HEADER 11..21
+    SECTION_HEADER 11..22
       L_BRACK 11..12 "["
       IDENT 12..20 "section1"
       R_BRACK 20..21 "]"
-    NEWLINE 21..22 "\n"
-    COMMENT 22..32 "; comment2"
-    NEWLINE 32..33 "\n"
-    COMMENT 33..43 "# comment3"
-    NEWLINE 43..44 "\n"
+      NEWLINE 21..22 "\n"
+    COMMENT_LINE 22..33
+      COMMENT 22..32 "; comment2"
+      NEWLINE 32..33 "\n"
+    COMMENT_LINE 33..44
+      COMMENT 33..43 "# comment3"
+      NEWLINE 43..44 "\n"
     ENTRY 44..54
       KEY 44..48
         IDENT 44..48 "key1"

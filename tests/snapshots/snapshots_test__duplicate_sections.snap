@@ -4,11 +4,11 @@ expression: "tree(\"[s]\\na=1\\n[s]\\nb=2\\n\")"
 ---
 ROOT 0..16
   SECTION 0..8
-    SECTION_HEADER 0..3
+    SECTION_HEADER 0..4
       L_BRACK 0..1 "["
       IDENT 1..2 "s"
       R_BRACK 2..3 "]"
-    NEWLINE 3..4 "\n"
+      NEWLINE 3..4 "\n"
     ENTRY 4..8
       KEY 4..5
         IDENT 4..5 "a"
@@ -17,11 +17,11 @@ ROOT 0..16
         VALUE_TEXT 6..7 "1"
       NEWLINE 7..8 "\n"
   SECTION 8..16
-    SECTION_HEADER 8..11
+    SECTION_HEADER 8..12
       L_BRACK 8..9 "["
       IDENT 9..10 "s"
       R_BRACK 10..11 "]"
-    NEWLINE 11..12 "\n"
+      NEWLINE 11..12 "\n"
     ENTRY 12..16
       KEY 12..13
         IDENT 12..13 "b"
