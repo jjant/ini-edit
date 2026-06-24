@@ -5,17 +5,20 @@ expression: dump(AWS_CONFIG)
 errors: none
 
 ROOT
-  COMMENT "# AWS CLI configuration file"
-  NEWLINE "\n"
-  COMMENT "# See: https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html"
-  NEWLINE "\n"
-  NEWLINE "\n"
+  COMMENT_LINE
+    COMMENT "# AWS CLI configuration file"
+    NEWLINE "\n"
+  COMMENT_LINE
+    COMMENT "# See: https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html"
+    NEWLINE "\n"
+  BLANK_LINE
+    NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "default"
       R_BRACK "]"
-    NEWLINE "\n"
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "region"
@@ -70,13 +73,14 @@ ROOT
       VALUE
         VALUE_TEXT "3"
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "profile dev"
       R_BRACK "]"
-    NEWLINE "\n"
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "region"
@@ -122,13 +126,14 @@ ROOT
       VALUE
         VALUE_TEXT "3600"
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "profile staging"
       R_BRACK "]"
-    NEWLINE "\n"
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "region"
@@ -181,13 +186,14 @@ ROOT
       EQ "="
       VALUE
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "profile production"
       R_BRACK "]"
-    NEWLINE "\n"
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "region"
@@ -242,13 +248,14 @@ ROOT
       VALUE
         VALUE_TEXT "900"
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "profile sso-dev"
       R_BRACK "]"
-    NEWLINE "\n"
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "sso_start_url"
@@ -303,13 +310,14 @@ ROOT
       VALUE
         VALUE_TEXT "json"
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "profile cross-account"
       R_BRACK "]"
-    NEWLINE "\n"
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "role_arn"
@@ -328,13 +336,14 @@ ROOT
       VALUE
         VALUE_TEXT "Environment"
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "profile ec2-instance"
       R_BRACK "]"
-    NEWLINE "\n"
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "credential_source"
@@ -353,13 +362,14 @@ ROOT
       VALUE
         VALUE_TEXT "ap-southeast-1"
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "profile with-endpoint"
       R_BRACK "]"
-    NEWLINE "\n"
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "region"
@@ -385,8 +395,8 @@ ROOT
       EQ "="
       VALUE
       NEWLINE "\n"
-    WHITESPACE "    "
     ENTRY
+      WHITESPACE "    "
       KEY
         IDENT "addressing_style"
       WHITESPACE " "
@@ -395,8 +405,8 @@ ROOT
       VALUE
         VALUE_TEXT "path"
       NEWLINE "\n"
-    WHITESPACE "    "
     ENTRY
+      WHITESPACE "    "
       KEY
         IDENT "multipart_threshold"
       WHITESPACE " "

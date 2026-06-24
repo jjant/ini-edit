@@ -5,16 +5,17 @@ expression: dump(GITCONFIG)
 errors: none
 
 ROOT
-  COMMENT "# This is Git's per-user configuration file."
-  NEWLINE "\n"
+  COMMENT_LINE
+    COMMENT "# This is Git's per-user configuration file."
+    NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "user"
       R_BRACK "]"
-    NEWLINE "\n"
-    WHITESPACE "\t"
+      NEWLINE "\n"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "name"
       WHITESPACE " "
@@ -23,8 +24,8 @@ ROOT
       VALUE
         VALUE_TEXT "Jane Developer"
       NEWLINE "\n"
-    WHITESPACE "\t"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "email"
       WHITESPACE " "
@@ -33,8 +34,8 @@ ROOT
       VALUE
         VALUE_TEXT "jane@example.com"
       NEWLINE "\n"
-    WHITESPACE "\t"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "signingkey"
       WHITESPACE " "
@@ -43,15 +44,16 @@ ROOT
       VALUE
         VALUE_TEXT "ABCDEF1234567890"
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "core"
       R_BRACK "]"
-    NEWLINE "\n"
-    WHITESPACE "\t"
+      NEWLINE "\n"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "editor"
       WHITESPACE " "
@@ -60,8 +62,8 @@ ROOT
       VALUE
         VALUE_TEXT "nvim"
       NEWLINE "\n"
-    WHITESPACE "\t"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "autocrlf"
       WHITESPACE " "
@@ -70,8 +72,8 @@ ROOT
       VALUE
         VALUE_TEXT "input"
       NEWLINE "\n"
-    WHITESPACE "\t"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "whitespace"
       WHITESPACE " "
@@ -80,8 +82,8 @@ ROOT
       VALUE
         VALUE_TEXT "fix,-indent-with-non-tab,trailing-space,cr-at-eol"
       NEWLINE "\n"
-    WHITESPACE "\t"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "pager"
       WHITESPACE " "
@@ -90,8 +92,8 @@ ROOT
       VALUE
         VALUE_TEXT "delta"
       NEWLINE "\n"
-    WHITESPACE "\t"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "excludesfile"
       WHITESPACE " "
@@ -100,8 +102,8 @@ ROOT
       VALUE
         VALUE_TEXT "~/.gitignore_global"
       NEWLINE "\n"
-    WHITESPACE "\t"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "attributesfile"
       WHITESPACE " "
@@ -110,15 +112,16 @@ ROOT
       VALUE
         VALUE_TEXT "~/.gitattributes"
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "init"
       R_BRACK "]"
-    NEWLINE "\n"
-    WHITESPACE "\t"
+      NEWLINE "\n"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "defaultBranch"
       WHITESPACE " "
@@ -127,15 +130,16 @@ ROOT
       VALUE
         VALUE_TEXT "main"
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "color"
       R_BRACK "]"
-    NEWLINE "\n"
-    WHITESPACE "\t"
+      NEWLINE "\n"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "ui"
       WHITESPACE " "
@@ -144,15 +148,16 @@ ROOT
       VALUE
         VALUE_TEXT "auto"
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "color \"branch\""
       R_BRACK "]"
-    NEWLINE "\n"
-    WHITESPACE "\t"
+      NEWLINE "\n"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "current"
       WHITESPACE " "
@@ -161,8 +166,8 @@ ROOT
       VALUE
         VALUE_TEXT "yellow reverse"
       NEWLINE "\n"
-    WHITESPACE "\t"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "local"
       WHITESPACE " "
@@ -171,8 +176,8 @@ ROOT
       VALUE
         VALUE_TEXT "yellow"
       NEWLINE "\n"
-    WHITESPACE "\t"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "remote"
       WHITESPACE " "
@@ -181,15 +186,16 @@ ROOT
       VALUE
         VALUE_TEXT "green"
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "color \"diff\""
       R_BRACK "]"
-    NEWLINE "\n"
-    WHITESPACE "\t"
+      NEWLINE "\n"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "meta"
       WHITESPACE " "
@@ -198,8 +204,8 @@ ROOT
       VALUE
         VALUE_TEXT "yellow bold"
       NEWLINE "\n"
-    WHITESPACE "\t"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "frag"
       WHITESPACE " "
@@ -208,8 +214,8 @@ ROOT
       VALUE
         VALUE_TEXT "magenta bold"
       NEWLINE "\n"
-    WHITESPACE "\t"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "old"
       WHITESPACE " "
@@ -218,8 +224,8 @@ ROOT
       VALUE
         VALUE_TEXT "red bold"
       NEWLINE "\n"
-    WHITESPACE "\t"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "new"
       WHITESPACE " "
@@ -228,15 +234,16 @@ ROOT
       VALUE
         VALUE_TEXT "green bold"
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "color \"status\""
       R_BRACK "]"
-    NEWLINE "\n"
-    WHITESPACE "\t"
+      NEWLINE "\n"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "added"
       WHITESPACE " "
@@ -245,8 +252,8 @@ ROOT
       VALUE
         VALUE_TEXT "yellow"
       NEWLINE "\n"
-    WHITESPACE "\t"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "changed"
       WHITESPACE " "
@@ -255,8 +262,8 @@ ROOT
       VALUE
         VALUE_TEXT "green"
       NEWLINE "\n"
-    WHITESPACE "\t"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "untracked"
       WHITESPACE " "
@@ -265,15 +272,16 @@ ROOT
       VALUE
         VALUE_TEXT "cyan"
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "push"
       R_BRACK "]"
-    NEWLINE "\n"
-    WHITESPACE "\t"
+      NEWLINE "\n"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "default"
       WHITESPACE " "
@@ -282,8 +290,8 @@ ROOT
       VALUE
         VALUE_TEXT "current"
       NEWLINE "\n"
-    WHITESPACE "\t"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "autoSetupRemote"
       WHITESPACE " "
@@ -292,15 +300,16 @@ ROOT
       VALUE
         VALUE_TEXT "true"
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "pull"
       R_BRACK "]"
-    NEWLINE "\n"
-    WHITESPACE "\t"
+      NEWLINE "\n"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "rebase"
       WHITESPACE " "
@@ -309,15 +318,16 @@ ROOT
       VALUE
         VALUE_TEXT "true"
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "fetch"
       R_BRACK "]"
-    NEWLINE "\n"
-    WHITESPACE "\t"
+      NEWLINE "\n"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "prune"
       WHITESPACE " "
@@ -326,15 +336,16 @@ ROOT
       VALUE
         VALUE_TEXT "true"
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "rebase"
       R_BRACK "]"
-    NEWLINE "\n"
-    WHITESPACE "\t"
+      NEWLINE "\n"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "autoStash"
       WHITESPACE " "
@@ -343,15 +354,16 @@ ROOT
       VALUE
         VALUE_TEXT "true"
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "merge"
       R_BRACK "]"
-    NEWLINE "\n"
-    WHITESPACE "\t"
+      NEWLINE "\n"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "conflictstyle"
       WHITESPACE " "
@@ -360,8 +372,8 @@ ROOT
       VALUE
         VALUE_TEXT "diff3"
       NEWLINE "\n"
-    WHITESPACE "\t"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "tool"
       WHITESPACE " "
@@ -370,15 +382,16 @@ ROOT
       VALUE
         VALUE_TEXT "nvim"
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "mergetool \"nvim\""
       R_BRACK "]"
-    NEWLINE "\n"
-    WHITESPACE "\t"
+      NEWLINE "\n"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "cmd"
       WHITESPACE " "
@@ -387,15 +400,16 @@ ROOT
       VALUE
         VALUE_TEXT "nvim -d $LOCAL $REMOTE $MERGED -c '$wincmd w' -c 'wincmd J'"
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "diff"
       R_BRACK "]"
-    NEWLINE "\n"
-    WHITESPACE "\t"
+      NEWLINE "\n"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "algorithm"
       WHITESPACE " "
@@ -404,8 +418,8 @@ ROOT
       VALUE
         VALUE_TEXT "histogram"
       NEWLINE "\n"
-    WHITESPACE "\t"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "colorMoved"
       WHITESPACE " "
@@ -414,15 +428,16 @@ ROOT
       VALUE
         VALUE_TEXT "default"
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "alias"
       R_BRACK "]"
-    NEWLINE "\n"
-    WHITESPACE "\t"
+      NEWLINE "\n"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "st"
       WHITESPACE " "
@@ -431,8 +446,8 @@ ROOT
       VALUE
         VALUE_TEXT "status"
       NEWLINE "\n"
-    WHITESPACE "\t"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "co"
       WHITESPACE " "
@@ -441,8 +456,8 @@ ROOT
       VALUE
         VALUE_TEXT "checkout"
       NEWLINE "\n"
-    WHITESPACE "\t"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "br"
       WHITESPACE " "
@@ -451,8 +466,8 @@ ROOT
       VALUE
         VALUE_TEXT "branch"
       NEWLINE "\n"
-    WHITESPACE "\t"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "ci"
       WHITESPACE " "
@@ -461,8 +476,8 @@ ROOT
       VALUE
         VALUE_TEXT "commit"
       NEWLINE "\n"
-    WHITESPACE "\t"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "lg"
       WHITESPACE " "
@@ -471,8 +486,8 @@ ROOT
       VALUE
         VALUE_TEXT "log --graph --pretty=format:'%Cred%h%Creset -%C(yellow)%d%Creset %s %Cgreen(%cr) %C(bold blue)<%an>%Creset' --abbrev-commit"
       NEWLINE "\n"
-    WHITESPACE "\t"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "unstage"
       WHITESPACE " "
@@ -481,8 +496,8 @@ ROOT
       VALUE
         VALUE_TEXT "reset HEAD --"
       NEWLINE "\n"
-    WHITESPACE "\t"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "last"
       WHITESPACE " "
@@ -491,8 +506,8 @@ ROOT
       VALUE
         VALUE_TEXT "log -1 HEAD"
       NEWLINE "\n"
-    WHITESPACE "\t"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "amend"
       WHITESPACE " "
@@ -501,8 +516,8 @@ ROOT
       VALUE
         VALUE_TEXT "commit --amend --no-edit"
       NEWLINE "\n"
-    WHITESPACE "\t"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "wip"
       WHITESPACE " "
@@ -511,8 +526,8 @@ ROOT
       VALUE
         VALUE_TEXT "!git add -A && git commit -m \"WIP\""
       NEWLINE "\n"
-    WHITESPACE "\t"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "undo"
       WHITESPACE " "
@@ -521,15 +536,16 @@ ROOT
       VALUE
         VALUE_TEXT "reset --soft HEAD~1"
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "url \"git@github.com:\""
       R_BRACK "]"
-    NEWLINE "\n"
-    WHITESPACE "\t"
+      NEWLINE "\n"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "insteadOf"
       WHITESPACE " "
@@ -538,15 +554,16 @@ ROOT
       VALUE
         VALUE_TEXT "https://github.com/"
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "remote \"origin\""
       R_BRACK "]"
-    NEWLINE "\n"
-    WHITESPACE "\t"
+      NEWLINE "\n"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "url"
       WHITESPACE " "
@@ -555,8 +572,8 @@ ROOT
       VALUE
         VALUE_TEXT "git@github.com:user/repo.git"
       NEWLINE "\n"
-    WHITESPACE "\t"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "fetch"
       WHITESPACE " "
@@ -565,15 +582,16 @@ ROOT
       VALUE
         VALUE_TEXT "+refs/heads/*:refs/remotes/origin/*"
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "branch \"main\""
       R_BRACK "]"
-    NEWLINE "\n"
-    WHITESPACE "\t"
+      NEWLINE "\n"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "remote"
       WHITESPACE " "
@@ -582,8 +600,8 @@ ROOT
       VALUE
         VALUE_TEXT "origin"
       NEWLINE "\n"
-    WHITESPACE "\t"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "merge"
       WHITESPACE " "
@@ -592,15 +610,16 @@ ROOT
       VALUE
         VALUE_TEXT "refs/heads/main"
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "filter \"lfs\""
       R_BRACK "]"
-    NEWLINE "\n"
-    WHITESPACE "\t"
+      NEWLINE "\n"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "clean"
       WHITESPACE " "
@@ -609,8 +628,8 @@ ROOT
       VALUE
         VALUE_TEXT "git-lfs clean -- %f"
       NEWLINE "\n"
-    WHITESPACE "\t"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "smudge"
       WHITESPACE " "
@@ -619,8 +638,8 @@ ROOT
       VALUE
         VALUE_TEXT "git-lfs smudge -- %f"
       NEWLINE "\n"
-    WHITESPACE "\t"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "process"
       WHITESPACE " "
@@ -629,8 +648,8 @@ ROOT
       VALUE
         VALUE_TEXT "git-lfs filter-process"
       NEWLINE "\n"
-    WHITESPACE "\t"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "required"
       WHITESPACE " "
@@ -639,15 +658,16 @@ ROOT
       VALUE
         VALUE_TEXT "true"
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "credential"
       R_BRACK "]"
-    NEWLINE "\n"
-    WHITESPACE "\t"
+      NEWLINE "\n"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "helper"
       WHITESPACE " "
@@ -656,15 +676,16 @@ ROOT
       VALUE
         VALUE_TEXT "osxkeychain"
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "gpg"
       R_BRACK "]"
-    NEWLINE "\n"
-    WHITESPACE "\t"
+      NEWLINE "\n"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "program"
       WHITESPACE " "
@@ -673,15 +694,16 @@ ROOT
       VALUE
         VALUE_TEXT "gpg2"
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "commit"
       R_BRACK "]"
-    NEWLINE "\n"
-    WHITESPACE "\t"
+      NEWLINE "\n"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "gpgsign"
       WHITESPACE " "
@@ -690,15 +712,16 @@ ROOT
       VALUE
         VALUE_TEXT "true"
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "delta"
       R_BRACK "]"
-    NEWLINE "\n"
-    WHITESPACE "\t"
+      NEWLINE "\n"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "navigate"
       WHITESPACE " "
@@ -707,8 +730,8 @@ ROOT
       VALUE
         VALUE_TEXT "true"
       NEWLINE "\n"
-    WHITESPACE "\t"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "light"
       WHITESPACE " "
@@ -717,8 +740,8 @@ ROOT
       VALUE
         VALUE_TEXT "false"
       NEWLINE "\n"
-    WHITESPACE "\t"
     ENTRY
+      WHITESPACE "\t"
       KEY
         IDENT "line-numbers"
       WHITESPACE " "

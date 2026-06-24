@@ -195,30 +195,32 @@ impl SectionEditor<'_> {
             } else {
                 format!("{line}\n")
             };
-            // Emit the line content (without newline) as a COMMENT token
-            // and the newline separately. COMMENT is used as a generic
-            // "opaque text" kind — it preserves the content verbatim.
+            // Emit the line content (without newline) as a COMMENT token and
+            // the newline separately, wrapped in a COMMENT_LINE node so the
+            // line-node invariant holds. COMMENT is used as a generic "opaque
+            // text" kind — it preserves the content verbatim.
             let content = text.trim_end_matches(['\n', '\r']);
             let nl = if text.ends_with("\r\n") { "\r\n" } else { "\n" };
 
             let green = {
                 let mut b = rowan::GreenNodeBuilder::new();
-                b.start_node(SyntaxKind::ENTRY.into());
+                b.start_node(SyntaxKind::COMMENT_LINE.into());
                 b.token(SyntaxKind::COMMENT.into(), content);
                 b.token(SyntaxKind::NEWLINE.into(), nl);
                 b.finish_node();
                 b.finish()
             };
             let node = SyntaxNode::new_root(green).clone_for_update();
-            elements.extend(node.children_with_tokens());
+            elements.push(node.into());
         }
         self.node.splice_children(index..index, elements);
     }
 
-    /// Remove a range of child elements (0-indexed within this section).
+    /// Remove a range of child line nodes (0-indexed within this section).
     ///
-    /// Index 0 is the section header. Entries, comments, and whitespace
-    /// tokens each count as one element.
+    /// In the line-node model each physical line is one child, so index 0 is
+    /// the section header and child index equals line index. Entries, comment
+    /// lines, and blank lines each count as one element.
     pub fn remove_lines(&self, range: std::ops::Range<usize>) {
         // Collect then detach — splice_children has issues with large ranges
         // in rowan's mutable tree (indices shift during removal).
@@ -348,9 +350,10 @@ mod tests {
     #[test]
     fn remove_lines_by_range() {
         let ed = Editor::new("[s]\na = 1\nb = 2\nc = 3\n");
-        // Children: SECTION_HEADER, NEWLINE, ENTRY(a), ENTRY(b), ENTRY(c)
-        // Remove indices 3..4 should remove ENTRY(b)
-        ed.section("s").remove_lines(3..4);
+        // Line-node layout — child index == line index:
+        //   0 SECTION_HEADER, 1 ENTRY(a), 2 ENTRY(b), 3 ENTRY(c)
+        // Remove index 2..3 to drop ENTRY(b).
+        ed.section("s").remove_lines(2..3);
         let out = ed.finish();
         assert!(out.contains("a = 1"), "got: {out}");
         assert!(!out.contains("b = 2"), "got: {out}");
@@ -383,8 +386,9 @@ mod tests {
     #[test]
     fn insert_raw_lines_at_position() {
         let ed = Editor::new("[s]\na = 1\nb = 2\n");
-        // Insert between ENTRY(a) at index 2 and ENTRY(b) at index 3
-        ed.section("s").insert_raw_lines_at(3, &["; injected"]);
+        // Line-node layout: 0 SECTION_HEADER, 1 ENTRY(a), 2 ENTRY(b).
+        // Insert at index 2 to land between a and b.
+        ed.section("s").insert_raw_lines_at(2, &["; injected"]);
         let out = ed.finish();
         // The injected line should appear between a and b.
         let a_pos = out.find("a = 1").unwrap();
