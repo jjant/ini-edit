@@ -10,7 +10,7 @@ ROOT
       L_BRACK "["
       IDENT "Unit"
       R_BRACK "]"
-    NEWLINE "\n"
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "Description"
@@ -46,13 +46,14 @@ ROOT
       VALUE
         VALUE_TEXT "postgresql.service"
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "Service"
       R_BRACK "]"
-    NEWLINE "\n"
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "Type"
@@ -172,9 +173,11 @@ ROOT
       VALUE
         VALUE_TEXT "10"
       NEWLINE "\n"
-    NEWLINE "\n"
-    COMMENT "# Security hardening"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT "# Security hardening"
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "NoNewPrivileges"
@@ -231,9 +234,11 @@ ROOT
       VALUE
         VALUE_TEXT "CAP_NET_BIND_SERVICE"
       NEWLINE "\n"
-    NEWLINE "\n"
-    COMMENT "# Resource limits"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT "# Resource limits"
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "LimitNOFILE"
@@ -262,9 +267,11 @@ ROOT
       VALUE
         VALUE_TEXT "200%"
       NEWLINE "\n"
-    NEWLINE "\n"
-    COMMENT "# Logging"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT "# Logging"
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "StandardOutput"
@@ -286,13 +293,14 @@ ROOT
       VALUE
         VALUE_TEXT "myapp"
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "Install"
       R_BRACK "]"
-    NEWLINE "\n"
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "WantedBy"

@@ -39,6 +39,10 @@ ast_node!(/// The key portion of an entry.
     Key, KEY);
 ast_node!(/// The value portion of an entry.
     Value, VALUE);
+ast_node!(/// A full-line comment with its terminating newline.
+    CommentLine, COMMENT_LINE);
+ast_node!(/// A blank line (whitespace and/or a newline).
+    BlankLine, BLANK_LINE);
 
 impl File {
     /// Entries before any `[section]` header.
@@ -68,6 +72,11 @@ impl Section {
     /// Entries in this section.
     pub fn entries(&self) -> impl Iterator<Item = Entry> + '_ {
         self.0.children().filter_map(Entry::cast)
+    }
+
+    /// Full-line comments in this section (in document order).
+    pub fn comment_lines(&self) -> impl Iterator<Item = CommentLine> + '_ {
+        self.0.children().filter_map(CommentLine::cast)
     }
 }
 
@@ -177,6 +186,23 @@ impl Value {
     }
 
     /// The value text, or `None` for empty values (`key =`).
+    #[must_use]
+    pub fn text(&self) -> Option<String> {
+        self.token().map(|t| t.text().to_string())
+    }
+}
+
+impl CommentLine {
+    /// The `COMMENT` token (including its leading `;`/`#` marker).
+    #[must_use]
+    pub fn token(&self) -> Option<SyntaxToken> {
+        self.0
+            .children_with_tokens()
+            .filter_map(rowan::NodeOrToken::into_token)
+            .find(|t| t.kind() == SyntaxKind::COMMENT)
+    }
+
+    /// The comment text, including its leading `;`/`#` marker.
     #[must_use]
     pub fn text(&self) -> Option<String> {
         self.token().map(|t| t.text().to_string())

@@ -4,10 +4,10 @@ expression: "tree(\"[unclosed\\nk=v\\n\")"
 ---
 ROOT 0..14
   SECTION 0..14
-    SECTION_HEADER 0..9
+    SECTION_HEADER 0..10
       L_BRACK 0..1 "["
       IDENT 1..9 "unclosed"
-    NEWLINE 9..10 "\n"
+      NEWLINE 9..10 "\n"
     ENTRY 10..14
       KEY 10..11
         IDENT 10..11 "k"

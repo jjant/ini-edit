@@ -10,17 +10,20 @@ errors:
   - ParseError { message: "expected '=' or ':'", offset: 1725 }
 
 ROOT
-  COMMENT "# MySQL configuration file"
-  NEWLINE "\n"
-  COMMENT "# /etc/mysql/my.cnf or ~/.my.cnf"
-  NEWLINE "\n"
-  NEWLINE "\n"
+  COMMENT_LINE
+    COMMENT "# MySQL configuration file"
+    NEWLINE "\n"
+  COMMENT_LINE
+    COMMENT "# /etc/mysql/my.cnf or ~/.my.cnf"
+    NEWLINE "\n"
+  BLANK_LINE
+    NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "client"
       R_BRACK "]"
-    NEWLINE "\n"
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "port"
@@ -48,13 +51,14 @@ ROOT
       VALUE
         VALUE_TEXT "utf8mb4"
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "mysqld_safe"
       R_BRACK "]"
-    NEWLINE "\n"
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "socket"
@@ -78,15 +82,17 @@ ROOT
         IDENT "syslog"
       VALUE
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "mysqld"
       R_BRACK "]"
-    NEWLINE "\n"
-    COMMENT "# Basic Settings"
-    NEWLINE "\n"
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT "# Basic Settings"
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "user"
@@ -173,9 +179,11 @@ ROOT
       VALUE
         VALUE_TEXT "127.0.0.1"
       NEWLINE "\n"
-    NEWLINE "\n"
-    COMMENT "# Character Set"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT "# Character Set"
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "character-set-server"
@@ -194,9 +202,11 @@ ROOT
       VALUE
         VALUE_TEXT "utf8mb4_unicode_ci"
       NEWLINE "\n"
-    NEWLINE "\n"
-    COMMENT "# Fine Tuning"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT "# Fine Tuning"
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "key_buffer_size"
@@ -260,9 +270,11 @@ ROOT
       VALUE
         VALUE_TEXT "2000"
       NEWLINE "\n"
-    NEWLINE "\n"
-    COMMENT "# InnoDB"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT "# InnoDB"
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "default-storage-engine"
@@ -371,9 +383,11 @@ ROOT
       VALUE
         VALUE_TEXT "4"
       NEWLINE "\n"
-    NEWLINE "\n"
-    COMMENT "# Query Cache (deprecated in 8.0, kept for 5.7 compat)"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT "# Query Cache (deprecated in 8.0, kept for 5.7 compat)"
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "query_cache_type"
@@ -392,9 +406,11 @@ ROOT
       VALUE
         VALUE_TEXT "0"
       NEWLINE "\n"
-    NEWLINE "\n"
-    COMMENT "# Logging"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT "# Logging"
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "log_error"
@@ -440,9 +456,11 @@ ROOT
       VALUE
         VALUE_TEXT "1"
       NEWLINE "\n"
-    NEWLINE "\n"
-    COMMENT "# Binary Logging (for replication)"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT "# Binary Logging (for replication)"
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "server-id"
@@ -497,22 +515,28 @@ ROOT
       VALUE
         VALUE_TEXT "minimal"
       NEWLINE "\n"
-    NEWLINE "\n"
-    COMMENT "# Replication"
-    NEWLINE "\n"
-    COMMENT ";relay-log = /var/log/mysql/relay-bin"
-    NEWLINE "\n"
-    COMMENT ";read_only = 1"
-    NEWLINE "\n"
-    COMMENT ";log_slave_updates = 1"
-    NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT "# Replication"
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT ";relay-log = /var/log/mysql/relay-bin"
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT ";read_only = 1"
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT ";log_slave_updates = 1"
+      NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "mysqldump"
       R_BRACK "]"
-    NEWLINE "\n"
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "quick"
@@ -532,13 +556,14 @@ ROOT
       VALUE
         VALUE_TEXT "64M"
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "mysql"
       R_BRACK "]"
-    NEWLINE "\n"
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "no-auto-rehash"
@@ -562,13 +587,14 @@ ROOT
       VALUE
         VALUE_TEXT "\\\\u@\\\\h [\\\\d]>\\\\_"
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "isamchk"
       R_BRACK "]"
-    NEWLINE "\n"
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "key_buffer"

@@ -10,19 +10,26 @@ ROOT
       L_BRACK "["
       IDENT "PHP"
       R_BRACK "]"
-    NEWLINE "\n"
-    COMMENT ";;;;;;;;;;;;;;;;;;;"
-    NEWLINE "\n"
-    COMMENT "; About php.ini   ;"
-    NEWLINE "\n"
-    COMMENT ";;;;;;;;;;;;;;;;;;;"
-    NEWLINE "\n"
-    NEWLINE "\n"
-    COMMENT "; PHP's initialization file, generally called php.ini, is responsible for"
-    NEWLINE "\n"
-    COMMENT "; configuring many of the aspects of PHP's behavior."
-    NEWLINE "\n"
-    NEWLINE "\n"
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT ";;;;;;;;;;;;;;;;;;;"
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT "; About php.ini   ;"
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT ";;;;;;;;;;;;;;;;;;;"
+      NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT "; PHP's initialization file, generally called php.ini, is responsible for"
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT "; configuring many of the aspects of PHP's behavior."
+      NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "engine"
@@ -59,11 +66,14 @@ ROOT
       VALUE
         VALUE_TEXT "4096"
       NEWLINE "\n"
-    NEWLINE "\n"
-    COMMENT "; Implicit flush tells PHP to tell the output layer to flush itself"
-    NEWLINE "\n"
-    COMMENT "; automatically after every output block."
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT "; Implicit flush tells PHP to tell the output layer to flush itself"
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT "; automatically after every output block."
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "implicit_flush"
@@ -73,7 +83,8 @@ ROOT
       VALUE
         VALUE_TEXT "Off"
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "zend.enable_gc"
@@ -101,14 +112,19 @@ ROOT
       VALUE
         VALUE_TEXT "0"
       NEWLINE "\n"
-    NEWLINE "\n"
-    COMMENT ";;;;;;;;;;;;;;;;;"
-    NEWLINE "\n"
-    COMMENT "; Miscellaneous ;"
-    NEWLINE "\n"
-    COMMENT ";;;;;;;;;;;;;;;;;"
-    NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT ";;;;;;;;;;;;;;;;;"
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT "; Miscellaneous ;"
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT ";;;;;;;;;;;;;;;;;"
+      NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "expose_php"
@@ -118,14 +134,19 @@ ROOT
       VALUE
         VALUE_TEXT "Off"
       NEWLINE "\n"
-    NEWLINE "\n"
-    COMMENT ";;;;;;;;;;;;;;;;;;;"
-    NEWLINE "\n"
-    COMMENT "; Resource Limits ;"
-    NEWLINE "\n"
-    COMMENT ";;;;;;;;;;;;;;;;;;;"
-    NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT ";;;;;;;;;;;;;;;;;;;"
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT "; Resource Limits ;"
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT ";;;;;;;;;;;;;;;;;;;"
+      NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "max_execution_time"
@@ -153,14 +174,19 @@ ROOT
       VALUE
         VALUE_TEXT "128M"
       NEWLINE "\n"
-    NEWLINE "\n"
-    COMMENT ";;;;;;;;;;;;;;;;;;;;;;;;;;;;;;"
-    NEWLINE "\n"
-    COMMENT "; Error handling and logging ;"
-    NEWLINE "\n"
-    COMMENT ";;;;;;;;;;;;;;;;;;;;;;;;;;;;;;"
-    NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT ";;;;;;;;;;;;;;;;;;;;;;;;;;;;;;"
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT "; Error handling and logging ;"
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT ";;;;;;;;;;;;;;;;;;;;;;;;;;;;;;"
+      NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "error_reporting"
@@ -233,9 +259,11 @@ ROOT
       VALUE
         VALUE_TEXT "On"
       NEWLINE "\n"
-    NEWLINE "\n"
-    COMMENT ";error_log = syslog"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT ";error_log = syslog"
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "error_log"
@@ -245,14 +273,19 @@ ROOT
       VALUE
         VALUE_TEXT "/var/log/php/error.log"
       NEWLINE "\n"
-    NEWLINE "\n"
-    COMMENT ";;;;;;;;;;;;;;;;;"
-    NEWLINE "\n"
-    COMMENT "; Data Handling ;"
-    NEWLINE "\n"
-    COMMENT ";;;;;;;;;;;;;;;;;"
-    NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT ";;;;;;;;;;;;;;;;;"
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT "; Data Handling ;"
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT ";;;;;;;;;;;;;;;;;"
+      NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "variables_order"
@@ -330,19 +363,27 @@ ROOT
       VALUE
         VALUE_TEXT "\"UTF-8\""
       NEWLINE "\n"
-    NEWLINE "\n"
-    COMMENT ";;;;;;;;;;;;;;;;;;;;;;;;;"
-    NEWLINE "\n"
-    COMMENT "; Paths and Directories ;"
-    NEWLINE "\n"
-    COMMENT ";;;;;;;;;;;;;;;;;;;;;;;;;"
-    NEWLINE "\n"
-    NEWLINE "\n"
-    COMMENT "; UNIX: \"/path1:/path2\""
-    NEWLINE "\n"
-    COMMENT ";include_path = \".:/usr/share/php\""
-    NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT ";;;;;;;;;;;;;;;;;;;;;;;;;"
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT "; Paths and Directories ;"
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT ";;;;;;;;;;;;;;;;;;;;;;;;;"
+      NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT "; UNIX: \"/path1:/path2\""
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT ";include_path = \".:/usr/share/php\""
+      NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "doc_root"
@@ -366,9 +407,11 @@ ROOT
       VALUE
         VALUE_TEXT "Off"
       NEWLINE "\n"
-    NEWLINE "\n"
-    COMMENT "; cgi.fix_pathinfo provides *real* PATH_INFO/PATH_TRANSLATED support for CGI."
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT "; cgi.fix_pathinfo provides *real* PATH_INFO/PATH_TRANSLATED support for CGI."
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "cgi.fix_pathinfo"
@@ -378,14 +421,19 @@ ROOT
       VALUE
         VALUE_TEXT "0"
       NEWLINE "\n"
-    NEWLINE "\n"
-    COMMENT ";;;;;;;;;;;;;;;;"
-    NEWLINE "\n"
-    COMMENT "; File Uploads ;"
-    NEWLINE "\n"
-    COMMENT ";;;;;;;;;;;;;;;;"
-    NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT ";;;;;;;;;;;;;;;;"
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT "; File Uploads ;"
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT ";;;;;;;;;;;;;;;;"
+      NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "file_uploads"
@@ -413,14 +461,19 @@ ROOT
       VALUE
         VALUE_TEXT "20"
       NEWLINE "\n"
-    NEWLINE "\n"
-    COMMENT ";;;;;;;;;;;;;;;;;;"
-    NEWLINE "\n"
-    COMMENT "; Fopen wrappers ;"
-    NEWLINE "\n"
-    COMMENT ";;;;;;;;;;;;;;;;;;"
-    NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT ";;;;;;;;;;;;;;;;;;"
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT "; Fopen wrappers ;"
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT ";;;;;;;;;;;;;;;;;;"
+      NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "allow_url_fopen"
@@ -448,20 +501,25 @@ ROOT
       VALUE
         VALUE_TEXT "60"
       NEWLINE "\n"
-    NEWLINE "\n"
-    COMMENT ";;;;;;;;;;;;;;;;;;;"
-    NEWLINE "\n"
-    COMMENT "; Module Settings ;"
-    NEWLINE "\n"
-    COMMENT ";;;;;;;;;;;;;;;;;;;"
-    NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT ";;;;;;;;;;;;;;;;;;;"
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT "; Module Settings ;"
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT ";;;;;;;;;;;;;;;;;;;"
+      NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "CLI Server"
       R_BRACK "]"
-    NEWLINE "\n"
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "cli_server.color"
@@ -471,17 +529,20 @@ ROOT
       VALUE
         VALUE_TEXT "On"
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "Date"
       R_BRACK "]"
-    NEWLINE "\n"
-    COMMENT "; Defines the default timezone used by the date functions"
-    NEWLINE "\n"
-    COMMENT ";date.timezone ="
-    NEWLINE "\n"
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT "; Defines the default timezone used by the date functions"
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT ";date.timezone ="
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "date.timezone"
@@ -491,13 +552,14 @@ ROOT
       VALUE
         VALUE_TEXT "\"UTC\""
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "Pdo_mysql"
       R_BRACK "]"
-    NEWLINE "\n"
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "pdo_mysql.default_socket"
@@ -505,19 +567,23 @@ ROOT
       EQ "="
       VALUE
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "mail function"
       R_BRACK "]"
-    NEWLINE "\n"
-    COMMENT "; For Win32 only."
-    NEWLINE "\n"
-    COMMENT ";SMTP = localhost"
-    NEWLINE "\n"
-    COMMENT ";smtp_port = 25"
-    NEWLINE "\n"
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT "; For Win32 only."
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT ";SMTP = localhost"
+      NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT ";smtp_port = 25"
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "sendmail_path"
@@ -536,13 +602,14 @@ ROOT
       VALUE
         VALUE_TEXT "Off"
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "ODBC"
       R_BRACK "]"
-    NEWLINE "\n"
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "odbc.allow_persistent"
@@ -597,13 +664,14 @@ ROOT
       VALUE
         VALUE_TEXT "1"
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "MySQLi"
       R_BRACK "]"
-    NEWLINE "\n"
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "mysqli.max_persistent"
@@ -677,13 +745,14 @@ ROOT
       VALUE
         VALUE_TEXT "Off"
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "mysqlnd"
       R_BRACK "]"
-    NEWLINE "\n"
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "mysqlnd.collect_statistics"
@@ -702,13 +771,14 @@ ROOT
       VALUE
         VALUE_TEXT "Off"
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "PostgreSQL"
       R_BRACK "]"
-    NEWLINE "\n"
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "pgsql.allow_persistent"
@@ -763,13 +833,14 @@ ROOT
       VALUE
         VALUE_TEXT "0"
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "bcmath"
       R_BRACK "]"
-    NEWLINE "\n"
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "bcmath.scale"
@@ -779,13 +850,14 @@ ROOT
       VALUE
         VALUE_TEXT "0"
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "Session"
       R_BRACK "]"
-    NEWLINE "\n"
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "session.save_handler"
@@ -795,8 +867,9 @@ ROOT
       VALUE
         VALUE_TEXT "files"
       NEWLINE "\n"
-    COMMENT ";session.save_path = \"/tmp\""
-    NEWLINE "\n"
+    COMMENT_LINE
+      COMMENT ";session.save_path = \"/tmp\""
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "session.use_strict_mode"
@@ -971,13 +1044,14 @@ ROOT
       VALUE
         VALUE_TEXT "5"
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "Assertion"
       R_BRACK "]"
-    NEWLINE "\n"
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "zend.assertions"
@@ -987,13 +1061,14 @@ ROOT
       VALUE
         VALUE_TEXT "-1"
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "Tidy"
       R_BRACK "]"
-    NEWLINE "\n"
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "tidy.clean_output"
@@ -1003,13 +1078,14 @@ ROOT
       VALUE
         VALUE_TEXT "Off"
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "soap"
       R_BRACK "]"
-    NEWLINE "\n"
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "soap.wsdl_cache_enabled"
@@ -1046,13 +1122,14 @@ ROOT
       VALUE
         VALUE_TEXT "5"
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "ldap"
       R_BRACK "]"
-    NEWLINE "\n"
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "ldap.max_links"
@@ -1062,13 +1139,14 @@ ROOT
       VALUE
         VALUE_TEXT "-1"
       NEWLINE "\n"
-    NEWLINE "\n"
+    BLANK_LINE
+      NEWLINE "\n"
   SECTION
     SECTION_HEADER
       L_BRACK "["
       IDENT "opcache"
       R_BRACK "]"
-    NEWLINE "\n"
+      NEWLINE "\n"
     ENTRY
       KEY
         IDENT "opcache.enable"

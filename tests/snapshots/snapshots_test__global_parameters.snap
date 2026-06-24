@@ -3,8 +3,9 @@ source: tests/snapshots_test.rs
 expression: "tree(\"# leading comment\\na=b\\n# another comment\\n[section]\\nc=d\\n\")"
 ---
 ROOT 0..54
-  COMMENT 0..17 "# leading comment"
-  NEWLINE 17..18 "\n"
+  COMMENT_LINE 0..18
+    COMMENT 0..17 "# leading comment"
+    NEWLINE 17..18 "\n"
   ENTRY 18..22
     KEY 18..19
       IDENT 18..19 "a"
@@ -12,14 +13,15 @@ ROOT 0..54
     VALUE 20..21
       VALUE_TEXT 20..21 "b"
     NEWLINE 21..22 "\n"
-  COMMENT 22..39 "# another comment"
-  NEWLINE 39..40 "\n"
+  COMMENT_LINE 22..40
+    COMMENT 22..39 "# another comment"
+    NEWLINE 39..40 "\n"
   SECTION 40..54
-    SECTION_HEADER 40..49
+    SECTION_HEADER 40..50
       L_BRACK 40..41 "["
       IDENT 41..48 "section"
       R_BRACK 48..49 "]"
-    NEWLINE 49..50 "\n"
+      NEWLINE 49..50 "\n"
     ENTRY 50..54
       KEY 50..51
         IDENT 50..51 "c"

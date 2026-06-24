@@ -39,6 +39,12 @@ pub enum SyntaxKind {
     KEY,
     /// Wraps the value text.
     VALUE,
+    /// A full-line comment: optional leading whitespace, the `COMMENT` token,
+    /// and its terminating newline.
+    COMMENT_LINE,
+    /// A blank line: optional whitespace followed by a newline (or, at end of
+    /// input, trailing whitespace with no newline).
+    BLANK_LINE,
 }
 
 impl SyntaxKind {
@@ -80,6 +86,8 @@ impl Language for IniLang {
             13 => SyntaxKind::ENTRY,
             14 => SyntaxKind::KEY,
             15 => SyntaxKind::VALUE,
+            16 => SyntaxKind::COMMENT_LINE,
+            17 => SyntaxKind::BLANK_LINE,
             _ => panic!("kind out of range: {}", raw.0),
         }
     }

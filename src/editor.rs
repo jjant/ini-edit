@@ -226,8 +226,9 @@ impl SectionEditor<'_> {
         self.node.splice_children(index..index, elements);
     }
 
-    /// Build the verbatim child elements for a set of raw lines. Each line's
-    /// content is emitted as an opaque `COMMENT` token followed by its newline.
+    /// Build the verbatim child elements for a set of raw lines. Each line
+    /// becomes a `COMMENT_LINE` node: its content is an opaque `COMMENT` token
+    /// followed by its newline, keeping the line-node invariant intact.
     fn raw_line_elements(lines: &[&str]) -> Vec<crate::SyntaxElement> {
         let mut elements: Vec<crate::SyntaxElement> = Vec::new();
         for line in lines {
@@ -237,21 +238,22 @@ impl SectionEditor<'_> {
                 format!("{line}\n")
             };
             // Emit the line content (without newline) as a COMMENT token
-            // and the newline separately. COMMENT is used as a generic
-            // "opaque text" kind — it preserves the content verbatim.
+            // and the newline separately, wrapped in a COMMENT_LINE node.
+            // COMMENT is used as a generic "opaque text" kind — it preserves
+            // the content verbatim.
             let content = text.trim_end_matches(['\n', '\r']);
             let nl = if text.ends_with("\r\n") { "\r\n" } else { "\n" };
 
             let green = {
                 let mut b = rowan::GreenNodeBuilder::new();
-                b.start_node(SyntaxKind::ENTRY.into());
+                b.start_node(SyntaxKind::COMMENT_LINE.into());
                 b.token(SyntaxKind::COMMENT.into(), content);
                 b.token(SyntaxKind::NEWLINE.into(), nl);
                 b.finish_node();
                 b.finish()
             };
             let node = SyntaxNode::new_root(green).clone_for_update();
-            elements.extend(node.children_with_tokens());
+            elements.push(node.into());
         }
         elements
     }
@@ -271,15 +273,16 @@ impl SectionEditor<'_> {
     }
 
     /// Insertion point at the end of the section's logical content: just after
-    /// the last entry/comment/header line and its terminator, but before any
-    /// trailing blank lines. Returns `(child_index, needs_newline)`.
+    /// the last entry/comment/header line, but before any trailing blank lines.
+    /// Returns `(child_index, needs_newline)`.
     fn content_end(&self) -> (usize, bool) {
         let children: Vec<crate::SyntaxElement> = self.node.children_with_tokens().collect();
         let last = children.iter().rposition(|el| match el {
-            rowan::NodeOrToken::Node(n) => {
-                matches!(n.kind(), SyntaxKind::ENTRY | SyntaxKind::SECTION_HEADER)
-            }
-            rowan::NodeOrToken::Token(t) => t.kind() == SyntaxKind::COMMENT,
+            rowan::NodeOrToken::Node(n) => matches!(
+                n.kind(),
+                SyntaxKind::ENTRY | SyntaxKind::COMMENT_LINE | SyntaxKind::SECTION_HEADER
+            ),
+            rowan::NodeOrToken::Token(_) => false,
         });
         match last {
             Some(k) => Self::after_element(&children, k),
@@ -299,9 +302,9 @@ impl SectionEditor<'_> {
         let content: Vec<usize> = children
             .iter()
             .enumerate()
-            .filter(|(_, el)| match el {
-                rowan::NodeOrToken::Node(node) => node.kind() == SyntaxKind::ENTRY,
-                rowan::NodeOrToken::Token(t) => t.kind() == SyntaxKind::COMMENT,
+            .filter(|(_, el)| {
+                matches!(el, rowan::NodeOrToken::Node(node)
+                    if matches!(node.kind(), SyntaxKind::ENTRY | SyntaxKind::COMMENT_LINE))
             })
             .map(|(i, _)| i)
             .collect();
@@ -316,43 +319,25 @@ impl SectionEditor<'_> {
         Self::after_element(&children, content[n - 1])
     }
 
-    /// Compute the insertion point immediately after the line whose content
-    /// element is at `children[k]`, accounting for inconsistent newline
-    /// ownership: an `ENTRY` carries its own trailing newline, whereas a
-    /// `COMMENT` token or `SECTION_HEADER` is followed by a sibling `NEWLINE`
-    /// (possibly after trailing whitespace). Returns `(child_index,
-    /// needs_newline)` where `needs_newline` is true when the line has no
-    /// terminator (end of file).
+    /// Compute the insertion point immediately after the line node at
+    /// `children[k]`. In the line-node model every line node owns its
+    /// terminating newline, so this is simply the next index — with
+    /// `needs_newline` set when the line has no terminator (end of file).
     fn after_element(children: &[crate::SyntaxElement], k: usize) -> (usize, bool) {
-        match &children[k] {
-            rowan::NodeOrToken::Node(n) if n.kind() == SyntaxKind::ENTRY => {
-                let ends_with_newline = n
-                    .last_token()
-                    .is_some_and(|t| t.kind() == SyntaxKind::NEWLINE);
-                (k + 1, !ends_with_newline)
-            }
-            _ => {
-                let mut j = k + 1;
-                while matches!(
-                    children.get(j),
-                    Some(rowan::NodeOrToken::Token(t)) if t.kind() == SyntaxKind::WHITESPACE
-                ) {
-                    j += 1;
-                }
-                match children.get(j) {
-                    Some(rowan::NodeOrToken::Token(t)) if t.kind() == SyntaxKind::NEWLINE => {
-                        (j + 1, false)
-                    }
-                    _ => (k + 1, true),
-                }
-            }
-        }
+        let ends_with_newline = match &children[k] {
+            rowan::NodeOrToken::Node(n) => n
+                .last_token()
+                .is_some_and(|t| t.kind() == SyntaxKind::NEWLINE),
+            rowan::NodeOrToken::Token(t) => t.kind() == SyntaxKind::NEWLINE,
+        };
+        (k + 1, !ends_with_newline)
     }
 
-    /// Remove a range of child elements (0-indexed within this section).
+    /// Remove a range of child line nodes (0-indexed within this section).
     ///
-    /// Index 0 is the section header. Entries, comments, and whitespace
-    /// tokens each count as one element.
+    /// In the line-node model each physical line is one child, so index 0 is
+    /// the section header and child index equals line index. Entries, comment
+    /// lines, and blank lines each count as one element.
     pub fn remove_lines(&self, range: std::ops::Range<usize>) {
         // Collect then detach — splice_children has issues with large ranges
         // in rowan's mutable tree (indices shift during removal).
@@ -482,9 +467,10 @@ mod tests {
     #[test]
     fn remove_lines_by_range() {
         let ed = Editor::new("[s]\na = 1\nb = 2\nc = 3\n");
-        // Children: SECTION_HEADER, NEWLINE, ENTRY(a), ENTRY(b), ENTRY(c)
-        // Remove indices 3..4 should remove ENTRY(b)
-        ed.section("s").remove_lines(3..4);
+        // Line-node layout — child index == line index:
+        //   0 SECTION_HEADER, 1 ENTRY(a), 2 ENTRY(b), 3 ENTRY(c)
+        // Remove index 2..3 to drop ENTRY(b).
+        ed.section("s").remove_lines(2..3);
         let out = ed.finish();
         assert!(out.contains("a = 1"), "got: {out}");
         assert!(!out.contains("b = 2"), "got: {out}");
@@ -517,8 +503,9 @@ mod tests {
     #[test]
     fn insert_raw_lines_at_position() {
         let ed = Editor::new("[s]\na = 1\nb = 2\n");
-        // Insert between ENTRY(a) at index 2 and ENTRY(b) at index 3
-        ed.section("s").insert_raw_lines_at(3, &["; injected"]);
+        // Line-node layout: 0 SECTION_HEADER, 1 ENTRY(a), 2 ENTRY(b).
+        // Insert at index 2 to land between a and b.
+        ed.section("s").insert_raw_lines_at(2, &["; injected"]);
         let out = ed.finish();
         // The injected line should appear between a and b.
         let a_pos = out.find("a = 1").unwrap();

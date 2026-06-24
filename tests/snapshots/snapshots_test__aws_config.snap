@@ -3,14 +3,15 @@ source: tests/snapshots_test.rs
 expression: "tree(\"# AWS config\\n[default]\\nregion = us-west-2\\noutput = json\\n[profile dev-user]\\nregion = us-east-1\\noutput = text\\n\")"
 ---
 ROOT 0..108
-  COMMENT 0..12 "# AWS config"
-  NEWLINE 12..13 "\n"
+  COMMENT_LINE 0..13
+    COMMENT 0..12 "# AWS config"
+    NEWLINE 12..13 "\n"
   SECTION 13..56
-    SECTION_HEADER 13..22
+    SECTION_HEADER 13..23
       L_BRACK 13..14 "["
       IDENT 14..21 "default"
       R_BRACK 21..22 "]"
-    NEWLINE 22..23 "\n"
+      NEWLINE 22..23 "\n"
     ENTRY 23..42
       KEY 23..29
         IDENT 23..29 "region"
@@ -30,11 +31,11 @@ ROOT 0..108
         VALUE_TEXT 51..55 "json"
       NEWLINE 55..56 "\n"
   SECTION 56..108
-    SECTION_HEADER 56..74
+    SECTION_HEADER 56..75
       L_BRACK 56..57 "["
       IDENT 57..73 "profile dev-user"
       R_BRACK 73..74 "]"
-    NEWLINE 74..75 "\n"
+      NEWLINE 74..75 "\n"
     ENTRY 75..94
       KEY 75..81
         IDENT 75..81 "region"

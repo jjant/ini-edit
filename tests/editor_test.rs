@@ -22,10 +22,11 @@ fn append_raw_lines_and_remove_lines() {
     assert!(after_insert.contains("key = value")); // original preserved
 
     // Remove the inserted block using remove_lines.
-    // Children: SECTION_HEADER(0), NEWLINE(1), ENTRY(2),
-    //   COMMENT(3), NEWLINE(4), ENTRY(5), COMMENT(6), NEWLINE(7)
+    // Re-parsed line-node layout (child index == line index):
+    //   0 SECTION_HEADER, 1 ENTRY(key), 2 COMMENT_LINE(BEGIN),
+    //   3 ENTRY(managed_key), 4 COMMENT_LINE(END)
     let ed2 = Editor::new(&after_insert);
-    ed2.section("config").remove_lines(3..8);
+    ed2.section("config").remove_lines(2..5);
 
     let after_remove = ed2.finish();
     assert!(!after_remove.contains("MANAGED"), "got: {after_remove}");
