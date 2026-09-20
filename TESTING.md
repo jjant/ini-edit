@@ -62,7 +62,7 @@ in debug and release modes and on the minimum supported Rust version.
 
 Miri checks the library test suite for undefined behavior. Its Stacked Borrows
 provenance model is temporarily disabled because `rowan 0.16.1` triggers the
-known upstream [rowan issue #163](https://github.com/rust-analyzer/rowan/issues/163);
+known upstream [rowan issue #192](https://github.com/rust-analyzer/rowan/issues/192);
 all other Miri checks remain enabled. Clippy, rustdoc, `cargo audit`, and
 `cargo deny` cover static analysis, advisories, yanked packages, licenses,
 duplicate dependencies, and unexpected dependency sources.

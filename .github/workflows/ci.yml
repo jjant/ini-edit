@@ -71,7 +71,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       # rowan 0.16.1 has an open provenance-model failure upstream:
-      # https://github.com/rust-analyzer/rowan/issues/163
+      # https://github.com/rust-analyzer/rowan/issues/192
       # Keep all other Miri checks enabled until rowan ships a fix.
       MIRIFLAGS: -Zmiri-disable-stacked-borrows
     steps:
