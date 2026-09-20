@@ -17,8 +17,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@nightly-2026-09-17
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: nightly-2026-09-17
           components: llvm-tools-preview
       - uses: taiki-e/install-action@v2.87.16
         with:
@@ -55,8 +56,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@nightly-2026-09-17
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: nightly-2026-09-17
           components: llvm-tools-preview
       - uses: taiki-e/install-action@v2.87.16
         with:
@@ -93,8 +95,9 @@ jobs:
       RUSTFLAGS: --cfg no_zerocopy_simd_x86_avx12_1_89_0
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@nightly-2025-06-01
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: nightly-2025-06-01
           components: llvm-tools-preview
       - uses: taiki-e/install-action@v2.87.16
         with:
