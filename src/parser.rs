@@ -50,15 +50,28 @@ impl ParseError {
     pub fn line_col(&self, source: &str) -> (usize, usize) {
         let mut line = 1;
         let mut col = 1;
+        let mut previous_was_cr = false;
         for (i, ch) in source.char_indices() {
             if i >= self.offset {
                 break;
             }
-            if ch == '\n' {
-                line += 1;
-                col = 1;
-            } else {
-                col += 1;
+            match ch {
+                '\r' => {
+                    line += 1;
+                    col = 1;
+                    previous_was_cr = true;
+                }
+                '\n' if previous_was_cr => {
+                    previous_was_cr = false;
+                }
+                '\n' => {
+                    line += 1;
+                    col = 1;
+                }
+                _ => {
+                    col += 1;
+                    previous_was_cr = false;
+                }
             }
         }
         (line, col)
@@ -69,7 +82,7 @@ impl ParseError {
     pub fn display(&self, source: &str) -> String {
         use std::fmt::Write;
         let (line, col) = self.line_col(source);
-        let source_line = source.split('\n').nth(line - 1).unwrap_or("");
+        let source_line = source_line(source, line);
         let mut out = String::new();
         let _ = writeln!(out, "INI parse error at line {line}, column {col}");
         let _ = writeln!(out, "  |");
@@ -77,6 +90,33 @@ impl ParseError {
         let _ = writeln!(out, "  | {}^", " ".repeat(col - 1));
         let _ = write!(out, "  = {}", self.message);
         out
+    }
+}
+
+fn source_line(source: &str, target_line: usize) -> &str {
+    let bytes = source.as_bytes();
+    let mut line = 1;
+    let mut start = 0;
+    let mut i = 0;
+
+    while i < bytes.len() {
+        if bytes[i] == b'\n' || bytes[i] == b'\r' {
+            if line == target_line {
+                return &source[start..i];
+            }
+            if bytes[i] == b'\r' && bytes.get(i + 1) == Some(&b'\n') {
+                i += 1;
+            }
+            line += 1;
+            start = i + 1;
+        }
+        i += 1;
+    }
+
+    if line == target_line {
+        &source[start..]
+    } else {
+        ""
     }
 }
 
@@ -438,6 +478,22 @@ mod tests {
         let (line, col) = err.line_col(src);
         assert_eq!(line, 3);
         assert_eq!(col, 10); // after "[unclosed" (9 chars), expecting ']'
+    }
+
+    #[test]
+    fn error_line_col_supports_all_line_endings() {
+        for src in [
+            "[s]\nk=v\n[unclosed\n",
+            "[s]\r\nk=v\r\n[unclosed\r\n",
+            "[s]\rk=v\r[unclosed\r",
+        ] {
+            let p = parse(src);
+            let err = &p.errors()[0];
+            assert_eq!(err.line_col(src), (3, 10), "source: {src:?}");
+            let rendered = err.display(src);
+            assert!(rendered.contains("line 3, column 10"), "{rendered}");
+            assert!(rendered.contains("  3 | [unclosed"), "{rendered}");
+        }
     }
 
     #[test]

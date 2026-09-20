@@ -50,7 +50,7 @@ fuzz_target!(|input: FuzzInput<'_>| {
             }
             Op::RemoveLines { section, start, end } => {
                 let s = *start as usize;
-                let e = (*end as usize).max(s);
+                let e = *end as usize;
                 ed.section(section).remove_lines(s..e);
             }
         }
