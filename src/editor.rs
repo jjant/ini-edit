@@ -151,7 +151,7 @@ impl Editor {
     }
 
     fn find_section(&self, name: &str) -> Option<Section> {
-        let file = File::cast(self.root.clone())?;
+        let file = File::cast(self.root.clone()).expect("an Editor always stores a ROOT node");
         file.sections().find(|s| s.name().as_deref() == Some(name))
     }
 }
@@ -451,7 +451,8 @@ impl SectionEditor<'_> {
     }
 
     fn find_entry(&self, key: &str) -> Option<Entry> {
-        let section = Section::cast(self.node.clone())?;
+        let section =
+            Section::cast(self.node.clone()).expect("a SectionEditor always stores a SECTION node");
         section.entries().find(|e| e.key().as_deref() == Some(key))
     }
 }
@@ -477,14 +478,26 @@ impl EntryEditor {
 
     /// The current key text.
     #[must_use]
+    #[expect(
+        clippy::missing_panics_doc,
+        reason = "EntryEditor instances can only be constructed from ENTRY nodes"
+    )]
     pub fn key(&self) -> Option<String> {
-        Entry::cast(self.node.clone())?.key()
+        Entry::cast(self.node.clone())
+            .expect("an EntryEditor always stores an ENTRY node")
+            .key()
     }
 
     /// The current value text. Returns `None` for a bare key with no separator.
     #[must_use]
+    #[expect(
+        clippy::missing_panics_doc,
+        reason = "EntryEditor instances can only be constructed from ENTRY nodes"
+    )]
     pub fn value(&self) -> Option<String> {
-        Entry::cast(self.node.clone())?.value()
+        Entry::cast(self.node.clone())
+            .expect("an EntryEditor always stores an ENTRY node")
+            .value()
     }
 
     /// Replace this entry's key, preserving its value and formatting.
@@ -572,6 +585,7 @@ fn canonical_separator_elements() -> Vec<crate::SyntaxElement> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -888,17 +902,17 @@ mod tests {
     }
 
     #[test]
-    fn append_raw_lines_preserves_bare_cr() {
-        let ed = Editor::new("[s]\r");
-        ed.section("s").append_raw_lines(&["raw = line\r"]);
-        assert_eq!(ed.finish(), "[s]\rraw = line\r");
-    }
-
-    #[test]
     fn append_raw_lines_preserves_crlf() {
         let ed = Editor::new("[s]\r\n");
         ed.section("s").append_raw_lines(&["raw = line\r\n"]);
         assert_eq!(ed.finish(), "[s]\r\nraw = line\r\n");
+    }
+
+    #[test]
+    fn append_raw_lines_preserves_bare_cr() {
+        let ed = Editor::new("[s]\r");
+        ed.section("s").append_raw_lines(&["raw = line\r"]);
+        assert_eq!(ed.finish(), "[s]\rraw = line\r");
     }
 
     #[test]
@@ -990,6 +1004,13 @@ mod tests {
         assert_eq!(ed.finish(), "g = 1\n\n[s]\nk = v\n");
     }
 
+    #[test]
+    fn create_section_after_blank_preamble_does_not_add_another_blank() {
+        let ed = Editor::new("g = 1\n\n");
+        ed.section("s").append_entry("k", "v");
+        assert_eq!(ed.finish(), "g = 1\n\n[s]\nk = v\n");
+    }
+
     // --- duplicate-key safety + entry handles ---
 
     #[test]
@@ -1068,6 +1089,13 @@ mod tests {
         entries[0].set_value("10");
         entries[1].set_value(""); // clear the value
         assert_eq!(ed.finish(), "[s]\na = 10\nb = \n");
+    }
+
+    #[test]
+    fn set_value_preserves_colon_separator() {
+        let ed = Editor::new("[s]\na: 1\n");
+        ed.section("s").set("a", "2");
+        assert_eq!(ed.finish(), "[s]\na: 2\n");
     }
 
     #[test]

@@ -93,9 +93,6 @@ impl Lexer<'_> {
             return;
         };
         match first {
-            '\r' | '\n' => {
-                self.eat_newline();
-            }
             ';' | '#' => {
                 self.lex_comment_to_eol();
                 self.eat_newline();
@@ -129,9 +126,9 @@ impl Lexer<'_> {
             let trimmed = raw.trim_end_matches([' ', '\t']);
             let name_len = trimmed.len();
             let trail_ws = raw_len - name_len;
-            if name_len > 0 {
-                self.bump(SyntaxKind::IDENT, name_len);
-            }
+            // Leading horizontal whitespace was consumed above, so a non-empty
+            // raw name always contains at least one non-whitespace byte.
+            self.bump(SyntaxKind::IDENT, name_len);
             if trail_ws > 0 {
                 self.bump(SyntaxKind::WHITESPACE, trail_ws);
             }
@@ -233,12 +230,10 @@ impl Lexer<'_> {
             };
 
             if let Some((value_len, ws_len)) = split {
-                if value_len > 0 {
-                    self.bump(SyntaxKind::VALUE_TEXT, value_len);
-                }
-                if ws_len > 0 {
-                    self.bump(SyntaxKind::WHITESPACE, ws_len);
-                }
+                // find_inline_comment only returns a marker after a non-empty
+                // value and a non-empty run of horizontal whitespace.
+                self.bump(SyntaxKind::VALUE_TEXT, value_len);
+                self.bump(SyntaxKind::WHITESPACE, ws_len);
                 let comment_len = total_len - value_len - ws_len;
                 self.bump(SyntaxKind::COMMENT, comment_len);
             } else {
@@ -246,9 +241,9 @@ impl Lexer<'_> {
                 let trimmed = raw.trim_end_matches([' ', '\t']);
                 let value_len = trimmed.len();
                 let trail_ws_len = total_len - value_len;
-                if value_len > 0 {
-                    self.bump(SyntaxKind::VALUE_TEXT, value_len);
-                }
+                // Whitespace immediately after the separator was already
+                // consumed, so a non-empty raw value cannot trim to empty.
+                self.bump(SyntaxKind::VALUE_TEXT, value_len);
                 if trail_ws_len > 0 {
                     self.bump(SyntaxKind::WHITESPACE, trail_ws_len);
                 }
@@ -307,6 +302,7 @@ fn find_inline_comment(raw: &str) -> Option<(usize, usize)> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     use SyntaxKind::*;
@@ -329,9 +325,22 @@ mod tests {
     }
 
     #[test]
+    fn whitespace_only_final_line() {
+        let tokens = lex(" \t");
+        assert_eq!(
+            tokens,
+            vec![Token {
+                kind: WHITESPACE,
+                text: " \t"
+            }]
+        );
+    }
+
+    #[test]
     fn comments() {
         assert_eq!(lex_kinds("; hi\n"), vec![COMMENT, NEWLINE]);
         assert_eq!(lex_kinds("# hi"), vec![COMMENT]);
+        assert_eq!(lex_kinds("; hi\r"), vec![COMMENT, NEWLINE]);
     }
 
     #[test]
@@ -358,6 +367,32 @@ mod tests {
     }
 
     #[test]
+    fn section_header_boundaries() {
+        assert_eq!(lex_kinds("[]\n"), vec![L_BRACK, R_BRACK, NEWLINE]);
+        assert_eq!(
+            lex_kinds("[ \t]\n"),
+            vec![L_BRACK, WHITESPACE, R_BRACK, NEWLINE]
+        );
+        assert_eq!(
+            lex_kinds("[name \t]\n"),
+            vec![L_BRACK, IDENT, WHITESPACE, R_BRACK, NEWLINE]
+        );
+        assert_eq!(
+            lex_kinds("[name] ; comment\r"),
+            vec![L_BRACK, IDENT, R_BRACK, WHITESPACE, COMMENT, NEWLINE]
+        );
+        assert_eq!(
+            lex_kinds("[name] # comment\n"),
+            vec![L_BRACK, IDENT, R_BRACK, WHITESPACE, COMMENT, NEWLINE]
+        );
+        assert_eq!(
+            lex_kinds("[name] junk\r"),
+            vec![L_BRACK, IDENT, R_BRACK, WHITESPACE, LEX_ERROR, NEWLINE]
+        );
+        assert_eq!(lex_kinds("[unterminated\r"), vec![L_BRACK, IDENT, NEWLINE]);
+    }
+
+    #[test]
     fn entry_eq() {
         assert_eq!(lex_kinds("k=v\n"), vec![IDENT, EQ, VALUE_TEXT, NEWLINE]);
     }
@@ -373,6 +408,47 @@ mod tests {
             lex_kinds("k = v \n"),
             vec![
                 IDENT, WHITESPACE, EQ, WHITESPACE, VALUE_TEXT, WHITESPACE, NEWLINE
+            ]
+        );
+        assert_eq!(
+            lex_kinds("k\t=\tvalue\n"),
+            vec![IDENT, WHITESPACE, EQ, WHITESPACE, VALUE_TEXT, NEWLINE]
+        );
+    }
+
+    #[test]
+    fn entry_lexer_consumes_its_trailing_whitespace_and_newline() {
+        let mut lexer = Lexer {
+            rest: "k=value  \nnext=x\n",
+            tokens: Vec::new(),
+            inline_comments: false,
+        };
+        lexer.lex_line();
+
+        assert_eq!(lexer.rest, "next=x\n");
+        assert_eq!(
+            lexer.tokens,
+            vec![
+                Token {
+                    kind: IDENT,
+                    text: "k"
+                },
+                Token {
+                    kind: EQ,
+                    text: "="
+                },
+                Token {
+                    kind: VALUE_TEXT,
+                    text: "value"
+                },
+                Token {
+                    kind: WHITESPACE,
+                    text: "  "
+                },
+                Token {
+                    kind: NEWLINE,
+                    text: "\n"
+                },
             ]
         );
     }
@@ -448,6 +524,15 @@ mod tests {
     }
 
     #[test]
+    fn backslash_continuation_with_bare_cr() {
+        let input = "k=a \\\rb\r";
+        let toks = lex(input);
+        assert_eq!(toks.iter().map(|t| t.text).collect::<String>(), input);
+        let value_tok = toks.iter().find(|t| t.kind == VALUE_TEXT).unwrap();
+        assert_eq!(value_tok.text, "a \\\rb");
+    }
+
+    #[test]
     fn backslash_at_eof_is_literal() {
         // No newline after backslash — it's just a literal backslash.
         let input = "k=val\\";
@@ -476,6 +561,16 @@ mod tests {
         assert_eq!(reconstructed, input);
         // The `=` isn't a valid start for a key, so the whole line becomes error.
         assert!(toks.iter().any(|t| t.kind == LEX_ERROR));
+        assert_eq!(
+            lex_kinds("key\r"),
+            vec![IDENT, NEWLINE],
+            "a bare key followed by CR must terminate cleanly"
+        );
+        assert_eq!(
+            lex_kinds("=bad\r"),
+            vec![LEX_ERROR, NEWLINE],
+            "error lines must stop at a bare CR"
+        );
     }
 
     // --- inline comments (opt-in) ---
@@ -586,5 +681,27 @@ mod tests {
         let toks = lex_with("k = v\t; note\n", true);
         assert_eq!(val(&toks), Some("v"));
         assert_eq!(com(&toks), Some("; note"));
+    }
+
+    #[test]
+    fn inline_comment_mcdc_truth_table() {
+        assert_eq!(find_inline_comment("value ; note"), Some((5, 1)));
+        assert_eq!(find_inline_comment("value\t# note"), Some((5, 1)));
+        assert_eq!(find_inline_comment("value  # note"), Some((5, 2)));
+
+        assert_eq!(find_inline_comment("value"), None);
+        assert_eq!(find_inline_comment("value "), None);
+        assert_eq!(find_inline_comment("value x"), None);
+        assert_eq!(find_inline_comment("; at start"), None);
+        assert_eq!(find_inline_comment(" # at start"), None);
+
+        assert_eq!(
+            find_inline_comment("earlier ; marker\\\nfinal # comment"),
+            Some((23, 1))
+        );
+        assert_eq!(
+            find_inline_comment("earlier # marker\\\rfinal ; comment"),
+            Some((23, 1))
+        );
     }
 }

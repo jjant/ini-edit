@@ -29,6 +29,8 @@
 //! assert!(ed.finish().contains("port = 9090"));
 //! ```
 
+#![cfg_attr(coverage_nightly, feature(coverage_attribute))]
+
 pub mod ast;
 pub mod editor;
 pub(crate) mod green_builders;

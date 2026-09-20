@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    - cron: "17 3 * * 0"
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -13,49 +16,147 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
 
       - name: Format check
-        run: cargo fmt --check
+        run: cargo fmt --all --check
 
       - name: Clippy
-        run: cargo clippy --all-targets
+        run: cargo clippy --all-targets --all-features -- -D warnings
 
-      - name: Build
-        run: cargo build --all-targets
+      - name: Build all targets
+        run: cargo build --all-targets --all-features
 
-      - name: Test
-        run: cargo test
+      - name: Test debug configuration
+        run: cargo test --all-targets --all-features
 
-      - name: Doc
-        run: cargo doc --no-deps
+      - name: Test release configuration
+        run: cargo test --release --all-targets --all-features
+
+      - name: Test documentation
+        run: cargo test --doc --all-features
+
+      - name: Build documentation
+        run: cargo doc --no-deps --all-features
         env:
           RUSTDOCFLAGS: -Dwarnings
 
   msrv:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.85.0
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build
-      - run: cargo test
+      - run: cargo build --all-targets --all-features
+      - run: cargo test --all-targets --all-features
+
+  platforms:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --all-targets --all-features
+
+  miri:
+    runs-on: ubuntu-latest
+    env:
+      # rowan 0.16.1 has an open provenance-model failure upstream:
+      # https://github.com/rust-analyzer/rowan/issues/192
+      # Keep all other Miri checks enabled until rowan ships a fix.
+      MIRIFLAGS: -Zmiri-disable-stacked-borrows
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-09-17
+          components: miri, rust-src
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo miri test --lib
+
+  dependencies:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2.87.16
+        with:
+          tool: cargo-audit@0.22.2,cargo-deny@0.20.2
+      - name: Security advisories, unsoundness, and yanked crates
+        run: cargo audit --deny warnings
+      - name: Licenses, duplicate dependencies, and sources
+        run: cargo deny check advisories bans licenses sources
+
+  mutation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2.87.16
+        with:
+          tool: cargo-mutants@27.1.0,cargo-nextest@0.9.145
+      - name: Require no surviving mutation
+        shell: bash
+        run: |
+          mkdir -p target/mutation-ci
+          set +e
+          cargo mutants \
+            --all-features \
+            --test-tool nextest \
+            --jobs 4 \
+            --timeout 30 \
+            --cap-lints true \
+            --output target/mutation-ci
+          status=$?
+          set -e
+
+          report=target/mutation-ci/mutants.out/outcomes.json
+          jq '{total_mutants, caught, timeout, unviable, missed}' "$report"
+          test "$(jq -r '.missed' "$report")" -eq 0
+
+          # cargo-mutants exits 3 for both survivors and detected timeouts.
+          # Survivors were rejected above; timeouts are mutations that make
+          # parser/lexer progress loops hang and are therefore detected.
+          if [ "$status" -ne 0 ] && [ "$status" -ne 3 ]; then
+            exit "$status"
+          fi
 
   fuzz:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@nightly
       - uses: Swatinem/rust-cache@v2
-      - run: cargo install cargo-fuzz
-      - name: Fuzz (5s on PR, 30s on push to main)
+      - uses: taiki-e/install-action@v2.87.16
+        with:
+          tool: cargo-fuzz
+      - name: Fuzz parser and editor
         run: |
+          seconds=10
           if [ "${{ github.event_name }}" = "push" ]; then
-            cargo +nightly fuzz run round_trip -- -max_total_time=30
-          else
-            cargo +nightly fuzz run round_trip -- -max_total_time=5
+            seconds=60
+          elif [ "${{ github.event_name }}" = "schedule" ]; then
+            seconds=900
           fi
+          cargo +nightly fuzz run \
+            --target x86_64-unknown-linux-gnu \
+            round_trip \
+            -- \
+            -max_total_time="$seconds"
+          cargo +nightly fuzz run \
+            --target x86_64-unknown-linux-gnu \
+            editor \
+            -- \
+            -max_total_time="$seconds"

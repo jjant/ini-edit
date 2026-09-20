@@ -102,6 +102,12 @@ INI has no formal spec. `ini-edit` makes these choices:
 
 The minimum supported Rust version is **1.85.0**.
 
+## Testing
+
+The crate requires 100% function, instantiation, line, region, branch, and
+MC/DC coverage, plus mutation testing, fuzzing, Miri, debug/release, MSRV, and
+dependency-policy checks. See [TESTING.md](TESTING.md).
+
 ## License
 
 MIT
