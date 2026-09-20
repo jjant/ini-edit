@@ -14,6 +14,7 @@ exclude = ["fuzz/", "tests/snapshots/", ".github/"]
 [lints.rust]
 missing_docs = "warn"
 unsafe_code = "deny"
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(coverage_nightly)"] }
 
 [lints.clippy]
 all = { level = "warn", priority = -1 }

@@ -113,11 +113,10 @@ fn source_line(source: &str, target_line: usize) -> &str {
         i += 1;
     }
 
-    if line == target_line {
-        &source[start..]
-    } else {
-        ""
-    }
+    // display() obtains target_line from line_col() over this same source, so
+    // the requested line always exists, including the empty line after a final
+    // newline.
+    &source[start..]
 }
 
 /// Options for configuring the parser.
@@ -302,9 +301,9 @@ impl Parser<'_> {
     fn parse_section_header(&mut self) {
         self.builder.start_node(SyntaxKind::SECTION_HEADER.into());
         self.bump_if(SyntaxKind::WHITESPACE);
-        if self.peek() == Some(SyntaxKind::L_BRACK) {
-            self.bump();
-        }
+        // `line_kind` only dispatches here when the next non-whitespace token
+        // is `L_BRACK`.
+        self.bump();
         self.bump_if(SyntaxKind::WHITESPACE);
         if self.peek() == Some(SyntaxKind::IDENT) {
             self.bump();
@@ -329,9 +328,9 @@ impl Parser<'_> {
         self.bump_if(SyntaxKind::WHITESPACE);
 
         self.builder.start_node(SyntaxKind::KEY.into());
-        if self.peek() == Some(SyntaxKind::IDENT) {
-            self.bump();
-        }
+        // `line_kind` only dispatches here when the next non-whitespace token
+        // is `IDENT`.
+        self.bump();
         self.builder.finish_node();
 
         self.bump_if(SyntaxKind::WHITESPACE);
@@ -388,6 +387,7 @@ impl Parser<'_> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -429,6 +429,7 @@ mod tests {
     #[test]
     fn malformed_still_round_trips() {
         assert_round_trip("[unclosed\n");
+        assert_round_trip("[unterminated");
         assert_round_trip("[]\n");
     }
 
@@ -498,15 +499,31 @@ mod tests {
     }
 
     #[test]
-    fn source_line_handles_final_and_out_of_range_lines() {
+    fn source_line_handles_final_line() {
         assert_eq!(source_line("first\nlast", 2), "last");
-        assert_eq!(source_line("first\nlast", 3), "");
     }
 
     #[test]
     fn parse_error_records_offset_after_leading_whitespace() {
         let parsed = parse("  =bad\n");
         assert_eq!(parsed.errors()[0].offset, 2);
+    }
+
+    #[test]
+    fn error_display_handles_final_and_missing_source_lines() {
+        let final_line = ParseError {
+            message: "problem".to_string(),
+            offset: 4,
+        };
+        let rendered = final_line.display("one\nlast");
+        assert!(rendered.contains("  2 | last"), "{rendered}");
+
+        let past_end = ParseError {
+            message: "problem".to_string(),
+            offset: usize::MAX,
+        };
+        let rendered = past_end.display("one\n");
+        assert!(rendered.contains("  2 | "), "{rendered}");
     }
 
     #[test]

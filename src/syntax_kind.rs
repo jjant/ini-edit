@@ -105,6 +105,7 @@ pub type SyntaxToken = rowan::SyntaxToken<IniLang>;
 pub type SyntaxElement = rowan::SyntaxElement<IniLang>;
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     use rowan::Language;
@@ -122,9 +123,20 @@ mod tests {
     fn kind_raw_round_trip() {
         for kind in [
             SyntaxKind::WHITESPACE,
+            SyntaxKind::NEWLINE,
             SyntaxKind::COMMENT,
+            SyntaxKind::L_BRACK,
+            SyntaxKind::R_BRACK,
+            SyntaxKind::EQ,
+            SyntaxKind::COLON,
+            SyntaxKind::IDENT,
+            SyntaxKind::VALUE_TEXT,
+            SyntaxKind::LEX_ERROR,
+            SyntaxKind::ROOT,
             SyntaxKind::SECTION,
+            SyntaxKind::SECTION_HEADER,
             SyntaxKind::ENTRY,
+            SyntaxKind::KEY,
             SyntaxKind::VALUE,
             SyntaxKind::COMMENT_LINE,
             SyntaxKind::BLANK_LINE,

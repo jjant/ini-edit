@@ -210,6 +210,7 @@ impl CommentLine {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     use crate::parse;
@@ -243,6 +244,11 @@ mod tests {
         let e = f.sections().next().unwrap().entries().next().unwrap();
         assert!(e.uses_colon());
         assert_eq!(e.value().as_deref(), Some("v"));
+
+        let f = ast("[s]\nk = v\nbare\n");
+        let entries: Vec<_> = f.sections().next().unwrap().entries().collect();
+        assert!(!entries[0].uses_colon());
+        assert!(!entries[1].uses_colon());
     }
 
     #[test]
@@ -321,5 +327,60 @@ mod tests {
         assert_traits(&value);
         assert_traits(&comment);
         assert_traits(&blank);
+    }
+
+    #[test]
+    fn malformed_nodes_return_none_from_optional_accessors() {
+        fn empty_node(kind: SyntaxKind) -> SyntaxNode {
+            let mut builder = rowan::GreenNodeBuilder::new();
+            builder.start_node(kind.into());
+            builder.finish_node();
+            SyntaxNode::new_root(builder.finish())
+        }
+
+        let section = Section::cast(empty_node(SyntaxKind::SECTION)).unwrap();
+        assert!(section.header().is_none());
+        assert!(section.name().is_none());
+        assert!(section.entries().next().is_none());
+        assert!(section.comment_lines().next().is_none());
+
+        let header = SectionHeader::cast(empty_node(SyntaxKind::SECTION_HEADER)).unwrap();
+        assert!(header.name_token().is_none());
+        assert!(header.name().is_none());
+        assert_eq!(header.syntax().kind(), SyntaxKind::SECTION_HEADER);
+
+        let entry = Entry::cast(empty_node(SyntaxKind::ENTRY)).unwrap();
+        assert!(entry.key_node().is_none());
+        assert!(entry.key().is_none());
+        assert!(entry.value_node().is_none());
+        assert!(entry.value().is_none());
+        assert!(!entry.uses_colon());
+        assert!(entry.inline_comment().is_none());
+
+        let key = Key::cast(empty_node(SyntaxKind::KEY)).unwrap();
+        assert!(key.token().is_none());
+        assert!(key.text().is_none());
+
+        let value = Value::cast(empty_node(SyntaxKind::VALUE)).unwrap();
+        assert!(value.token().is_none());
+        assert!(value.text().is_none());
+
+        let comment = CommentLine::cast(empty_node(SyntaxKind::COMMENT_LINE)).unwrap();
+        assert!(comment.token().is_none());
+        assert!(comment.text().is_none());
+
+        let blank = BlankLine::cast(empty_node(SyntaxKind::BLANK_LINE)).unwrap();
+        assert_eq!(blank.syntax().kind(), SyntaxKind::BLANK_LINE);
+
+        let root = empty_node(SyntaxKind::ROOT);
+        let file = File::cast(root.clone()).unwrap();
+        assert_eq!(file.syntax().kind(), SyntaxKind::ROOT);
+        assert!(Section::cast(root.clone()).is_none());
+        assert!(SectionHeader::cast(root.clone()).is_none());
+        assert!(Entry::cast(root.clone()).is_none());
+        assert!(Key::cast(root.clone()).is_none());
+        assert!(Value::cast(root.clone()).is_none());
+        assert!(CommentLine::cast(root.clone()).is_none());
+        assert!(BlankLine::cast(root).is_none());
     }
 }

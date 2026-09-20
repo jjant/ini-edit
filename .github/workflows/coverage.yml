@@ -4,21 +4,121 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    - cron: "17 3 * * 0"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
-  coverage:
+  source:
+    name: source (100%)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Install tarpaulin
-        run: cargo install cargo-tarpaulin
-      - name: Generate coverage
-        run: cargo tarpaulin --out xml --skip-clean
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@nightly-2026-09-17
+        with:
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@v2.87.16
+        with:
+          tool: cargo-llvm-cov@0.9.1
+      - name: Measure production source
+        run: |
+          cargo llvm-cov clean --workspace
+          cargo llvm-cov --lib --all-features --no-report
+          cargo llvm-cov report --lcov --output-path lcov.info
+          cargo llvm-cov report --json --summary-only --output-path coverage.json
+      - name: Require 100% functions, instantiations, lines, and regions
+        run: |
+          jq '.data[0].totals' coverage.json
+          jq -e '
+            .data[0].totals
+            | [
+                .functions.percent,
+                .instantiations.percent,
+                .lines.percent,
+                .regions.percent
+              ]
+            | all(. == 100)
+          ' coverage.json
       - name: Upload to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          files: cobertura.xml
-          fail_ci_if_error: false
+          files: lcov.info
+          disable_search: true
+          fail_ci_if_error: true
+
+  branch:
+    name: branches (100%)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@nightly-2026-09-17
+        with:
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@v2.87.16
+        with:
+          tool: cargo-llvm-cov@0.9.1
+      - name: Measure and require 100% branch coverage
+        run: |
+          cargo llvm-cov clean --workspace
+          cargo llvm-cov \
+            --lib \
+            --all-features \
+            --branch \
+            --json \
+            --summary-only \
+            --output-path branch-coverage.json
+          jq '.data[0].totals' branch-coverage.json
+          jq -e '
+            .data[0].totals
+            | [
+                .branches.percent,
+                .functions.percent,
+                .instantiations.percent,
+                .lines.percent,
+                .regions.percent
+              ]
+            | all(. == 100)
+          ' branch-coverage.json
+
+  mcdc:
+    name: MC/DC (100%)
+    runs-on: ubuntu-latest
+    env:
+      # zerocopy probes an AVX-512 feature stabilized after this pinned
+      # compiler. The cfg keeps that optional implementation disabled.
+      RUSTFLAGS: --cfg no_zerocopy_simd_x86_avx12_1_89_0
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@nightly-2025-06-01
+        with:
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@v2.87.16
+        with:
+          tool: cargo-llvm-cov@0.9.1
+      - name: Measure and require 100% MC/DC
+        run: |
+          cargo llvm-cov clean --workspace
+          cargo llvm-cov \
+            --lib \
+            --all-features \
+            --mcdc \
+            --json \
+            --summary-only \
+            --output-path mcdc-coverage.json
+          jq '.data[0].totals' mcdc-coverage.json
+          jq -e '
+            .data[0].totals
+            | [
+                .mcdc.percent,
+                .branches.percent,
+                .functions.percent,
+                .instantiations.percent,
+                .lines.percent,
+                .regions.percent
+              ]
+            | all(. == 100)
+          ' mcdc-coverage.json
