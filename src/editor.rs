@@ -895,6 +895,13 @@ mod tests {
     }
 
     #[test]
+    fn append_raw_lines_preserves_crlf() {
+        let ed = Editor::new("[s]\r\n");
+        ed.section("s").append_raw_lines(&["raw = line\r\n"]);
+        assert_eq!(ed.finish(), "[s]\r\nraw = line\r\n");
+    }
+
+    #[test]
     fn append_raw_lines_eof_without_newline() {
         // Appending raw lines after an unterminated last line adds a separator.
         let ed = Editor::new("[s]\nk = v");

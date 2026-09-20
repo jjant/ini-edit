@@ -261,10 +261,11 @@ impl Parser<'_> {
             .iter()
             .map(|t| t.text.len())
             .sum();
-        self.errors.push(ParseError {
+        let error = ParseError {
             message: msg.into(),
             offset,
-        });
+        };
+        self.errors.push(error);
     }
 
     fn parse_root(&mut self) {
@@ -494,6 +495,18 @@ mod tests {
             assert!(rendered.contains("line 3, column 10"), "{rendered}");
             assert!(rendered.contains("  3 | [unclosed"), "{rendered}");
         }
+    }
+
+    #[test]
+    fn source_line_handles_final_and_out_of_range_lines() {
+        assert_eq!(source_line("first\nlast", 2), "last");
+        assert_eq!(source_line("first\nlast", 3), "");
+    }
+
+    #[test]
+    fn parse_error_records_offset_after_leading_whitespace() {
+        let parsed = parse("  =bad\n");
+        assert_eq!(parsed.errors()[0].offset, 2);
     }
 
     #[test]

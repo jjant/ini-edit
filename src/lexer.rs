@@ -340,6 +340,14 @@ mod tests {
     }
 
     #[test]
+    fn section_header_with_trailing_comment() {
+        assert_eq!(
+            lex_kinds("[foo] ; note\n"),
+            vec![L_BRACK, IDENT, R_BRACK, WHITESPACE, COMMENT, NEWLINE]
+        );
+    }
+
+    #[test]
     fn section_with_spaces_in_name() {
         assert_eq!(
             lex_kinds("[my section]\n"),
