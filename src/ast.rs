@@ -294,8 +294,8 @@ mod tests {
 
     #[test]
     fn all_typed_nodes_are_cloneable_and_debuggable() {
-        fn assert_traits<T: AstNode + Clone + std::fmt::Debug>(node: T) {
-            let cloned = node.clone();
+        fn assert_traits<T: AstNode + Clone + std::fmt::Debug>(node: &T) {
+            let cloned = T::clone(node);
             assert!(!format!("{cloned:?}").is_empty());
             assert_eq!(node.syntax().kind(), cloned.syntax().kind());
         }
@@ -313,13 +313,13 @@ mod tests {
             .find_map(BlankLine::cast)
             .unwrap();
 
-        assert_traits(file);
-        assert_traits(section);
-        assert_traits(header);
-        assert_traits(entry);
-        assert_traits(key);
-        assert_traits(value);
-        assert_traits(comment);
-        assert_traits(blank);
+        assert_traits(&file);
+        assert_traits(&section);
+        assert_traits(&header);
+        assert_traits(&entry);
+        assert_traits(&key);
+        assert_traits(&value);
+        assert_traits(&comment);
+        assert_traits(&blank);
     }
 }
