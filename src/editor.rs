@@ -320,8 +320,16 @@ impl SectionEditor<'_> {
             // and the newline separately, wrapped in a COMMENT_LINE node.
             // COMMENT is used as a generic "opaque text" kind — it preserves
             // the content verbatim.
-            let content = text.trim_end_matches(['\n', '\r']);
-            let nl = if text.ends_with("\r\n") { "\r\n" } else { "\n" };
+            let (content, nl) = if let Some(content) = text.strip_suffix("\r\n") {
+                (content, "\r\n")
+            } else if let Some(content) = text.strip_suffix('\n') {
+                (content, "\n")
+            } else {
+                let content = text
+                    .strip_suffix('\r')
+                    .expect("raw lines always have a terminator");
+                (content, "\r")
+            };
 
             let green = {
                 let mut b = rowan::GreenNodeBuilder::new();
@@ -420,8 +428,12 @@ impl SectionEditor<'_> {
     ///
     /// In the line-node model each physical line is one child, so index 0 is
     /// the section header and child index equals line index. Entries, comment
-    /// lines, and blank lines each count as one element.
+    /// lines, and blank lines each count as one element. Empty and reversed
+    /// ranges are no-ops.
     pub fn remove_lines(&self, range: std::ops::Range<usize>) {
+        if range.start >= range.end {
+            return;
+        }
         // Collect then detach — splice_children has issues with large ranges
         // in rowan's mutable tree (indices shift during removal).
         let to_remove: Vec<_> = self
@@ -509,8 +521,29 @@ fn replace_key(entry: &SyntaxNode, new_key: &str) {
 
 /// Replace the value of an `ENTRY` node in place. An empty string clears it.
 fn replace_value(entry: &SyntaxNode, value: &str) {
-    let value_node = Entry::cast(entry.clone())
-        .and_then(|e| e.value_node())
+    let entry = Entry::cast(entry.clone()).expect("an ENTRY node can be cast to Entry");
+    if !entry
+        .syntax()
+        .children_with_tokens()
+        .filter_map(rowan::NodeOrToken::into_token)
+        .any(|token| matches!(token.kind(), SyntaxKind::EQ | SyntaxKind::COLON))
+    {
+        let value_index = entry
+            .syntax()
+            .children_with_tokens()
+            .position(|element| {
+                element
+                    .as_node()
+                    .is_some_and(|node| node.kind() == SyntaxKind::VALUE)
+            })
+            .expect("an ENTRY always has a VALUE node");
+        entry
+            .syntax()
+            .splice_children(value_index..value_index, canonical_separator_elements());
+    }
+
+    let value_node = entry
+        .value_node()
         .expect("an ENTRY always has a VALUE node");
     let value_syntax = value_node.syntax().clone();
     let old_count = value_syntax.children_with_tokens().count();
@@ -523,6 +556,19 @@ fn replace_value(entry: &SyntaxNode, value: &str) {
             .collect()
     };
     value_syntax.splice_children(0..old_count, new_children);
+}
+
+fn canonical_separator_elements() -> Vec<crate::SyntaxElement> {
+    let mut builder = rowan::GreenNodeBuilder::new();
+    builder.start_node(SyntaxKind::ROOT.into());
+    builder.token(SyntaxKind::WHITESPACE.into(), " ");
+    builder.token(SyntaxKind::EQ.into(), "=");
+    builder.token(SyntaxKind::WHITESPACE.into(), " ");
+    builder.finish_node();
+    SyntaxNode::new_root(builder.finish())
+        .clone_for_update()
+        .children_with_tokens()
+        .collect()
 }
 
 #[cfg(test)]
@@ -842,6 +888,20 @@ mod tests {
     }
 
     #[test]
+    fn append_raw_lines_preserves_bare_cr() {
+        let ed = Editor::new("[s]\r");
+        ed.section("s").append_raw_lines(&["raw = line\r"]);
+        assert_eq!(ed.finish(), "[s]\rraw = line\r");
+    }
+
+    #[test]
+    fn append_raw_lines_preserves_crlf() {
+        let ed = Editor::new("[s]\r\n");
+        ed.section("s").append_raw_lines(&["raw = line\r\n"]);
+        assert_eq!(ed.finish(), "[s]\r\nraw = line\r\n");
+    }
+
+    #[test]
     fn append_raw_lines_eof_without_newline() {
         // Appending raw lines after an unterminated last line adds a separator.
         let ed = Editor::new("[s]\nk = v");
@@ -859,6 +919,15 @@ mod tests {
         //   3 ENTRY(k). Remove the two loose error tokens.
         ed.section("s").remove_lines(1..3);
         assert_eq!(ed.finish(), "[s]\nk = v\n");
+    }
+
+    #[test]
+    fn remove_lines_reversed_range_is_noop() {
+        let ed = Editor::new("[s]\na = 1\nb = 2\n");
+        let start = 3;
+        let end = 1;
+        ed.section("s").remove_lines(start..end);
+        assert_eq!(ed.finish(), "[s]\na = 1\nb = 2\n");
     }
 
     #[test]
@@ -999,6 +1068,22 @@ mod tests {
         entries[0].set_value("10");
         entries[1].set_value(""); // clear the value
         assert_eq!(ed.finish(), "[s]\na = 10\nb = \n");
+    }
+
+    #[test]
+    fn set_value_adds_separator_to_bare_key() {
+        let opts = ParseOptions {
+            allow_no_value: true,
+            ..Default::default()
+        };
+
+        let ed = Editor::with_parse_options("[s]\nflag\n", &opts);
+        ed.section("s").set("flag", "on");
+        assert_eq!(ed.finish(), "[s]\nflag = on\n");
+
+        let ed = Editor::with_parse_options("[s]\nflag\n", &opts);
+        ed.section("s").entries_mut()[0].set_value("");
+        assert_eq!(ed.finish(), "[s]\nflag = \n");
     }
 
     #[test]
