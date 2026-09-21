@@ -26,17 +26,58 @@ use crate::green_builders;
 use crate::syntax_kind::{SyntaxKind, SyntaxNode};
 use crate::{ParseOptions, parse_with};
 
+/// Formatting options applied when an [`Editor`] creates an entry or assigns
+/// its value.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct EditOptions {
+    /// Whitespace policy around the `=` or `:` separator.
+    pub separator_spacing: SeparatorSpacing,
+}
+
+/// Whitespace policy around separators in entries created or value-updated by
+/// the editor.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum SeparatorSpacing {
+    /// Preserve an existing entry's spacing and use `key = value` for new
+    /// entries or bare keys that need a separator.
+    #[default]
+    Preserve,
+    /// Remove whitespace around the separator, producing `key=value`.
+    Compact,
+    /// Use exact whitespace before and after the separator.
+    ///
+    /// The supplied strings should contain only spaces and tabs.
+    Exact {
+        /// Whitespace inserted between the key and separator.
+        before: String,
+        /// Whitespace inserted between the separator and value.
+        after: String,
+    },
+}
+
+impl SeparatorSpacing {
+    /// Create a policy with exact whitespace before and after the separator.
+    #[must_use]
+    pub fn exact(before: impl Into<String>, after: impl Into<String>) -> Self {
+        Self::Exact {
+            before: before.into(),
+            after: after.into(),
+        }
+    }
+}
+
 /// A format-preserving editor for INI files.
 #[derive(Debug)]
 pub struct Editor {
     root: SyntaxNode,
+    options: EditOptions,
 }
 
 impl Editor {
     /// Create an editor from source text.
     #[must_use]
     pub fn new(src: &str) -> Self {
-        Self::with_parse_options(src, &ParseOptions::default())
+        Self::with_options(src, &ParseOptions::default(), &EditOptions::default())
     }
 
     /// Create an editor from source text using custom [`ParseOptions`].
@@ -47,9 +88,35 @@ impl Editor {
     /// preserved across edits rather than absorbed into values.
     #[must_use]
     pub fn with_parse_options(src: &str, options: &ParseOptions) -> Self {
-        let p = parse_with(src, options);
+        Self::with_options(src, options, &EditOptions::default())
+    }
+
+    /// Create an editor from source text using custom [`EditOptions`].
+    ///
+    /// The default parsing behavior is unchanged. Existing entries are
+    /// reformatted only when their value is assigned; untouched entries retain
+    /// their original bytes.
+    #[must_use]
+    pub fn with_edit_options(src: &str, options: &EditOptions) -> Self {
+        Self::with_options(src, &ParseOptions::default(), options)
+    }
+
+    /// Create an editor using custom parsing and editing options.
+    ///
+    /// This is equivalent to combining [`with_parse_options`](Self::with_parse_options)
+    /// and [`with_edit_options`](Self::with_edit_options).
+    #[must_use]
+    pub fn with_options(
+        src: &str,
+        parse_options: &ParseOptions,
+        edit_options: &EditOptions,
+    ) -> Self {
+        let p = parse_with(src, parse_options);
         let root = p.syntax().clone_for_update();
-        Self { root }
+        Self {
+            root,
+            options: edit_options.clone(),
+        }
     }
 
     /// Get a handle to a section. Creates the section at the end of the
@@ -158,22 +225,27 @@ impl Editor {
 
 /// Handle for editing a specific section.
 pub struct SectionEditor<'a> {
-    #[allow(dead_code)]
     editor: &'a Editor,
     node: SyntaxNode,
 }
 
 impl SectionEditor<'_> {
-    /// Set a key's value. Updates in-place if exists, appends if not.
+    /// Set a key's value. Updates in-place if it exists, appends if not, and
+    /// applies the configured [`SeparatorSpacing`] to the touched entry.
     pub fn set(&self, key: &str, value: &str) {
         if let Some(entry) = self.find_entry(key) {
-            replace_value(entry.syntax(), value);
+            replace_value(
+                entry.syntax(),
+                value,
+                &self.editor.options.separator_spacing,
+            );
         } else {
             self.append_entry(key, value);
         }
     }
 
-    /// Append a new entry to this section (canonical `key = value` format).
+    /// Append a new entry to this section using the configured separator
+    /// spacing.
     ///
     /// The entry is inserted after the section's last content line (entry or
     /// comment) and **before** any trailing blank lines that separate this
@@ -183,7 +255,9 @@ impl SectionEditor<'_> {
     /// inserted first.
     pub fn append_entry(&self, key: &str, value: &str) {
         let (index, needs_newline) = self.content_end();
-        let entry = SyntaxNode::new_root(green_builders::entry_node(key, value)).clone_for_update();
+        let (before, after) = spacing_for_new_entry(&self.editor.options.separator_spacing);
+        let entry = SyntaxNode::new_root(green_builders::entry_node(key, value, before, after))
+            .clone_for_update();
         let mut elements: Vec<crate::SyntaxElement> = Vec::new();
         if needs_newline {
             elements.push(Self::newline_element());
@@ -206,7 +280,9 @@ impl SectionEditor<'_> {
     /// [`remove_entry`](Self::remove_entry), and [`rename_key`](Self::rename_key).
     pub fn insert_entry_at_line(&self, line: usize, key: &str, value: &str) {
         let (index, needs_newline) = self.after_content_line(line);
-        let entry = SyntaxNode::new_root(green_builders::entry_node(key, value)).clone_for_update();
+        let (before, after) = spacing_for_new_entry(&self.editor.options.separator_spacing);
+        let entry = SyntaxNode::new_root(green_builders::entry_node(key, value, before, after))
+            .clone_for_update();
         let mut elements: Vec<crate::SyntaxElement> = Vec::new();
         if needs_newline {
             elements.push(Self::newline_element());
@@ -268,6 +344,7 @@ impl SectionEditor<'_> {
             .map(|(index, entry)| EntryEditor {
                 node: entry.syntax().clone(),
                 index,
+                separator_spacing: self.editor.options.separator_spacing.clone(),
             })
             .collect()
     }
@@ -467,6 +544,7 @@ impl SectionEditor<'_> {
 pub struct EntryEditor {
     node: SyntaxNode,
     index: usize,
+    separator_spacing: SeparatorSpacing,
 }
 
 impl EntryEditor {
@@ -508,10 +586,11 @@ impl EntryEditor {
         replace_key(&self.node, new_key);
     }
 
-    /// Replace this entry's value, preserving its key and formatting. An empty
-    /// string clears the value (`key =`).
+    /// Replace this entry's value, preserving its key and applying the
+    /// editor's configured separator spacing. An empty string clears the
+    /// value (`key =` with the default options).
     pub fn set_value(&self, value: &str) {
-        replace_value(&self.node, value);
+        replace_value(&self.node, value, &self.separator_spacing);
     }
 
     /// Remove this entry from its section.
@@ -533,26 +612,46 @@ fn replace_key(entry: &SyntaxNode, new_key: &str) {
 }
 
 /// Replace the value of an `ENTRY` node in place. An empty string clears it.
-fn replace_value(entry: &SyntaxNode, value: &str) {
+fn replace_value(entry: &SyntaxNode, value: &str, spacing: &SeparatorSpacing) {
     let entry = Entry::cast(entry.clone()).expect("an ENTRY node can be cast to Entry");
-    if !entry
+    let separator_kind = entry
         .syntax()
         .children_with_tokens()
         .filter_map(rowan::NodeOrToken::into_token)
-        .any(|token| matches!(token.kind(), SyntaxKind::EQ | SyntaxKind::COLON))
-    {
-        let value_index = entry
-            .syntax()
-            .children_with_tokens()
+        .find_map(|token| {
+            matches!(token.kind(), SyntaxKind::EQ | SyntaxKind::COLON).then_some(token.kind())
+        });
+
+    if separator_kind.is_none() || !matches!(spacing, SeparatorSpacing::Preserve) {
+        let children: Vec<_> = entry.syntax().children_with_tokens().collect();
+        let key_index = children
+            .iter()
+            .position(|element| {
+                element
+                    .as_node()
+                    .is_some_and(|node| node.kind() == SyntaxKind::KEY)
+            })
+            .expect("an ENTRY always has a KEY node");
+        let value_index = children
+            .iter()
             .position(|element| {
                 element
                     .as_node()
                     .is_some_and(|node| node.kind() == SyntaxKind::VALUE)
             })
             .expect("an ENTRY always has a VALUE node");
-        entry
-            .syntax()
-            .splice_children(value_index..value_index, canonical_separator_elements());
+        let (before, after) = spacing_for_new_entry(spacing);
+        let separator_index = key_index + 1;
+        for element in &children[separator_index..value_index] {
+            element
+                .as_token()
+                .expect("only separator tokens occur between KEY and VALUE nodes")
+                .detach();
+        }
+        entry.syntax().splice_children(
+            separator_index..separator_index,
+            separator_elements(separator_kind.unwrap_or(SyntaxKind::EQ), before, after),
+        );
     }
 
     let value_node = entry
@@ -571,12 +670,33 @@ fn replace_value(entry: &SyntaxNode, value: &str) {
     value_syntax.splice_children(0..old_count, new_children);
 }
 
-fn canonical_separator_elements() -> Vec<crate::SyntaxElement> {
+fn spacing_for_new_entry(spacing: &SeparatorSpacing) -> (&str, &str) {
+    match spacing {
+        SeparatorSpacing::Preserve => (" ", " "),
+        SeparatorSpacing::Compact => ("", ""),
+        SeparatorSpacing::Exact { before, after } => (before, after),
+    }
+}
+
+fn separator_elements(
+    separator: SyntaxKind,
+    before: &str,
+    after: &str,
+) -> Vec<crate::SyntaxElement> {
     let mut builder = rowan::GreenNodeBuilder::new();
     builder.start_node(SyntaxKind::ROOT.into());
-    builder.token(SyntaxKind::WHITESPACE.into(), " ");
-    builder.token(SyntaxKind::EQ.into(), "=");
-    builder.token(SyntaxKind::WHITESPACE.into(), " ");
+    if !before.is_empty() {
+        builder.token(SyntaxKind::WHITESPACE.into(), before);
+    }
+    let separator_text = if separator == SyntaxKind::COLON {
+        ":"
+    } else {
+        "="
+    };
+    builder.token(separator.into(), separator_text);
+    if !after.is_empty() {
+        builder.token(SyntaxKind::WHITESPACE.into(), after);
+    }
     builder.finish_node();
     SyntaxNode::new_root(builder.finish())
         .clone_for_update()
@@ -1112,6 +1232,64 @@ mod tests {
         let ed = Editor::with_parse_options("[s]\nflag\n", &opts);
         ed.section("s").entries_mut()[0].set_value("");
         assert_eq!(ed.finish(), "[s]\nflag = \n");
+    }
+
+    #[test]
+    fn compact_separator_spacing_applies_to_touched_entries() {
+        let edit_options = EditOptions {
+            separator_spacing: SeparatorSpacing::Compact,
+        };
+        let ed = Editor::with_edit_options(
+            "[s]\n  changed   =   old\nuntouched : keep\ncolon: old\n",
+            &edit_options,
+        );
+
+        ed.section("s").set("changed", "new");
+        ed.section("s").set("missing", "added");
+        ed.section("s").insert_entry_at_line(1, "inserted", "here");
+        ed.section("s").entries_mut()[3].set_value("new");
+
+        assert_eq!(
+            ed.finish(),
+            "[s]\n  changed=new\ninserted=here\nuntouched : keep\ncolon:new\nmissing=added\n"
+        );
+    }
+
+    #[test]
+    fn exact_separator_spacing_supports_custom_whitespace() {
+        let edit_options = EditOptions {
+            separator_spacing: SeparatorSpacing::exact("\t", "  "),
+        };
+        let ed = Editor::with_edit_options("[s]\na = old\n", &edit_options);
+
+        ed.section("s").set("a", "new");
+        ed.section("s").append_entry("b", "added");
+
+        assert_eq!(ed.finish(), "[s]\na\t=  new\nb\t=  added\n");
+    }
+
+    #[test]
+    fn parse_and_edit_options_can_be_combined() {
+        let parse_options = ParseOptions {
+            allow_no_value: true,
+            inline_comments: true,
+        };
+        let edit_options = EditOptions {
+            separator_spacing: SeparatorSpacing::Compact,
+        };
+        let ed = Editor::with_options(
+            "[s]\nflag   \nvalue = old   ; keep\nuntouched = yes\n",
+            &parse_options,
+            &edit_options,
+        );
+
+        ed.section("s").set("flag", "on");
+        ed.section("s").set("value", "new");
+
+        assert_eq!(
+            ed.finish(),
+            "[s]\nflag=on\nvalue=new   ; keep\nuntouched = yes\n"
+        );
     }
 
     #[test]

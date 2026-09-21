@@ -19,12 +19,12 @@ Current results:
 
 | Metric | Covered |
 |---|---:|
-| Functions | 137 / 137 (100%) |
-| Instantiations | 153 / 153 (100%) |
-| Lines | 862 / 862 (100%) |
-| Regions | 919 / 919 (100%) |
-| Branches | 174 / 174 (100%) |
-| MC/DC conditions | 46 / 46 (100%) |
+| Functions | 143 / 143 (100%) |
+| Instantiations | 159 / 159 (100%) |
+| Lines | 935 / 935 (100%) |
+| Regions | 980 / 980 (100%) |
+| Branches | 186 / 186 (100%) |
+| MC/DC conditions | 48 / 48 (100%) |
 
 LLVM's MC/DC instrumentation is currently tied to
 `nightly-2025-06-01`. The other source and branch measurements use

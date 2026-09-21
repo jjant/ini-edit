@@ -1,7 +1,7 @@
 //! Integration tests for the Editor API.
 
-use ini_edit::editor::Editor;
-use ini_edit::parse;
+use ini_edit::editor::{EditOptions, Editor, SeparatorSpacing};
+use ini_edit::{ParseOptions, parse};
 
 #[test]
 fn append_raw_lines_and_remove_lines() {
@@ -98,4 +98,44 @@ fn remove_section_preserves_rest() {
 
     let p = parse(&output);
     assert_eq!(p.syntax().text().to_string(), output);
+}
+
+#[test]
+fn configurable_separator_spacing_only_normalizes_touched_entries() {
+    let parse_options = ParseOptions {
+        allow_no_value: true,
+        inline_comments: true,
+    };
+    let edit_options = EditOptions {
+        separator_spacing: SeparatorSpacing::Compact,
+    };
+    let ed = Editor::with_options(
+        "[service]\r\nendpoint = old   ; retained\r\nflag   \r\nuntouched : value\r\n",
+        &parse_options,
+        &edit_options,
+    );
+
+    ed.section("service")
+        .set("endpoint", "unix:///tmp/service.sock");
+    ed.section("service").set("flag", "enabled");
+    ed.section("service").append_entry("timeout", "30");
+
+    assert_eq!(
+        ed.finish(),
+        "[service]\r\nendpoint=unix:///tmp/service.sock   ; retained\r\nflag=enabled\r\nuntouched : value\r\ntimeout=30\n"
+    );
+}
+
+#[test]
+fn exact_separator_spacing_applies_to_updates_and_insertions() {
+    let options = EditOptions {
+        separator_spacing: SeparatorSpacing::exact("\t", "  "),
+    };
+    let ed = Editor::with_edit_options("[service]\nendpoint: old\n", &options);
+
+    ed.section("service").set("endpoint", "new");
+    ed.section("service")
+        .insert_entry_at_line(1, "timeout", "30");
+
+    assert_eq!(ed.finish(), "[service]\nendpoint\t:  new\ntimeout\t=  30\n");
 }
