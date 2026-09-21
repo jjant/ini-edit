@@ -70,6 +70,27 @@ let output = ed.finish();
 // timeout = 30
 ```
 
+Separator whitespace for edited entries is configurable. Existing formatting
+is preserved by default; compact and exact policies normalize only entries
+that are created or whose values are updated:
+
+```rust
+use ini_edit::editor::{EditOptions, Editor, SeparatorSpacing};
+
+let options = EditOptions {
+    separator_spacing: SeparatorSpacing::Compact,
+};
+let ed = Editor::with_edit_options("[service]\nendpoint = old\n", &options);
+
+ed.section("service")
+    .set("endpoint", "unix:///tmp/service.sock");
+
+assert_eq!(
+    ed.finish(),
+    "[service]\nendpoint=unix:///tmp/service.sock\n"
+);
+```
+
 ## INI File Format Decisions
 
 INI has no formal spec. `ini-edit` makes these choices:

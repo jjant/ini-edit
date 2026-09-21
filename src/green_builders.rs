@@ -30,19 +30,28 @@ pub fn value_node(text: &str) -> GreenNode {
     builder.finish()
 }
 
-/// Build a complete ENTRY node: `key = value\n`
+/// Build a complete ENTRY node with configurable separator whitespace.
 #[must_use]
-pub fn entry_node(key: &str, value: &str) -> GreenNode {
+pub fn entry_node(
+    key: &str,
+    value: &str,
+    before_separator: &str,
+    after_separator: &str,
+) -> GreenNode {
     let mut builder = GreenNodeBuilder::new();
     builder.start_node(SyntaxKind::ENTRY.into());
     // KEY
     builder.start_node(SyntaxKind::KEY.into());
     builder.token(SyntaxKind::IDENT.into(), key);
     builder.finish_node();
-    // ws = ws
-    builder.token(SyntaxKind::WHITESPACE.into(), " ");
+    // separator
+    if !before_separator.is_empty() {
+        builder.token(SyntaxKind::WHITESPACE.into(), before_separator);
+    }
     builder.token(SyntaxKind::EQ.into(), "=");
-    builder.token(SyntaxKind::WHITESPACE.into(), " ");
+    if !after_separator.is_empty() {
+        builder.token(SyntaxKind::WHITESPACE.into(), after_separator);
+    }
     // VALUE
     builder.start_node(SyntaxKind::VALUE.into());
     if !value.is_empty() {
@@ -98,13 +107,13 @@ mod tests {
 
     #[test]
     fn entry_node_renders_correctly() {
-        let node = entry_node("host", "0.0.0.0");
+        let node = entry_node("host", "0.0.0.0", " ", " ");
         assert_eq!(text_of(&node), "host = 0.0.0.0\n");
     }
 
     #[test]
     fn entry_node_empty_value() {
-        let node = entry_node("key", "");
+        let node = entry_node("key", "", " ", " ");
         assert_eq!(text_of(&node), "key = \n");
     }
 
