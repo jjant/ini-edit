@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-09-21
+
+### Fixed
+
+- Add a canonical separator when assigning a value to a bare key, preventing invalid output such as `flagon` ([#39](https://github.com/jjant/ini-edit/pull/39))
+- Preserve bare-CR line endings during verbatim raw-line insertion ([#39](https://github.com/jjant/ini-edit/pull/39))
+- Report accurate parse-error locations and source excerpts for LF, CRLF, and bare-CR input ([#39](https://github.com/jjant/ini-edit/pull/39))
+- Make empty and reversed `remove_lines` ranges safe no-ops instead of panicking ([#39](https://github.com/jjant/ini-edit/pull/39))
+
+### Changed
+
+- Require exhaustive source, branch, and MC/DC coverage alongside mutation testing, fuzzing, Miri, dependency auditing, and cross-platform checks ([#40](https://github.com/jjant/ini-edit/pull/40))
+- Update vulnerable and yanked transitive development dependencies ([#40](https://github.com/jjant/ini-edit/pull/40))
+
 ## [0.3.0] - 2026-07-03
 
 ### Added
