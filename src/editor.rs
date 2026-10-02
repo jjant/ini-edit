@@ -265,6 +265,8 @@ pub struct SectionEditor<'a> {
 impl SectionEditor<'_> {
     /// Set a key's value. Updates in-place if it exists, appends if not, and
     /// applies the configured [`SeparatorSpacing`] to the touched entry.
+    /// Clearing a value moves its inline comment to a preceding comment line,
+    /// so reopening the file keeps the value empty.
     pub fn set(&self, key: &str, value: &str) {
         if let Some(entry) = self.find_entry(key) {
             replace_value(
@@ -653,6 +655,7 @@ impl EntryEditor {
     /// Replace this entry's value, preserving its key and applying the
     /// editor's configured separator spacing. An empty string clears the
     /// value (`key =` with the default options).
+    /// Any inline comment then moves to a preceding comment line.
     pub fn set_value(&self, value: &str) {
         replace_value(&self.node, value, &self.separator_spacing);
     }
@@ -732,6 +735,52 @@ fn replace_value(entry: &SyntaxNode, value: &str, spacing: &SeparatorSpacing) {
             .collect()
     };
     value_syntax.splice_children(0..old_count, new_children);
+    if value.is_empty() {
+        move_inline_comment_before(entry.syntax());
+    }
+}
+
+/// A marker at the start of a value is literal text under our grammar.
+/// Preserve the note on its own line when clearing the value, instead of
+/// serializing a line whose comment would become the value on the next parse.
+fn move_inline_comment_before(entry: &SyntaxNode) {
+    let Some(parent) = entry.parent() else {
+        return; // an entry handle may outlive removal from the document
+    };
+    let children: Vec<_> = entry.children_with_tokens().collect();
+    let Some(comment_index) = children
+        .iter()
+        .position(|element| element.kind() == SyntaxKind::COMMENT)
+    else {
+        return;
+    };
+    // Inline comments always follow the VALUE and a whitespace token.
+    let first = comment_index - 1;
+    let mut builder = rowan::GreenNodeBuilder::new();
+    builder.start_node(SyntaxKind::COMMENT_LINE.into());
+    for element in &children[first..=comment_index] {
+        let token = element
+            .as_token()
+            .expect("inline comment trivia is tokenized");
+        builder.token(token.kind().into(), token.text());
+    }
+    let newline = entry.last_token().expect("an inline comment is nonempty");
+    let ending = if newline.kind() == SyntaxKind::NEWLINE {
+        newline.text()
+    } else {
+        "\n"
+    };
+    builder.token(SyntaxKind::NEWLINE.into(), ending);
+    builder.finish_node();
+    let comment = SyntaxNode::new_root(builder.finish()).clone_for_update();
+    for element in &children[first..=comment_index] {
+        element
+            .as_token()
+            .expect("inline comment trivia is tokenized")
+            .detach();
+    }
+    let index = entry.index();
+    parent.splice_children(index..index, vec![comment.into()]);
 }
 
 fn spacing_for_new_entry(spacing: &SeparatorSpacing) -> (&str, &str) {
@@ -1095,6 +1144,72 @@ mod tests {
         let ed = Editor::with_parse_options("[s]\nretain = 1   ; keep this note\n", &opts);
         ed.section("s").set("retain", "0");
         assert_eq!(ed.finish(), "[s]\nretain = 0   ; keep this note\n");
+    }
+
+    #[test]
+    fn clearing_a_value_keeps_its_comment_out_of_the_saved_value() {
+        let parse_options = ParseOptions {
+            inline_comments: true,
+            ..Default::default()
+        };
+        for ending in ["\n", "\r\n", "\r", ""] {
+            for marker in [";", "#"] {
+                for separator in ["=", ":"] {
+                    for spacing in [
+                        SeparatorSpacing::Preserve,
+                        SeparatorSpacing::Compact,
+                        SeparatorSpacing::exact("\t", "\t"),
+                    ] {
+                        for use_handle in [false, true] {
+                            let source = format!("[s]\nk {separator} old \t{marker} keep{ending}");
+                            let edit_options = EditOptions {
+                                separator_spacing: spacing.clone(),
+                            };
+                            let editor =
+                                Editor::with_options(&source, &parse_options, &edit_options);
+                            let section = editor.section("s");
+                            let handle = section.entries_mut().pop().unwrap();
+                            if use_handle {
+                                handle.set_value("");
+                            } else {
+                                section.set("k", "");
+                            }
+                            let output = editor.finish();
+                            let reopened = Editor::with_parse_options(&output, &parse_options);
+                            let saved = reopened.section("s").entries_mut().pop().unwrap();
+                            assert_eq!(saved.value().as_deref(), Some(""), "{output:?}");
+                            assert_eq!(handle.value().as_deref(), Some(""));
+                            let (before, after) = spacing_for_new_entry(&spacing);
+                            let comment_ending = if ending.is_empty() { "\n" } else { ending };
+                            assert_eq!(
+                                output,
+                                format!(
+                                    "[s]\n \t{marker} keep{comment_ending}k{before}{separator}{after}{ending}"
+                                )
+                            );
+                            // Moving the comment must preserve the entry's identity.
+                            handle.set_value("again");
+                            assert!(editor.finish().contains("again"));
+                            assert_eq!(editor.finish().matches("keep").count(), 1);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn clearing_a_detached_entry_handle_is_safe() {
+        let options = ParseOptions {
+            inline_comments: true,
+            ..Default::default()
+        };
+        let editor = Editor::with_parse_options("[s]\nk=old ; note\n", &options);
+        let handle = editor.section("s").entries_mut().pop().unwrap();
+        assert!(editor.section("s").remove_entry("k"));
+        handle.set_value("");
+        assert_eq!(handle.value().as_deref(), Some(""));
+        assert_eq!(editor.finish(), "[s]\n");
     }
 
     #[test]
