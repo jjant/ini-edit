@@ -269,6 +269,15 @@ impl Parser<'_> {
 
     fn parse_root(&mut self) {
         self.builder.start_node(SyntaxKind::ROOT.into());
+        // The BOM identifies the document, not its first line. Keeping it at
+        // the root also leaves just the indentation for line classification.
+        if self
+            .tokens
+            .first()
+            .is_some_and(|token| token.text == "\u{FEFF}")
+        {
+            self.bump();
+        }
         while !self.at_end() {
             match self.line_kind() {
                 LineKind::Section => self.parse_section(),
@@ -390,6 +399,61 @@ impl Parser<'_> {
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
+    use crate::ast::{AstNode, File};
+    use crate::editor::Editor;
+
+    #[test]
+    fn bom_does_not_hide_the_first_indented_line() {
+        for indent in ["", " ", "\t", " \t"] {
+            for newline in ["\n", "\r\n", "\r", ""] {
+                for line in ["[section]", "key = value", "; comment", "# comment", ""] {
+                    let source = format!("\u{FEFF}{indent}{line}{newline}");
+                    let parsed = parse(&source);
+                    assert_eq!(parsed.syntax().text().to_string(), source);
+                    assert!(
+                        parsed.errors().is_empty(),
+                        "{source:?}: {:?}",
+                        parsed.errors()
+                    );
+                    let file = File::cast(parsed.syntax()).unwrap();
+                    match line {
+                        "[section]" => assert_eq!(
+                            file.sections().next().unwrap().name().as_deref(),
+                            Some("section")
+                        ),
+                        "key = value" => assert_eq!(
+                            file.preamble_entries().next().unwrap().value().as_deref(),
+                            Some("value")
+                        ),
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn bom_belongs_to_the_document_when_removing_the_first_section() {
+        for indent in ["", " \t"] {
+            let source = format!("\u{FEFF}{indent}[first]\na=1\n[second]\nb=2\n");
+            let editor = Editor::new(&source);
+            editor.section("first").remove();
+            assert_eq!(editor.finish(), "\u{FEFF}[second]\nb=2\n");
+        }
+    }
+
+    #[test]
+    fn bom_is_not_removed_with_a_preamble_entry() {
+        let editor = Editor::new("\u{FEFF}key=value\n[section]\n");
+        editor
+            .file()
+            .preamble_entries()
+            .next()
+            .unwrap()
+            .syntax()
+            .detach();
+        assert_eq!(editor.finish(), "\u{FEFF}[section]\n");
+    }
 
     fn assert_round_trip(input: &str) {
         let p = parse(input);
