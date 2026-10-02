@@ -24,4 +24,9 @@ name = "editor"
 path = "fuzz_targets/editor.rs"
 doc = false
 
+[[bin]]
+name = "editor_reparse"
+path = "fuzz_targets/editor_reparse.rs"
+doc = false
+
 [workspace]

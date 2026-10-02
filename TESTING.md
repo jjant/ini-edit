@@ -15,16 +15,16 @@ integration-test binary in one LLVM report would compile the library once per
 binary and count duplicate, unexecuted monomorphizations rather than additional
 production behavior.
 
-Current results:
+CI requires these thresholds; exact counts grow as production code changes:
 
 | Metric | Covered |
 |---|---:|
-| Functions | 143 / 143 (100%) |
-| Instantiations | 159 / 159 (100%) |
-| Lines | 935 / 935 (100%) |
-| Regions | 980 / 980 (100%) |
-| Branches | 186 / 186 (100%) |
-| MC/DC conditions | 48 / 48 (100%) |
+| Functions | 100% |
+| Instantiations | 100% |
+| Lines | 100% |
+| Regions | 100% |
+| Branches | 100% |
+| MC/DC conditions | 100% |
 
 LLVM's MC/DC instrumentation is currently tied to
 `nightly-2025-06-01`. The other source and branch measurements use
@@ -63,9 +63,12 @@ RUSTFLAGS='--cfg no_zerocopy_simd_x86_avx12_1_89_0' \
   CI prints caught mutations as well as timeouts and publishes a count table
   in the job summary. Without `--caught`, cargo-mutants hides ordinary test
   failures, which can make a healthy run appear to consist only of timeouts.
-- Two structure-aware libFuzzer targets independently stress round trips and
+- Three structure-aware libFuzzer targets independently stress round trips and
   arbitrary editor operation sequences, including reuse of section handles
   after deleting their headers and the identity property of empty insertions.
+  The reload target applies the same valid edits with and without reopening
+  the document between operations, comparing both output and complete syntax
+  trees. Its shared oracle also exhausts 3,072 short sequences in normal tests.
 - Stable tests run on Linux, macOS, and Windows.
 
 ## As-delivered and dynamic checks
@@ -100,4 +103,4 @@ Before release, all required GitHub checks must be green:
 4. Miri.
 5. Dependency audit and policy checks.
 6. Full mutation test.
-7. Both fuzz targets.
+7. All three fuzz targets.
