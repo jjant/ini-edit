@@ -316,7 +316,7 @@ mod tests {
 
     #[test]
     fn empty() {
-        assert!(lex("").is_empty());
+        assert_eq!(lex(""), []);
     }
 
     #[test]
