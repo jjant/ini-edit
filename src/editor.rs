@@ -616,7 +616,10 @@ fn repair_removal_boundary(parent: &SyntaxNode, index: usize) {
         .children_with_tokens()
         .nth(index)
         .and_then(|element| match element {
-            rowan::NodeOrToken::Node(node) => node.first_token(),
+            rowan::NodeOrToken::Node(node) => node
+                .descendants_with_tokens()
+                .filter_map(rowan::NodeOrToken::into_token)
+                .find(|token| !token.text().is_empty()),
             rowan::NodeOrToken::Token(token) => Some(token),
         });
     separate_line_breaks(before, after);
@@ -1011,6 +1014,36 @@ mod tests {
                         editor.root.green(),
                         Editor::new(&editor.finish()).root.green()
                     );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn deleting_before_raw_blank_lines_preserves_physical_lines() {
+        for before in ["\r", "\n", "\r\n"] {
+            for raw in ["", "\n", "\r", "\r\n"] {
+                for operation in 0..3 {
+                    let editor = Editor::new(&format!("[s]{before}x=remove\n"));
+                    editor.section("s").append_raw_lines(&[raw]);
+                    editor.section("s").append_entry("keep", "2");
+                    match operation {
+                        0 => assert!(editor.section("s").remove_entry("x")),
+                        1 => editor.section("s").entries_mut().remove(0).remove(),
+                        _ => editor.section("s").remove_lines(1..2),
+                    }
+                    let ending = if raw.is_empty() { "\n" } else { raw };
+                    let ending = if before == "\r" && ending == "\n" {
+                        "\r\n"
+                    } else {
+                        ending
+                    };
+                    assert_eq!(editor.finish(), format!("[s]{before}{ending}keep = 2\n"));
+                    let reopened = Editor::new(&editor.finish());
+                    editor.section("s").remove_lines(1..2);
+                    reopened.section("s").remove_lines(1..2);
+                    assert_eq!(editor.finish(), reopened.finish());
+                    assert_eq!(editor.finish(), format!("[s]{before}keep = 2\n"));
                 }
             }
         }
