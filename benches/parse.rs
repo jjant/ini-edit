@@ -45,6 +45,20 @@ fn bench_round_trip(c: &mut Criterion) {
     group.finish();
 }
 
+// Error-heavy inputs must scale like valid inputs. A round-trip-only fuzzer
+// rarely grows enough repeated errors to expose quadratic diagnostic work.
+fn bench_malformed(c: &mut Criterion) {
+    let mut group = c.benchmark_group("malformed");
+    for lines in [1_000, 10_000, 100_000] {
+        let source = "=bad\n".repeat(lines);
+        group.throughput(Throughput::Bytes(source.len() as u64));
+        group.bench_with_input(BenchmarkId::new("error_lines", lines), &source, |b, src| {
+            b.iter(|| ini_edit::parse(black_box(src)));
+        });
+    }
+    group.finish();
+}
+
 fn bench_ast_traversal(c: &mut Criterion) {
     let mut group = c.benchmark_group("ast_traversal");
 
@@ -98,6 +112,7 @@ fn bench_edit(c: &mut Criterion) {
 criterion_group!(
     benches,
     bench_parse,
+    bench_malformed,
     bench_round_trip,
     bench_ast_traversal,
     bench_edit,
