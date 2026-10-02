@@ -54,6 +54,9 @@ RUSTFLAGS='--cfg no_zerocopy_simd_x86_avx12_1_89_0' \
   successful serialization alone is not evidence that edits preserved meaning.
 - Mutation testing requires zero surviving source mutations. Mutations that
   destroy lexer/parser progress are detected by a strict timeout.
+  CI prints caught mutations as well as timeouts and publishes a count table
+  in the job summary. Without `--caught`, cargo-mutants hides ordinary test
+  failures, which can make a healthy run appear to consist only of timeouts.
 - Three structure-aware libFuzzer targets independently stress round trips and
   arbitrary editor operation sequences, including reuse of section handles
   after deleting their headers and the identity property of empty insertions.

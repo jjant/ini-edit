@@ -114,6 +114,7 @@ jobs:
           set +e
           cargo mutants \
             --all-features \
+            --caught \
             --test-tool nextest \
             --jobs 4 \
             --timeout 30 \
@@ -124,6 +125,22 @@ jobs:
 
           report=target/mutation-ci/mutants.out/outcomes.json
           jq '{total_mutants, caught, timeout, unviable, missed}' "$report"
+          {
+            echo "### Mutation testing"
+            echo
+            jq -r '
+              ["Outcome", "Count"],
+              ["---", "---:"],
+              ["Mutations tested", .total_mutants],
+              ["Detected by failing tests", .caught],
+              ["Stopped at timeout", .timeout],
+              ["Did not compile", .unviable],
+              ["Survived (must be 0)", .missed]
+              | "| \(.[0]) | \(.[1]) |"
+            ' "$report"
+            echo
+            echo "Timeouts stop mutated test runs; they do not mean the unmodified tests hung."
+          } >> "$GITHUB_STEP_SUMMARY"
           test "$(jq -r '.missed' "$report")" -eq 0
 
           # cargo-mutants exits 3 for both survivors and detected timeouts.
