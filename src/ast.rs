@@ -302,7 +302,7 @@ mod tests {
     fn all_typed_nodes_are_cloneable_and_debuggable() {
         fn assert_traits<T: AstNode + Clone + std::fmt::Debug>(node: &T) {
             let cloned = T::clone(node);
-            assert!(!format!("{cloned:?}").is_empty());
+            assert_ne!(format!("{cloned:?}"), "");
             assert_eq!(node.syntax().kind(), cloned.syntax().kind());
         }
 
