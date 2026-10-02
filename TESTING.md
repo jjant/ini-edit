@@ -83,6 +83,9 @@ RUSTFLAGS='--cfg no_zerocopy_simd_x86_avx12_1_89_0' \
   compare live/reparsed values and syntax trees. Normal tests run 192 cases
   covering all operations, spacing policies, and parser options; the
   `generated_edits` fuzz target explores more documents using the same oracle.
+  Unindented blank lines stay separate when deleting their neighbor brings a
+  CR and LF together; the model records any required CRLF ending so subsequent
+  edits preserve it.
 - Bounded exhaustive tests enumerate all 41,371 strings of zero through four
   scalars from a 14-character alphabet containing delimiters, whitespace,
   Unicode, and a BOM. Every input runs through all four parser-option

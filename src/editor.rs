@@ -154,6 +154,7 @@ impl Editor {
         }
         for _ in 0..blank_lines {
             let blank = SyntaxNode::new_root(green_builders::blank_line_node()).clone_for_update();
+            separate_line_breaks(last_token(&self.root), blank.first_token());
             separator_parent.splice_children(index..index, vec![blank.into()]);
         }
 
@@ -324,7 +325,7 @@ impl SectionEditor<'_> {
     #[must_use]
     pub fn remove_entry(&self, key: &str) -> bool {
         if let Some(entry) = self.find_entry(key) {
-            entry.syntax().detach();
+            detach_preserving_line_breaks(entry.syntax());
             true
         } else {
             false
@@ -380,7 +381,7 @@ impl SectionEditor<'_> {
 
     /// Remove this entire section (header + all entries).
     pub fn remove(self) {
-        self.node.detach();
+        detach_preserving_line_breaks(&self.node);
     }
 
     /// Append raw text lines to this section's body.
@@ -576,12 +577,60 @@ impl SectionEditor<'_> {
                 rowan::NodeOrToken::Token(t) => t.detach(),
             }
         }
+        repair_removal_boundary(&self.node, range.start);
     }
 
     fn find_entry(&self, key: &str) -> Option<Entry> {
         let section =
             Section::cast(self.node.clone()).expect("a SectionEditor always stores a SECTION node");
         section.entries().find(|e| e.key().as_deref() == Some(key))
+    }
+}
+
+/// A CR terminator followed by an LF blank line must stay two line breaks.
+/// Otherwise serialization joins them into CRLF and shifts later line indices.
+fn separate_line_breaks(before: Option<crate::SyntaxToken>, after: Option<crate::SyntaxToken>) {
+    if !before.is_some_and(|token| token.text().ends_with('\r')) {
+        return;
+    }
+    let Some(after) = after
+        .filter(|token| token.kind() == SyntaxKind::NEWLINE)
+        .filter(|token| token.text() == "\n")
+    else {
+        return;
+    };
+    let parent = after.parent().expect("a newline token has a parent");
+    let index = after.index();
+    parent.splice_children(index..index + 1, [SectionEditor::newline_element("\r")]);
+}
+
+fn repair_removal_boundary(parent: &SyntaxNode, index: usize) {
+    let before = index
+        .checked_sub(1)
+        .and_then(|index| parent.children_with_tokens().nth(index))
+        .and_then(|element| match element {
+            rowan::NodeOrToken::Node(node) => last_token(&node),
+            rowan::NodeOrToken::Token(token) => Some(token),
+        });
+    let after = parent
+        .children_with_tokens()
+        .nth(index)
+        .and_then(|element| match element {
+            rowan::NodeOrToken::Node(node) => node
+                .descendants_with_tokens()
+                .filter_map(rowan::NodeOrToken::into_token)
+                .find(|token| !token.text().is_empty()),
+            rowan::NodeOrToken::Token(token) => Some(token),
+        });
+    separate_line_breaks(before, after);
+}
+
+fn detach_preserving_line_breaks(node: &SyntaxNode) {
+    let parent = node.parent();
+    let index = node.index();
+    node.detach();
+    if let Some(parent) = parent {
+        repair_removal_boundary(&parent, index);
     }
 }
 
@@ -676,7 +725,7 @@ impl EntryEditor {
 
     /// Remove this entry from its section.
     pub fn remove(self) {
-        self.node.detach();
+        detach_preserving_line_breaks(&self.node);
     }
 }
 
@@ -902,6 +951,157 @@ fn separator_elements(
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deleting_lines_keeps_carriage_returns_separate_from_blank_lines() {
+        let source = "[s]\ra=old\rb=remove\n\nc=keep\n";
+        for operation in 0..3 {
+            let direct = Editor::new(source);
+            let snapshot = direct.file();
+            let retained = direct.section("s").entries_mut().remove(2);
+            match operation {
+                0 => assert!(direct.section("s").remove_entry("b")),
+                1 => direct.section("s").entries_mut().remove(1).remove(),
+                _ => direct.section("s").remove_lines(2..3),
+            }
+            assert_eq!(direct.finish(), "[s]\ra=old\r\r\nc=keep\n");
+            let reloaded = Editor::new(&direct.finish());
+            assert_eq!(direct.root.green(), reloaded.root.green());
+            assert_eq!(snapshot.syntax().text().to_string(), source);
+            assert_eq!(retained.value().as_deref(), Some("keep"));
+
+            // The remaining blank line must have the same index whether or
+            // not the caller reopened the file after deleting the entry.
+            direct.section("s").remove_lines(2..3);
+            reloaded.section("s").remove_lines(2..3);
+            assert_eq!(direct.finish(), reloaded.finish());
+            assert_eq!(direct.finish(), "[s]\ra=old\rc=keep\n");
+            assert_eq!(retained.value().as_deref(), Some("keep"));
+        }
+    }
+
+    #[test]
+    fn creating_a_section_after_cr_retains_a_blank_separator_line() {
+        for ending in ["\r", "\n", "\r\n"] {
+            let source = format!("[s]{ending}k=v{ending}");
+            let editor = Editor::new(&source);
+            let _ = editor.section("next");
+            let blank = if ending == "\r" { "\r\n" } else { "\n" };
+            assert_eq!(editor.finish(), format!("{source}{blank}[next]\n"));
+            let reloaded = Editor::new(&editor.finish());
+            assert_eq!(editor.root.green(), reloaded.root.green());
+        }
+    }
+
+    #[test]
+    fn deletion_preserves_mixed_newline_styles_and_indented_blanks() {
+        for before in ["\r", "\n", "\r\n"] {
+            for blank in ["\r", "\n", "\r\n"] {
+                for indent in ["", "\t", " "] {
+                    let source = format!("[s]\na=old{before}x=remove\n{indent}{blank}c=keep\n");
+                    let editor = Editor::new(&source);
+                    assert!(editor.section("s").remove_entry("x"));
+                    let blank = if before == "\r" && indent.is_empty() && blank == "\n" {
+                        "\r\n"
+                    } else {
+                        blank
+                    };
+                    assert_eq!(
+                        editor.finish(),
+                        format!("[s]\na=old{before}{indent}{blank}c=keep\n")
+                    );
+                    assert_eq!(
+                        editor.root.green(),
+                        Editor::new(&editor.finish()).root.green()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn deleting_before_raw_blank_lines_preserves_physical_lines() {
+        for before in ["\r", "\n", "\r\n"] {
+            for raw in ["", "\n", "\r", "\r\n"] {
+                for operation in 0..3 {
+                    let editor = Editor::new(&format!("[s]{before}x=remove\n"));
+                    editor.section("s").append_raw_lines(&[raw]);
+                    editor.section("s").append_entry("keep", "2");
+                    match operation {
+                        0 => assert!(editor.section("s").remove_entry("x")),
+                        1 => editor.section("s").entries_mut().remove(0).remove(),
+                        _ => editor.section("s").remove_lines(1..2),
+                    }
+                    let ending = if raw.is_empty() { "\n" } else { raw };
+                    let ending = if before == "\r" && ending == "\n" {
+                        "\r\n"
+                    } else {
+                        ending
+                    };
+                    assert_eq!(editor.finish(), format!("[s]{before}{ending}keep = 2\n"));
+                    let reopened = Editor::new(&editor.finish());
+                    editor.section("s").remove_lines(1..2);
+                    reopened.section("s").remove_lines(1..2);
+                    assert_eq!(editor.finish(), reopened.finish());
+                    assert_eq!(editor.finish(), format!("[s]{before}keep = 2\n"));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn deletion_boundaries_cover_loose_tokens_and_opaque_raw_lines() {
+        let editor = Editor::new("[s]\n=bad\rx=remove\n\nnext=keep\n");
+        assert!(editor.section("s").remove_entry("x"));
+        assert_eq!(editor.finish(), "[s]\n=bad\r\r\nnext=keep\n");
+        assert_eq!(
+            editor.root.green(),
+            Editor::new(&editor.finish()).root.green()
+        );
+
+        let editor = Editor::new("[s]\r=bad\nnext=keep\n");
+        editor.section("s").remove_lines(1..2); // remove just the loose error token
+        assert_eq!(editor.finish(), "[s]\r\r\nnext=keep\n");
+
+        // Raw content is deliberately opaque and must not be reclassified as
+        // a NEWLINE token, even when its bytes happen to be a single LF.
+        let editor = Editor::new("[s]\rx=remove\n");
+        editor.section("s").append_raw_lines(&["\n\n"]);
+        assert!(editor.section("s").remove_entry("x"));
+        assert_eq!(editor.finish(), "[s]\r\n\n");
+    }
+
+    #[test]
+    fn deletion_boundaries_allow_detached_handles_and_empty_sections() {
+        let editor = Editor::new("[s]\rx=remove\n\n");
+        let first = editor.section("s").entries_mut().remove(0);
+        let second = editor.section("s").entries_mut().remove(0);
+        first.remove();
+        second.remove();
+        assert_eq!(editor.finish(), "[s]\r\r\n");
+        editor.section("s").remove_lines(999..1000);
+        assert_eq!(editor.finish(), "[s]\r\r\n");
+
+        let editor = Editor::new("[a]\r[b]\nx=1\n[c]\n");
+        editor.section("c").remove_lines(0..usize::MAX);
+        editor.section("b").remove(); // the following section is empty
+        assert_eq!(editor.finish(), "[a]\r");
+        let _ = editor.section("next");
+        assert_eq!(editor.finish(), "[a]\r\r\n[next]\n");
+
+        let editor = Editor::new("[a]\n[b]\nx=1\n");
+        editor.section("a").remove_lines(0..usize::MAX);
+        editor.section("b").remove(); // the preceding section is empty
+        assert_eq!(editor.finish(), "");
+
+        let editor = Editor::new("[a]\r[b]\nx=remove\n[c]\n\nkeep=2\n");
+        let tail = editor.section("c");
+        tail.remove_lines(0..1);
+        editor.section("b").remove(); // the following section starts with a blank
+        assert_eq!(editor.finish(), "[a]\r\r\nkeep=2\n");
+        tail.remove_lines(0..1);
+        assert_eq!(editor.finish(), "[a]\rkeep=2\n");
+    }
 
     #[test]
     fn file_views_are_immutable_snapshots() {

@@ -165,6 +165,29 @@ impl Document {
         text
     }
 
+    fn separate_blank_lines(&mut self) {
+        let mut previous_cr = false;
+        for section in &mut self.sections {
+            if !section.header.is_empty() {
+                previous_cr = section.header.ends_with('\r');
+            }
+            for line in &mut section.lines {
+                match line {
+                    Line::Entry(entry) => previous_cr = entry.render().ends_with('\r'),
+                    Line::Trivia(text) => {
+                        // Preserve two physical line breaks when deleting a
+                        // line brings a CR and an LF blank line together.
+                        // Store the chosen ending so later edits retain it.
+                        if previous_cr && text.starts_with('\n') {
+                            text.insert(0, '\r');
+                        }
+                        previous_cr = text.ends_with('\r');
+                    }
+                }
+            }
+        }
+    }
+
     fn meaning(&self) -> Meaning {
         self.sections
             .iter()
@@ -223,7 +246,7 @@ fn lines(bytes: &mut Bytes<'_>, keys: &[String], options: &ParseOptions) -> Vec<
     let mut lines = Vec::new();
     for _ in 0..=bytes.next() % 4 {
         match bytes.next() % 3 {
-            0 => lines.push(Line::Trivia(format!(" \t{}", bytes.ending()))),
+            0 => lines.push(Line::Trivia(format!("{}{}", bytes.space(), bytes.ending()))),
             1 => lines.push(Line::Trivia(format!(
                 "{}; retained 🙂{}",
                 bytes.space(),
@@ -276,7 +299,9 @@ fn generate(bytes: &mut Bytes<'_>, options: &ParseOptions) -> Document {
             Line::Trivia(text) => *text = text.trim_end_matches(['\r', '\n']).into(),
         }
     }
-    Document { bom, sections }
+    let mut document = Document { bom, sections };
+    document.separate_blank_lines();
+    document
 }
 
 fn read(file: &File) -> Meaning {
@@ -359,6 +384,7 @@ fn apply(editor: &Editor, expected: &mut Document, edit: &Edit<'_>) {
             actual.remove_lines(usize::MAX..usize::MAX);
         }
     }
+    expected.separate_blank_lines();
 }
 
 /// Generate a whole document and compare edits against independent text and
