@@ -44,6 +44,12 @@ RUSTFLAGS='--cfg no_zerocopy_simd_x86_avx12_1_89_0' \
 
 - Unit tests cover internal lexer, parser, AST, and editor invariants.
 - Integration and snapshot tests exercise only the public API.
+- Differential tests generate 1,024 documents in the shared INI subset and
+  compare their values and sections against a separate model, `rust-ini`, and
+  `configparser`, including all four `ini-edit` parser-option combinations.
+  Dialect-specific quotes, escapes, duplicate keys, continuations, and inline
+  comments stay outside that comparison so expected dialect differences do
+  not become false bug reports.
 - Real-world fixtures cover AWS, Git, Gitea, MySQL, PHP, and systemd syntax.
 - Boundary decision tables vary line endings, separators, whitespace, comments,
   malformed input, empty input, unterminated input, and editor indices.
