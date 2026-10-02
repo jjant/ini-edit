@@ -152,7 +152,6 @@ impl Editor {
                 let blank =
                     SyntaxNode::new_root(green_builders::blank_line_node()).clone_for_update();
                 separator_parent.splice_children(index..index, vec![blank.into()]);
-                index += 1;
             }
         }
 
@@ -806,6 +805,14 @@ mod tests {
             assert_eq!(direct.finish(), reloaded.finish(), "{source:?}");
             assert_eq!(direct.finish(), "[b]\nx = 2\n");
         }
+    }
+
+    #[test]
+    fn creating_a_section_after_clearing_the_previous_one() {
+        let editor = Editor::new("[a]\nx=1\n[b]\ny=2\n");
+        editor.section("b").remove_lines(0..usize::MAX);
+        editor.section("c").set("z", "3");
+        assert_eq!(editor.finish(), "[a]\nx=1\n\n[c]\nz = 3\n");
     }
 
     #[test]
