@@ -67,6 +67,42 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --all-targets --all-features
 
+  extended-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Exhaustive inputs and large documents
+        run: cargo test --release --test exhaustive_parser --test stress -- --include-ignored
+      - name: Build isolated scaling probe
+        run: cargo build --release --example scaling_probe
+      - name: Check CPU and peak-memory growth
+        run: python3 .github/scripts/check_scaling.py
+      - name: Preserve scaling measurements
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: input-scaling-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/scaling-report.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+  miri-strict:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-09-17
+          components: miri, rust-src
+      - uses: Swatinem/rust-cache@v2
+      - name: Lexer and diagnostics with borrow checking enabled
+        run: |
+          cargo miri test --lib lexer::tests::
+          cargo miri test --test exhaustive_parser lexer_and_diagnostic_contracts -- --exact
+
   miri:
     runs-on: ubuntu-latest
     env:
@@ -98,7 +134,8 @@ jobs:
 
   mutation:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # The existing suite takes about 18.5 minutes; leave room for new oracles.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
         with:
@@ -159,6 +196,15 @@ jobs:
       - uses: taiki-e/install-action@v2.87.16
         with:
           tool: cargo-fuzz
+      - name: Restore learned fuzz corpus
+        uses: actions/cache/restore@v6.1.0
+        with:
+          path: fuzz/corpus
+          key: fuzz-corpus-v1-${{ runner.os }}-${{ hashFiles('fuzz/Cargo.lock') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            fuzz-corpus-v1-${{ runner.os }}-${{ hashFiles('fuzz/Cargo.lock') }}-
+      - name: Add reproducible starting cases
+        run: python3 .github/scripts/seed_fuzz_corpus.py
       - name: Fuzz parser and editor
         run: |
           seconds=10
@@ -167,24 +213,31 @@ jobs:
           elif [ "${{ github.event_name }}" = "schedule" ]; then
             seconds=900
           fi
-          cargo +nightly fuzz run \
-            --target x86_64-unknown-linux-gnu \
-            round_trip \
-            -- \
-            -max_total_time="$seconds"
-          cargo +nightly fuzz run \
-            --target x86_64-unknown-linux-gnu \
-            editor \
-            -- \
-            -max_total_time="$seconds"
-          cargo +nightly fuzz run \
-            --target x86_64-unknown-linux-gnu \
-            editor_reparse \
-            -- \
-            -max_total_time="$seconds"
-          cargo +nightly fuzz run \
-            --target x86_64-unknown-linux-gnu \
-            editor_stateful \
-            -- \
-            -max_len=515 \
-            -max_total_time="$seconds"
+          status=0
+          for target in round_trip editor editor_reparse editor_stateful generated_edits; do
+            max_len=16384
+            if [ "$target" = editor_stateful ]; then
+              max_len=515
+            elif [ "$target" = generated_edits ]; then
+              max_len=4096
+            fi
+            cargo +nightly fuzz run \
+              --target x86_64-unknown-linux-gnu "$target" -- \
+              -max_len="$max_len" -max_total_time="$seconds" \
+              -timeout=10 -rss_limit_mb=1024 || status=1
+          done
+          exit "$status"
+      - name: Preserve crashes and timeout reproducers
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: fuzz-failures-${{ github.run_id }}-${{ github.run_attempt }}
+          path: fuzz/artifacts
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Save learned corpus from main
+        if: always() && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: fuzz/corpus
+          key: fuzz-corpus-v1-${{ runner.os }}-${{ hashFiles('fuzz/Cargo.lock') }}-${{ github.run_id }}-${{ github.run_attempt }}

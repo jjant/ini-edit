@@ -35,4 +35,9 @@ name = "editor_stateful"
 path = "fuzz_targets/editor_stateful.rs"
 doc = false
 
+[[bin]]
+name = "generated_edits"
+path = "fuzz_targets/generated_edits.rs"
+doc = false
+
 [workspace]
