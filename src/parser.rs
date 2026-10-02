@@ -169,6 +169,7 @@ pub fn parse_with(input: &str, options: &ParseOptions) -> Parse {
     let mut p = Parser {
         tokens,
         cursor: 0,
+        offset: 0,
         builder: GreenNodeBuilder::new(),
         errors: Vec::new(),
         options,
@@ -183,6 +184,8 @@ pub fn parse_with(input: &str, options: &ParseOptions) -> Parse {
 struct Parser<'a> {
     tokens: Vec<Token<'a>>,
     cursor: usize,
+    /// Byte offset of the next token, maintained once as tokens are consumed.
+    offset: usize,
     builder: GreenNodeBuilder<'static>,
     errors: Vec<ParseError>,
     options: &'a ParseOptions,
@@ -217,6 +220,7 @@ impl Parser<'_> {
         let tok = self.tokens[self.cursor];
         self.builder.token(tok.kind.into(), tok.text);
         self.cursor += 1;
+        self.offset += tok.text.len();
     }
 
     /// Bump the current token if it matches `kind`. Returns whether it did.
@@ -256,13 +260,11 @@ impl Parser<'_> {
     }
 
     fn error(&mut self, msg: impl Into<String>) {
-        let offset = self.tokens[..self.cursor]
-            .iter()
-            .map(|t| t.text.len())
-            .sum();
+        // Re-scanning the consumed prefix for each diagnostic makes a file
+        // with one error per line quadratic in its input size.
         let error = ParseError {
             message: msg.into(),
-            offset,
+            offset: self.offset,
         };
         self.errors.push(error);
     }
@@ -390,6 +392,39 @@ impl Parser<'_> {
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn error_offsets_follow_consumed_bytes_including_unicode_and_continuations() {
+        // Expected offsets come from the source, independently of the token
+        // cursor. This also checks errors at EOF and two errors at one offset.
+        for newline in ["\n", "\r\n", "\r"] {
+            let prefix = format!(
+                "\u{FEFF}; café{newline}[valid]{newline}key = 日本 \\{newline}continued{newline}"
+            );
+            let source = format!("{prefix}  =bad{newline}[{newline}裸");
+            let parsed = parse(&source);
+            assert_eq!(parsed.syntax().text().to_string(), source);
+            let offsets: Vec<_> = parsed.errors().iter().map(|error| error.offset).collect();
+            let missing_name = source.rfind('[').unwrap() + 1;
+            assert_eq!(
+                offsets,
+                [prefix.len() + 2, missing_name, missing_name, source.len()]
+            );
+        }
+    }
+
+    #[test]
+    fn error_heavy_input_preserves_every_diagnostic() {
+        let line = " \t=invalid 日本\r\n";
+        let source = line.repeat(1024);
+        let parsed = parse(&source);
+        assert_eq!(parsed.syntax().text().to_string(), source);
+        assert_eq!(parsed.errors().len(), 1024);
+        for (index, error) in parsed.errors().iter().enumerate() {
+            assert_eq!(error.offset, index * line.len() + 2);
+            assert_eq!(error.message, "unexpected token: LEX_ERROR");
+        }
+    }
 
     fn assert_round_trip(input: &str) {
         let p = parse(input);
