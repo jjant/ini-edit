@@ -327,7 +327,12 @@ impl Parser<'_> {
         } else {
             self.error("expected ']'");
         }
-        // Trailing whitespace/comment/junk and the line terminator.
+        // Retain malformed trailing text, but report it at its own offset.
+        self.bump_if(SyntaxKind::WHITESPACE);
+        if self.peek() == Some(SyntaxKind::LEX_ERROR) {
+            self.error("unexpected text after section header");
+        }
+        // Trailing comment/junk and the line terminator.
         self.bump_rest_of_line();
         self.builder.finish_node();
     }
@@ -403,6 +408,53 @@ mod tests {
     use super::*;
     use crate::ast::{AstNode, File};
     use crate::editor::Editor;
+
+    #[test]
+    fn junk_after_a_section_header_is_reported_without_losing_text() {
+        for prefix in ["[s]", " \t[λ]", "\u{FEFF}\t[s]"] {
+            for whitespace in ["", " ", "\t "] {
+                for junk in ["extra", "]", "key=value", "λ"] {
+                    for ending in ["\n", "\r\n", "\r", ""] {
+                        let source = format!("{prefix}{whitespace}{junk}{ending}");
+                        let parsed = parse(&source);
+                        assert_eq!(parsed.syntax().text().to_string(), source);
+                        assert_eq!(parsed.errors().len(), 1, "{source:?}");
+                        assert_eq!(
+                            parsed.errors()[0].message,
+                            "unexpected text after section header"
+                        );
+                        assert_eq!(
+                            parsed.errors()[0].offset,
+                            prefix.len() + whitespace.len(),
+                            "{source:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn header_comments_remain_valid_and_junk_does_not_hide_following_entries() {
+        for tail in ["", " ", "; note", " # note"] {
+            let source = format!("[s]{tail}\nk=value\n");
+            assert!(parse(&source).errors().is_empty(), "{source:?}");
+        }
+
+        let parsed = parse("[s] junk\nk=value\n[t] extra\nother=ok\n");
+        assert_eq!(parsed.errors().len(), 2);
+        let file = File::cast(parsed.syntax()).unwrap();
+        let sections: Vec<_> = file.sections().collect();
+        assert_eq!(sections.len(), 2);
+        assert_eq!(
+            sections[0].entries().next().unwrap().value().as_deref(),
+            Some("value")
+        );
+        assert_eq!(
+            sections[1].entries().next().unwrap().value().as_deref(),
+            Some("ok")
+        );
+    }
 
     #[test]
     fn bom_does_not_hide_the_first_indented_line() {
