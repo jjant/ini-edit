@@ -227,11 +227,12 @@ impl Editor {
     /// ```
     #[must_use]
     pub fn file(&self) -> File {
+        let root = SyntaxNode::new_root(self.root.green().into_owned());
         #[expect(
             clippy::missing_panics_doc,
             reason = "the editor root is always a ROOT node produced by the parser"
         )]
-        let file = File::cast(self.root.clone()).expect("editor root is a ROOT node");
+        let file = File::cast(root).expect("editor root is a ROOT node");
         file
     }
 
@@ -901,6 +902,43 @@ fn separator_elements(
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn file_views_are_immutable_snapshots() {
+        let source = "[s]\nk=old\nk=duplicate\n[t]\nx=1\n";
+        let editor = Editor::new(source);
+        let snapshot = editor.file();
+        let section = snapshot.sections().next().unwrap();
+        let entry = section.entries().next().unwrap();
+        assert!(!snapshot.syntax().is_mutable());
+
+        editor.section("s").set("k", "new");
+        editor.section("t").remove();
+        editor.section("added").set("key", "value");
+        assert_eq!(snapshot.syntax().text().to_string(), source);
+        assert_eq!(entry.value().as_deref(), Some("old"));
+        assert_eq!(section.entries().count(), 2);
+        assert_eq!(
+            editor
+                .file()
+                .sections()
+                .next()
+                .unwrap()
+                .entries()
+                .next()
+                .unwrap()
+                .value()
+                .as_deref(),
+            Some("new")
+        );
+
+        // Callers can explicitly create an editable copy of a snapshot.
+        let copy = snapshot.syntax().clone_for_update();
+        copy.first_child().unwrap().detach();
+        assert_eq!(copy.text().to_string(), "[t]\nx=1\n");
+        assert_eq!(snapshot.syntax().text().to_string(), source);
+        assert!(editor.finish().contains("k=new\n"));
+    }
 
     #[test]
     fn deleting_an_appended_line_matches_reloaded_editing() {

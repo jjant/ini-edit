@@ -498,15 +498,17 @@ mod tests {
 
     #[test]
     fn bom_is_not_removed_with_a_preamble_entry() {
-        let editor = Editor::new("\u{FEFF}key=value\n[section]\n");
-        editor
-            .file()
+        let root = parse("\u{FEFF}key=value\n[section]\n")
+            .syntax()
+            .clone_for_update();
+        File::cast(root.clone())
+            .unwrap()
             .preamble_entries()
             .next()
             .unwrap()
             .syntax()
             .detach();
-        assert_eq!(editor.finish(), "\u{FEFF}[section]\n");
+        assert_eq!(root.text().to_string(), "\u{FEFF}[section]\n");
     }
 
     fn assert_round_trip(input: &str) {
