@@ -145,14 +145,14 @@ impl Editor {
         let needs_newline =
             last_token(&self.root).is_some_and(|token| token.kind() != SyntaxKind::NEWLINE);
         let mut index = separator_parent.children_with_tokens().count();
-        for separator in 0..self.separator_blank_lines() {
-            if separator == 0 && needs_newline {
-                index = terminate_line(&separator_parent, index);
-            } else {
-                let blank =
-                    SyntaxNode::new_root(green_builders::blank_line_node()).clone_for_update();
-                separator_parent.splice_children(index..index, vec![blank.into()]);
-            }
+        let mut blank_lines = self.separator_blank_lines();
+        if needs_newline && blank_lines != 0 {
+            index = terminate_line(&separator_parent, index);
+            blank_lines -= 1;
+        }
+        for _ in 0..blank_lines {
+            let blank = SyntaxNode::new_root(green_builders::blank_line_node()).clone_for_update();
+            separator_parent.splice_children(index..index, vec![blank.into()]);
         }
 
         let child_count = self.root.children_with_tokens().count();
