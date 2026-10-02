@@ -40,6 +40,8 @@ pub struct EditOptions {
 pub enum SeparatorSpacing {
     /// Preserve an existing entry's spacing and use `key = value` for new
     /// entries or bare keys that need a separator.
+    /// Clearing a value keeps its surrounding whitespace in the separator
+    /// gap, so later edits use the same spacing after reopening the file.
     #[default]
     Preserve,
     /// Remove whitespace around the separator, producing `key=value`.
@@ -267,6 +269,7 @@ impl SectionEditor<'_> {
     /// applies the configured [`SeparatorSpacing`] to the touched entry.
     /// Clearing a value moves its inline comment to a preceding comment line,
     /// so reopening the file keeps the value empty.
+    /// The same applies to a continuation ending on a blank line.
     pub fn set(&self, key: &str, value: &str) {
         if let Some(entry) = self.find_entry(key) {
             replace_value(
@@ -471,10 +474,13 @@ impl SectionEditor<'_> {
 
     /// A standalone `NEWLINE` token element, used to separate appended content
     /// from a preceding line that lacks its own terminator.
-    fn newline_element() -> crate::SyntaxElement {
+    fn newline_element(after: &str) -> crate::SyntaxElement {
         let mut b = rowan::GreenNodeBuilder::new();
         b.start_node(SyntaxKind::ROOT.into());
-        b.token(SyntaxKind::NEWLINE.into(), "\n");
+        b.token(
+            SyntaxKind::NEWLINE.into(),
+            green_builders::newline_after(after),
+        );
         b.finish_node();
         let wrapper = SyntaxNode::new_root(b.finish()).clone_for_update();
         wrapper
@@ -586,7 +592,13 @@ fn terminate_line(parent: &SyntaxNode, index: usize) -> usize {
         .children_with_tokens()
         .nth(index - 1)
         .expect("a missing terminator always has a preceding element");
-    let newline = SectionEditor::newline_element();
+    let previous_token = match &previous {
+        rowan::NodeOrToken::Node(line) => {
+            last_token(line).expect("a line needing a terminator has content")
+        }
+        rowan::NodeOrToken::Token(token) => token.clone(),
+    };
+    let newline = SectionEditor::newline_element(previous_token.text());
     match previous {
         rowan::NodeOrToken::Node(line) => {
             let end = line.children_with_tokens().count();
@@ -655,7 +667,8 @@ impl EntryEditor {
     /// Replace this entry's value, preserving its key and applying the
     /// editor's configured separator spacing. An empty string clears the
     /// value (`key =` with the default options).
-    /// Any inline comment then moves to a preceding comment line.
+    /// Inline comments move to a preceding comment line when the replacement
+    /// ends on a blank physical line.
     pub fn set_value(&self, value: &str) {
         replace_value(&self.node, value, &self.separator_spacing);
     }
@@ -735,14 +748,81 @@ fn replace_value(entry: &SyntaxNode, value: &str, spacing: &SeparatorSpacing) {
             .collect()
     };
     value_syntax.splice_children(0..old_count, new_children);
-    if value.is_empty() {
+    if value
+        .rsplit(['\n', '\r'])
+        .next()
+        .is_some_and(|line| line.trim_matches([' ', '\t']).is_empty())
+    {
         move_inline_comment_before(entry.syntax());
     }
+    if value.is_empty() && entry.inline_comment().is_none() {
+        normalize_empty_value_whitespace(entry.syntax(), &value_syntax, spacing);
+    }
+    preserve_value_carriage_return(entry.syntax(), &value_syntax, value);
 }
 
-/// A marker at the start of a value is literal text under our grammar.
-/// Preserve the note on its own line when clearing the value, instead of
-/// serializing a line whose comment would become the value on the next parse.
+/// A raw continued value can end in CR. An immediately following LF would
+/// become part of that CRLF continuation, changing the value and potentially
+/// consuming the next entry. Use a separate CRLF terminator in that case.
+fn preserve_value_carriage_return(entry: &SyntaxNode, value_node: &SyntaxNode, value: &str) {
+    if !value.ends_with('\r') {
+        return;
+    }
+    let Some(newline) = value_node
+        .next_sibling_or_token()
+        .and_then(rowan::NodeOrToken::into_token)
+        .filter(|token| token.kind() == SyntaxKind::NEWLINE)
+        .filter(|token| token.text() == "\n")
+    else {
+        return;
+    };
+    let index = newline.index();
+    entry.splice_children(index..index + 1, [SectionEditor::newline_element(value)]);
+}
+
+/// With no value text, all whitespace after the separator belongs to its gap.
+/// Keep one token there in Preserve mode, matching the parser. Compact/Exact
+/// already set their gap above and must discard the old value's trailing space.
+fn normalize_empty_value_whitespace(
+    entry: &SyntaxNode,
+    value: &SyntaxNode,
+    spacing: &SeparatorSpacing,
+) {
+    let Some(trailing) = value
+        .next_sibling_or_token()
+        .and_then(rowan::NodeOrToken::into_token)
+        .filter(|token| token.kind() == SyntaxKind::WHITESPACE)
+    else {
+        return;
+    };
+    let trailing_text = trailing.text().to_owned();
+    trailing.detach();
+    if !matches!(spacing, SeparatorSpacing::Preserve) {
+        return;
+    }
+
+    let mut gap = String::new();
+    if let Some(leading) = value
+        .prev_sibling_or_token()
+        .and_then(rowan::NodeOrToken::into_token)
+        .filter(|token| token.kind() == SyntaxKind::WHITESPACE)
+    {
+        gap.push_str(leading.text());
+        leading.detach();
+    }
+    gap.push_str(&trailing_text);
+    let mut builder = rowan::GreenNodeBuilder::new();
+    builder.start_node(SyntaxKind::ROOT.into());
+    builder.token(SyntaxKind::WHITESPACE.into(), &gap);
+    builder.finish_node();
+    let wrapper = SyntaxNode::new_root(builder.finish()).clone_for_update();
+    let index = value.index();
+    entry.splice_children(index..index, wrapper.children_with_tokens());
+}
+
+/// A marker at the start of a value or its final continued line is literal.
+/// Preserve the note on its own line when that final line is blank, instead of
+/// serializing a line whose comment would become value text on the next parse.
 fn move_inline_comment_before(entry: &SyntaxNode) {
     let Some(parent) = entry.parent() else {
         return; // an entry handle may outlive removal from the document
@@ -1210,6 +1290,231 @@ mod tests {
         handle.set_value("");
         assert_eq!(handle.value().as_deref(), Some(""));
         assert_eq!(editor.finish(), "[s]\n");
+    }
+
+    #[test]
+    fn blank_continued_lines_do_not_absorb_inline_comments() {
+        let parse_options = ParseOptions {
+            inline_comments: true,
+            ..Default::default()
+        };
+        for ending in ["\n", "\r\n", "\r"] {
+            for spacing in [
+                SeparatorSpacing::Preserve,
+                SeparatorSpacing::Compact,
+                SeparatorSpacing::exact("\t", "  "),
+            ] {
+                for marker in [";", "#"] {
+                    for use_handle in [false, true] {
+                        for source_ending in ["\n", "\r\n", "\r", ""] {
+                            let source = format!("[s]\nk: old \t{marker} keep{source_ending}");
+                            let options = EditOptions {
+                                separator_spacing: spacing.clone(),
+                            };
+                            let editor = Editor::with_options(&source, &parse_options, &options);
+                            let handle = editor.section("s").entries_mut().pop().unwrap();
+                            let replacement = format!("one \\{ending}");
+                            if use_handle {
+                                handle.set_value(&replacement);
+                            } else {
+                                editor.section("s").set("k", &replacement);
+                            }
+                            let output = editor.finish();
+                            let saved = Editor::with_parse_options(&output, &parse_options);
+                            assert_eq!(handle.value().as_deref(), Some(replacement.as_str()));
+                            assert_eq!(
+                                saved.section("s").entries_mut()[0].value().as_deref(),
+                                Some(replacement.as_str()),
+                                "{output:?}"
+                            );
+                            assert_eq!(output.matches("keep").count(), 1);
+                            assert!(output.contains(&format!("\t{marker} keep")));
+                            handle.set_value("next");
+                            assert_eq!(handle.value().as_deref(), Some("next"));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn whitespace_only_replacements_keep_comments_separate() {
+        let options = ParseOptions {
+            inline_comments: true,
+            ..Default::default()
+        };
+        for replacement in [" \t", "one \\\n \t"] {
+            let editor = Editor::with_parse_options("[s]\nk=old ; note\n", &options);
+            editor.section("s").set("k", replacement);
+            let output = editor.finish();
+            let saved = Editor::with_parse_options(&output, &options);
+            assert_eq!(
+                saved.section("s").entries_mut()[0].value().as_deref(),
+                Some(replacement.trim_end_matches([' ', '\t'])),
+                "{output:?}"
+            );
+            assert_eq!(output.matches("; note").count(), 1);
+        }
+    }
+
+    #[test]
+    fn empty_value_spacing_is_stable_across_reloads() {
+        for spacing in [
+            SeparatorSpacing::Preserve,
+            SeparatorSpacing::Compact,
+            SeparatorSpacing::exact("\t", "  "),
+        ] {
+            for separator in ["=", ":"] {
+                for (before, after, trailing) in [
+                    ("", "", " \t"),
+                    ("\t", "  ", "\t "),
+                    (" ", "\t", ""),
+                    ("", "", ""),
+                ] {
+                    for ending in ["\n", "\r\n", "\r", ""] {
+                        for use_handle in [false, true] {
+                            let source = format!(
+                                "[s]\nuntouched = value  \nκ{before}{separator}{after}old{trailing}{ending}"
+                            );
+                            let options = EditOptions {
+                                separator_spacing: spacing.clone(),
+                            };
+                            let editor = Editor::with_edit_options(&source, &options);
+                            let handle = editor.section("s").entries_mut().pop().unwrap();
+                            if use_handle {
+                                handle.set_value("");
+                            } else {
+                                editor.section("s").set("κ", "");
+                            }
+                            let (expected_before, expected_after) = match &spacing {
+                                SeparatorSpacing::Preserve => {
+                                    (before, format!("{after}{trailing}"))
+                                }
+                                SeparatorSpacing::Compact => ("", String::new()),
+                                SeparatorSpacing::Exact { before, after } => {
+                                    (before.as_str(), after.clone())
+                                }
+                            };
+                            let output = editor.finish();
+                            assert_eq!(
+                                output,
+                                format!(
+                                    "[s]\nuntouched = value  \nκ{expected_before}{separator}{expected_after}{ending}"
+                                )
+                            );
+                            let reopened = Editor::with_edit_options(&output, &options);
+                            assert_eq!(
+                                editor.file().syntax().green(),
+                                reopened.file().syntax().green()
+                            );
+                            handle.set_value("next");
+                            reopened.section("s").set("κ", "next");
+                            assert_eq!(editor.finish(), reopened.finish());
+                            assert_eq!(handle.value().as_deref(), Some("next"));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn carriage_return_value_keeps_its_own_line_ending() {
+        let value = "one \\\r";
+        for ending in ["\n", "\r\n", "\r", " \t\n", ""] {
+            let source = format!("[s]\nk=old{ending}");
+            let editor = Editor::new(&source);
+            editor.section("s").set("k", value);
+            let expected_ending = if ending == "\n" { "\r\n" } else { ending };
+            let output = editor.finish();
+            assert_eq!(output, format!("[s]\nk={value}{expected_ending}"));
+            let reopened = Editor::new(&output);
+            assert_eq!(
+                reopened.section("s").entries_mut()[0].value().as_deref(),
+                Some(value)
+            );
+        }
+    }
+
+    #[test]
+    fn carriage_return_value_does_not_consume_following_entries() {
+        let value = "one \\\r";
+        for operation in 0..4 {
+            let editor = Editor::new("[s]\nk=old\nnext=stay\n");
+            let expected = match operation {
+                0 => {
+                    editor.section("s").set("k", value);
+                    format!("[s]\nk={value}\r\nnext=stay\n")
+                }
+                1 => {
+                    editor.section("s").entries_mut()[0].set_value(value);
+                    format!("[s]\nk={value}\r\nnext=stay\n")
+                }
+                2 => {
+                    editor.section("s").append_entry("added", value);
+                    format!("[s]\nk=old\nnext=stay\nadded = {value}\r\n")
+                }
+                _ => {
+                    editor.section("s").insert_entry_at_line(0, "added", value);
+                    format!("[s]\nadded = {value}\r\nk=old\nnext=stay\n")
+                }
+            };
+            let output = editor.finish();
+            assert_eq!(output, expected);
+            let reopened = Editor::new(&output);
+            assert_eq!(
+                reopened.section("s").entries_mut().len(),
+                if operation < 2 { 2 } else { 3 }
+            );
+            assert_eq!(
+                reopened
+                    .section("s")
+                    .find_entry("next")
+                    .unwrap()
+                    .value()
+                    .as_deref(),
+                Some("stay")
+            );
+            let key = if operation < 2 { "k" } else { "added" };
+            assert_eq!(
+                reopened
+                    .section("s")
+                    .find_entry(key)
+                    .unwrap()
+                    .value()
+                    .as_deref(),
+                Some(value)
+            );
+        }
+    }
+
+    #[test]
+    fn completing_a_cr_continuation_keeps_the_following_line_separate() {
+        let value = "one \\\r";
+        for operation in 0..4 {
+            let editor = Editor::new(&format!("[s]\nk={value}"));
+            match operation {
+                0 => editor.section("s").append_entry("next", "stay"),
+                1 => editor.section("s").insert_entry_at_line(99, "next", "stay"),
+                2 => editor.section("s").append_raw_lines(&["; keep"]),
+                _ => editor.section("other").set("next", "stay"),
+            }
+            let output = editor.finish();
+            assert!(
+                output.starts_with(&format!("[s]\nk={value}\r\n")),
+                "{output:?}"
+            );
+            let reopened = Editor::new(&output);
+            assert_eq!(
+                reopened.section("s").entries_mut()[0].value().as_deref(),
+                Some(value)
+            );
+            assert_eq!(
+                editor.file().syntax().green(),
+                reopened.file().syntax().green()
+            );
+        }
     }
 
     #[test]

@@ -30,6 +30,12 @@ pub fn value_node(text: &str) -> GreenNode {
     builder.finish()
 }
 
+/// Keep a trailing CR in the content separate from the appended line ending.
+#[must_use]
+pub fn newline_after(text: &str) -> &'static str {
+    if text.ends_with('\r') { "\r\n" } else { "\n" }
+}
+
 /// Build a complete ENTRY node with configurable separator whitespace.
 #[must_use]
 pub fn entry_node(
@@ -59,7 +65,7 @@ pub fn entry_node(
     }
     builder.finish_node();
     // newline
-    builder.token(SyntaxKind::NEWLINE.into(), "\n");
+    builder.token(SyntaxKind::NEWLINE.into(), newline_after(value));
     builder.finish_node();
     builder.finish()
 }
