@@ -63,12 +63,18 @@ RUSTFLAGS='--cfg no_zerocopy_simd_x86_avx12_1_89_0' \
   CI prints caught mutations as well as timeouts and publishes a count table
   in the job summary. Without `--caught`, cargo-mutants hides ordinary test
   failures, which can make a healthy run appear to consist only of timeouts.
-- Three structure-aware libFuzzer targets independently stress round trips and
+- Four structure-aware libFuzzer targets independently stress round trips and
   arbitrary editor operation sequences, including reuse of section handles
   after deleting their headers and the identity property of empty insertions.
   The reload target applies the same valid edits with and without reopening
   the document between operations, comparing both output and complete syntax
   trees. Its shared oracle also exhausts 3,072 short sequences in normal tests.
+- An independent identity-based model checks up to 128 edits per fuzz input.
+  It tracks duplicate keys, continued values, bare keys, retained entry and
+  section handles, detached objects, and immutable file snapshots across
+  deletion and recreation. Every step checks live values, reparsed values,
+  the complete syntax tree, and saved handles/views. Ordinary tests also run
+  24 deterministic sequences of 32 edits across parsing and spacing options.
 - Stable tests run on Linux, macOS, and Windows.
 
 ## As-delivered and dynamic checks
@@ -103,4 +109,4 @@ Before release, all required GitHub checks must be green:
 4. Miri.
 5. Dependency audit and policy checks.
 6. Full mutation test.
-7. All three fuzz targets.
+7. All four fuzz targets.
