@@ -111,6 +111,12 @@ CPU/RSS measurements, and terminates an individual probe after 45 seconds.
 It uses per-child resource accounting so time waiting for another process to
 use the CPU is excluded.
 
+Distinct-entry measurements use 65,536, 131,072, and 262,144 entries. Smaller
+16K–64K windows showed steep growth in the unchanged parser that varied across
+CI runners and produced a false alarm on the same source tree. The larger
+window checks sustained growth with the same ratio bound; other workload
+families use 16,384, 32,768, and 65,536 units.
+
 ## Fuzz corpus and reproducibility
 
 CI restores the learned corpus, then adds deterministic boundary cases,
