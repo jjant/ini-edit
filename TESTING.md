@@ -48,10 +48,15 @@ RUSTFLAGS='--cfg no_zerocopy_simd_x86_avx12_1_89_0' \
 - Boundary decision tables vary line endings, separators, whitespace, comments,
   malformed input, empty input, unterminated input, and editor indices.
 - Regression tests preserve every previously discovered bug.
+- An independent ordered-entry model exhausts short edit sequences and checks
+  both the live AST and the reparsed output after every operation. Following
+  [TigerStyle's paired assertions](https://github.com/tigerbeetle/tigerbeetle/blob/main/docs/TIGER_STYLE.md),
+  successful serialization alone is not evidence that edits preserved meaning.
 - Mutation testing requires zero surviving source mutations. Mutations that
   destroy lexer/parser progress are detected by a strict timeout.
 - Two structure-aware libFuzzer targets independently stress round trips and
-  arbitrary editor operation sequences.
+  arbitrary editor operation sequences, including reuse of section handles
+  after deleting their headers and the identity property of empty insertions.
 - Stable tests run on Linux, macOS, and Windows.
 
 ## As-delivered and dynamic checks

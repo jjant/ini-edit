@@ -13,7 +13,10 @@ enum Op<'a> {
     RemoveSection { section: &'a str },
     AppendRaw { section: &'a str, line: &'a str },
     InsertRawAt { section: &'a str, index: u8, line: &'a str },
+    InsertEntry { section: &'a str, index: u8, key: &'a str, value: &'a str },
     RemoveLines { section: &'a str, start: u8, end: u8 },
+    ClearAndInsert { section: &'a str, index: u8, key: &'a str, value: &'a str },
+    AppendNothing { section: &'a str },
 }
 
 #[derive(Debug, Arbitrary)]
@@ -48,15 +51,32 @@ fuzz_target!(|input: FuzzInput<'_>| {
             Op::InsertRawAt { section, index, line } => {
                 ed.section(section).insert_raw_lines_at(*index as usize, &[line]);
             }
+            Op::InsertEntry { section, index, key, value } => {
+                ed.section(section).insert_entry_at_line(*index as usize, key, value);
+            }
             Op::RemoveLines { section, start, end } => {
                 let s = *start as usize;
                 let e = *end as usize;
                 ed.section(section).remove_lines(s..e);
             }
+            Op::ClearAndInsert { section, index, key, value } => {
+                // Keep the handle after removing its header. Looking the
+                // section up again would create a new header and hide bugs.
+                let handle = ed.section(section);
+                handle.remove_lines(0..usize::MAX);
+                handle.insert_entry_at_line(*index as usize, key, value);
+            }
+            Op::AppendNothing { section } => {
+                let handle = ed.section(section);
+                let before = ed.finish();
+                handle.append_raw_lines(&[]);
+                handle.insert_raw_lines_at(usize::MAX, &[]);
+                assert_eq!(ed.finish(), before, "empty insertion changed the document");
+            }
         }
     }
 
-    // The output must always be valid: re-parsing must round-trip.
+    // Parsing must stay lossless even when raw edits produce malformed input.
     let output = ed.finish();
     let re_parsed = ini_edit::parse(&output);
     assert_eq!(

@@ -359,8 +359,11 @@ impl SectionEditor<'_> {
     /// Lines are inserted **verbatim** — no parsing, no reformatting. A newline
     /// is appended to each line that doesn't already end with one. Like
     /// [`append_entry`](Self::append_entry), lines land after the last content
-    /// line and before any trailing blank lines.
+    /// line and before any trailing blank lines. An empty slice is a no-op.
     pub fn append_raw_lines(&self, lines: &[&str]) {
+        if lines.is_empty() {
+            return;
+        }
         let (index, needs_newline) = self.content_end();
         let mut elements: Vec<crate::SyntaxElement> = Vec::new();
         if needs_newline {
@@ -375,10 +378,24 @@ impl SectionEditor<'_> {
     /// Index 0 is the section header. Lines are inserted **verbatim**.
     /// A newline is appended to each line that doesn't already end with one.
     /// If `index` exceeds the number of children, lines are appended at the end.
+    /// An unterminated preceding line is separated with a newline first.
+    /// An empty slice is a no-op.
     pub fn insert_raw_lines_at(&self, index: usize, lines: &[&str]) {
-        let child_count = self.node.children_with_tokens().count();
-        let index = index.min(child_count);
-        let elements = Self::raw_line_elements(lines);
+        if lines.is_empty() {
+            return;
+        }
+        let children: Vec<_> = self.node.children_with_tokens().collect();
+        let index = index.min(children.len());
+        let (index, needs_newline) = if index == 0 {
+            (0, false)
+        } else {
+            Self::after_element(&children, index - 1)
+        };
+        let mut elements = Vec::new();
+        if needs_newline {
+            elements.push(Self::newline_element());
+        }
+        elements.extend(Self::raw_line_elements(lines));
         self.node.splice_children(index..index, elements);
     }
 
@@ -441,20 +458,12 @@ impl SectionEditor<'_> {
     /// Returns `(child_index, needs_newline)`.
     fn content_end(&self) -> (usize, bool) {
         let children: Vec<crate::SyntaxElement> = self.node.children_with_tokens().collect();
-        // A SECTION always has at least its header, so a content line always
-        // exists; fall back to the first child defensively.
-        let k = children
+        // remove_lines can remove even the header. Loose error/newline tokens
+        // still count as content; only blank-line nodes belong after an append.
+        children
             .iter()
-            .rposition(|el| {
-                el.as_node().is_some_and(|n| {
-                    matches!(
-                        n.kind(),
-                        SyntaxKind::ENTRY | SyntaxKind::COMMENT_LINE | SyntaxKind::SECTION_HEADER
-                    )
-                })
-            })
-            .unwrap_or(0);
-        Self::after_element(&children, k)
+            .rposition(|el| el.kind() != SyntaxKind::BLANK_LINE)
+            .map_or((0, false), |k| Self::after_element(&children, k))
     }
 
     /// Insertion point just after the `n`-th logical content line (1-based),
@@ -463,13 +472,10 @@ impl SectionEditor<'_> {
     /// number of content lines. Returns `(child_index, needs_newline)`.
     fn after_content_line(&self, n: usize) -> (usize, bool) {
         let children: Vec<crate::SyntaxElement> = self.node.children_with_tokens().collect();
-        let header = children
-            .iter()
-            .position(|el| {
-                el.as_node()
-                    .is_some_and(|node| node.kind() == SyntaxKind::SECTION_HEADER)
-            })
-            .unwrap_or(0);
+        let header = children.iter().position(|el| {
+            el.as_node()
+                .is_some_and(|node| node.kind() == SyntaxKind::SECTION_HEADER)
+        });
         let content: Vec<usize> = children
             .iter()
             .enumerate()
@@ -482,7 +488,7 @@ impl SectionEditor<'_> {
             .collect();
 
         if n == 0 || content.is_empty() {
-            return Self::after_element(&children, header);
+            return header.map_or((0, false), |k| Self::after_element(&children, k));
         }
         let n = n.min(content.len());
         Self::after_element(&children, content[n - 1])
@@ -493,11 +499,19 @@ impl SectionEditor<'_> {
     /// terminating newline, so this is simply the next index — with
     /// `needs_newline` set when the line has no terminator (end of file).
     fn after_element(children: &[crate::SyntaxElement], k: usize) -> (usize, bool) {
-        // Content lines are always nodes that own their terminating newline.
-        let ends_with_newline = children[k]
-            .as_node()
-            .and_then(rowan::SyntaxNode::last_token)
-            .is_some_and(|t| t.kind() == SyntaxKind::NEWLINE);
+        // Earlier insertions may have supplied a missing line terminator as a
+        // sibling token. Reuse it instead of adding a blank line on every edit.
+        if children
+            .get(k + 1)
+            .is_some_and(|el| el.kind() == SyntaxKind::NEWLINE)
+        {
+            return (k + 2, false);
+        }
+        let last_token = match &children[k] {
+            rowan::NodeOrToken::Node(node) => node.last_token(),
+            rowan::NodeOrToken::Token(token) => Some(token.clone()),
+        };
+        let ends_with_newline = last_token.is_some_and(|token| token.kind() == SyntaxKind::NEWLINE);
         (k + 1, !ends_with_newline)
     }
 
@@ -708,6 +722,81 @@ fn separator_elements(
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retained_handle_can_insert_after_all_children_are_removed() {
+        for operation in 0..5 {
+            let editor = Editor::new("[s]\na=1\n");
+            let section = editor.section("s");
+            section.remove_lines(0..usize::MAX);
+            assert_eq!(editor.finish(), "");
+            match operation {
+                0 => section.append_entry("b", "2"),
+                1 => section.insert_entry_at_line(0, "b", "2"),
+                2 => section.insert_entry_at_line(usize::MAX, "b", "2"),
+                3 => section.append_raw_lines(&["b = 2"]),
+                _ => section.insert_raw_lines_at(usize::MAX, &["b = 2"]),
+            }
+            assert_eq!(editor.finish(), "b = 2\n");
+        }
+    }
+
+    #[test]
+    fn insertion_into_a_body_of_only_blank_lines_precedes_the_blanks() {
+        let editor = Editor::new("[s]\n\n\n");
+        let section = editor.section("s");
+        section.remove_lines(0..1);
+        section.append_entry("b", "2");
+        assert_eq!(editor.finish(), "b = 2\n\n\n");
+    }
+
+    #[test]
+    fn appending_no_raw_lines_does_not_modify_unterminated_input() {
+        for source in ["[s]", "[s]\nk=value", "[s]\n; comment", "[s]\nk=value\n"] {
+            let editor = Editor::new(source);
+            editor.section("s").append_raw_lines(&[]);
+            editor.section("s").insert_raw_lines_at(0, &[]);
+            editor.section("s").insert_raw_lines_at(usize::MAX, &[]);
+            assert_eq!(editor.finish(), source);
+        }
+    }
+
+    #[test]
+    fn raw_insertion_at_zero_remains_before_the_header() {
+        let editor = Editor::new("[s]\na=1\n");
+        editor.section("s").insert_raw_lines_at(0, &["; preamble"]);
+        assert_eq!(editor.finish(), "; preamble\n[s]\na=1\n");
+    }
+
+    #[test]
+    fn raw_insertion_terminates_the_preceding_line() {
+        for source in ["[s]", "[s]\nk=value", "[s]\n; comment"] {
+            let editor = Editor::new(source);
+            editor
+                .section("s")
+                .insert_raw_lines_at(usize::MAX, &["next=2"]);
+            assert_eq!(editor.finish(), format!("{source}\nnext=2\n"));
+        }
+    }
+
+    #[test]
+    fn repeated_insertion_reuses_a_previously_added_terminator() {
+        let editor = Editor::new("[s]");
+        let section = editor.section("s");
+        section.insert_entry_at_line(0, "a", "1");
+        section.insert_entry_at_line(0, "b", "2");
+        assert_eq!(editor.finish(), "[s]\nb = 2\na = 1\n");
+    }
+
+    #[test]
+    fn append_keeps_malformed_lines_before_new_content() {
+        for source in ["[s]\n=bad", "[s]\n=bad\n", "[s]\n=bad\n\n"] {
+            let editor = Editor::new(source);
+            editor.section("s").append_entry("b", "2");
+            let gap = if source.ends_with("\n\n") { "\n" } else { "" };
+            assert_eq!(editor.finish(), format!("[s]\n=bad\nb = 2\n{gap}"));
+        }
+    }
 
     #[test]
     fn set_existing_value() {
