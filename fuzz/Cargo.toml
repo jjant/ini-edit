@@ -3,6 +3,7 @@ name = "ini-edit-fuzz"
 version = "0.0.0"
 publish = false
 edition = "2024"
+rust-version = "1.85"
 
 [package.metadata]
 cargo-fuzz = true
@@ -27,6 +28,11 @@ doc = false
 [[bin]]
 name = "editor_reparse"
 path = "fuzz_targets/editor_reparse.rs"
+doc = false
+
+[[bin]]
+name = "editor_stateful"
+path = "fuzz_targets/editor_stateful.rs"
 doc = false
 
 [workspace]
