@@ -371,6 +371,13 @@ impl Parser<'_> {
                 }
             }
         }
+        // Text after a key without a separator (`key junk`) is lexed as one
+        // error token. Keep it on the entry's line, before its empty value, so
+        // assigning a value replaces it.
+        if self.peek() == Some(SyntaxKind::LEX_ERROR) {
+            self.error(format!("unexpected token: {:?}", SyntaxKind::LEX_ERROR));
+            self.bump();
+        }
         self.bump_if(SyntaxKind::WHITESPACE);
 
         self.builder.start_node(SyntaxKind::VALUE.into());
@@ -405,13 +412,16 @@ impl Parser<'_> {
         self.builder.finish_node();
     }
 
-    /// Consume a line that begins with an unexpected token. Records one error
-    /// and consumes the whole physical line so the tree still round-trips.
+    /// Parse a line that begins with an unexpected token as a line node.
+    /// Records one error and keeps the whole physical line, so the tree still
+    /// round-trips and editors can address it like any other line.
     fn parse_error_line(&mut self) {
+        self.builder.start_node(SyntaxKind::ERROR_LINE.into());
         self.bump_if(SyntaxKind::WHITESPACE);
         let kind = self.peek().unwrap_or(SyntaxKind::LEX_ERROR);
         self.error(format!("unexpected token: {kind:?}"));
         self.bump_rest_of_line();
+        self.builder.finish_node();
     }
 }
 
@@ -467,6 +477,99 @@ mod tests {
             sections[1].entries().next().unwrap().value().as_deref(),
             Some("ok")
         );
+    }
+
+    #[test]
+    fn malformed_lines_are_single_line_nodes_with_unchanged_diagnostics() {
+        const SEPARATOR: &str = "expected '=' or ':'";
+        const TOKEN: &str = "unexpected token: LEX_ERROR";
+        // (line, node kind, diagnostics with allow_no_value off/on, error column)
+        let cases = [
+            (
+                "=bad",
+                SyntaxKind::ERROR_LINE,
+                &[TOKEN][..],
+                &[TOKEN][..],
+                0,
+            ),
+            (":", SyntaxKind::ERROR_LINE, &[TOKEN], &[TOKEN], 0),
+            (
+                "key junk",
+                SyntaxKind::ENTRY,
+                &[SEPARATOR, TOKEN],
+                &[TOKEN],
+                4,
+            ),
+            (
+                "key\t\tjunk",
+                SyntaxKind::ENTRY,
+                &[SEPARATOR, TOKEN],
+                &[TOKEN],
+                5,
+            ),
+            (
+                "my key = value",
+                SyntaxKind::ENTRY,
+                &[SEPARATOR, TOKEN],
+                &[TOKEN],
+                3,
+            ),
+            (
+                "!include /etc/λ",
+                SyntaxKind::ENTRY,
+                &[SEPARATOR, TOKEN],
+                &[TOKEN],
+                9,
+            ),
+        ];
+        for (line, kind, strict, lenient, column) in cases {
+            for header in ["", "[s]\n", "[s]\r"] {
+                for indent in ["", " \t"] {
+                    for ending in ["\n", "\r\n", "\r", ""] {
+                        for (allow_no_value, inline_comments) in
+                            [(false, false), (false, true), (true, false), (true, true)]
+                        {
+                            let options = ParseOptions {
+                                allow_no_value,
+                                inline_comments,
+                            };
+                            let next = if ending.is_empty() { "" } else { "next=1\n" };
+                            let source = format!("{header}{indent}{line}{ending}{next}");
+                            let parsed = parse_with(&source, &options);
+                            assert_eq!(parsed.syntax().text().to_string(), source);
+
+                            let parent = if header.is_empty() {
+                                parsed.syntax()
+                            } else {
+                                parsed.syntax().first_child().unwrap()
+                            };
+                            assert!(
+                                parent
+                                    .children_with_tokens()
+                                    .all(|el| el.as_node().is_some()),
+                                "{source:?}: every physical line must be one node"
+                            );
+                            let lines: Vec<_> = parent.children().collect();
+                            let offset = usize::from(!header.is_empty());
+                            assert_eq!(lines.len(), offset + 1 + usize::from(!next.is_empty()));
+                            assert_eq!(lines[offset].kind(), kind, "{source:?}");
+                            assert_eq!(
+                                lines[offset].text().to_string(),
+                                format!("{indent}{line}{ending}")
+                            );
+
+                            let expected = if allow_no_value { lenient } else { strict };
+                            let messages: Vec<_> =
+                                parsed.errors().iter().map(|e| e.message.as_str()).collect();
+                            assert_eq!(messages, expected, "{source:?}");
+                            for error in parsed.errors() {
+                                assert_eq!(error.offset, header.len() + indent.len() + column);
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]

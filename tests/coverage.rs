@@ -295,6 +295,7 @@ fn every_syntax_kind_round_trips_through_rowan() {
         SyntaxKind::VALUE,
         SyntaxKind::COMMENT_LINE,
         SyntaxKind::BLANK_LINE,
+        SyntaxKind::ERROR_LINE,
     ] {
         let raw = IniLang::kind_to_raw(kind);
         assert_eq!(IniLang::kind_from_raw(raw), kind);

@@ -45,6 +45,9 @@ pub enum SyntaxKind {
     /// A blank line: optional whitespace followed by a newline (or, at end of
     /// input, trailing whitespace with no newline).
     BLANK_LINE,
+    /// A line that is not a header, entry, comment, or blank line: optional
+    /// leading whitespace, the unrecognized text, and its terminating newline.
+    ERROR_LINE,
 }
 
 impl SyntaxKind {
@@ -88,6 +91,7 @@ impl Language for IniLang {
             15 => SyntaxKind::VALUE,
             16 => SyntaxKind::COMMENT_LINE,
             17 => SyntaxKind::BLANK_LINE,
+            18 => SyntaxKind::ERROR_LINE,
             _ => panic!("kind out of range: {}", raw.0),
         }
     }
@@ -140,6 +144,7 @@ mod tests {
             SyntaxKind::VALUE,
             SyntaxKind::COMMENT_LINE,
             SyntaxKind::BLANK_LINE,
+            SyntaxKind::ERROR_LINE,
         ] {
             let raw = IniLang::kind_to_raw(kind);
             assert_eq!(IniLang::kind_from_raw(raw), kind);

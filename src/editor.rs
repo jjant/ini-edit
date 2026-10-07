@@ -146,10 +146,10 @@ impl Editor {
             .unwrap_or_else(|| self.root.clone());
         let needs_newline =
             last_token(&self.root).is_some_and(|token| token.kind() != SyntaxKind::NEWLINE);
-        let mut index = separator_parent.children_with_tokens().count();
+        let index = separator_parent.children_with_tokens().count();
         let mut blank_lines = self.separator_blank_lines();
         if needs_newline && blank_lines != 0 {
-            index = terminate_line(&separator_parent, index);
+            terminate_line(&separator_parent, index);
             blank_lines -= 1;
         }
         for _ in 0..blank_lines {
@@ -409,12 +409,12 @@ impl SectionEditor<'_> {
         if lines.is_empty() {
             return;
         }
-        let children: Vec<_> = self.node.children_with_tokens().collect();
+        let children: Vec<_> = self.node.children().collect();
         let index = index.min(children.len());
         let (index, needs_newline) = if index == 0 {
             (0, false)
         } else {
-            Self::after_element(&children, index - 1)
+            Self::after_line(&children, index - 1)
         };
         self.insert_elements(index, needs_newline, Self::raw_line_elements(lines));
     }
@@ -426,11 +426,9 @@ impl SectionEditor<'_> {
         needs_newline: bool,
         elements: Vec<crate::SyntaxElement>,
     ) {
-        let index = if needs_newline {
-            terminate_line(&self.node, index)
-        } else {
-            index
-        };
+        if needs_newline {
+            terminate_line(&self.node, index);
+        }
         self.node.splice_children(index..index, elements);
     }
 
@@ -495,13 +493,13 @@ impl SectionEditor<'_> {
     /// the last entry/comment/header line, but before any trailing blank lines.
     /// Returns `(child_index, needs_newline)`.
     fn content_end(&self) -> (usize, bool) {
-        let children: Vec<crate::SyntaxElement> = self.node.children_with_tokens().collect();
-        // remove_lines can remove even the header. Loose error/newline tokens
-        // still count as content; only blank-line nodes belong after an append.
+        let children: Vec<SyntaxNode> = self.node.children().collect();
+        // remove_lines can remove even the header. Error lines still count as
+        // content; only blank-line nodes belong after an append.
         children
             .iter()
-            .rposition(|el| el.kind() != SyntaxKind::BLANK_LINE)
-            .map_or((0, false), |k| Self::after_element(&children, k))
+            .rposition(|line| line.kind() != SyntaxKind::BLANK_LINE)
+            .map_or((0, false), |k| Self::after_line(&children, k))
     }
 
     /// Insertion point just after the `n`-th logical content line (1-based),
@@ -509,47 +507,33 @@ impl SectionEditor<'_> {
     /// (or an empty body) inserts right after the header; `n` is clamped to the
     /// number of content lines. Returns `(child_index, needs_newline)`.
     fn after_content_line(&self, n: usize) -> (usize, bool) {
-        let children: Vec<crate::SyntaxElement> = self.node.children_with_tokens().collect();
-        let header = children.iter().position(|el| {
-            el.as_node()
-                .is_some_and(|node| node.kind() == SyntaxKind::SECTION_HEADER)
-        });
+        let children: Vec<SyntaxNode> = self.node.children().collect();
+        let header = children
+            .iter()
+            .position(|line| line.kind() == SyntaxKind::SECTION_HEADER);
         let content: Vec<usize> = children
             .iter()
             .enumerate()
-            .filter(|(_, el)| {
-                el.as_node().is_some_and(|node| {
-                    matches!(node.kind(), SyntaxKind::ENTRY | SyntaxKind::COMMENT_LINE)
-                })
-            })
+            .filter(|(_, line)| matches!(line.kind(), SyntaxKind::ENTRY | SyntaxKind::COMMENT_LINE))
             .map(|(i, _)| i)
             .collect();
 
         if n == 0 || content.is_empty() {
-            return header.map_or((0, false), |k| Self::after_element(&children, k));
+            return header.map_or((0, false), |k| Self::after_line(&children, k));
         }
         let n = n.min(content.len());
-        Self::after_element(&children, content[n - 1])
+        Self::after_line(&children, content[n - 1])
     }
 
     /// Compute the insertion point immediately after the line node at
-    /// `children[k]`. In the line-node model every line node owns its
-    /// terminating newline, so this is simply the next index — with
-    /// `needs_newline` set when the line has no terminator (end of file).
-    fn after_element(children: &[crate::SyntaxElement], k: usize) -> (usize, bool) {
-        // Earlier insertions may have supplied a missing line terminator as a
-        // sibling token. Reuse it instead of adding a blank line on every edit.
-        if children
-            .get(k + 1)
-            .is_some_and(|el| el.kind() == SyntaxKind::NEWLINE)
-        {
-            return (k + 2, false);
-        }
-        let last_token = match &children[k] {
-            rowan::NodeOrToken::Node(node) => node.last_token(),
-            rowan::NodeOrToken::Token(token) => Some(token.clone()),
-        };
-        let ends_with_newline = last_token.is_some_and(|token| token.kind() == SyntaxKind::NEWLINE);
+    /// `children[k]`. In the line-node model every child of a section is a
+    /// line node that owns its terminating newline, so this is simply the next
+    /// index — with `needs_newline` set when the line has no terminator (end
+    /// of file).
+    fn after_line(children: &[SyntaxNode], k: usize) -> (usize, bool) {
+        let ends_with_newline = children[k]
+            .last_token()
+            .is_some_and(|token| token.kind() == SyntaxKind::NEWLINE);
         (k + 1, !ends_with_newline)
     }
 
@@ -567,15 +551,12 @@ impl SectionEditor<'_> {
         // in rowan's mutable tree (indices shift during removal).
         let to_remove: Vec<_> = self
             .node
-            .children_with_tokens()
+            .children()
             .skip(range.start)
             .take(range.end - range.start)
             .collect();
-        for child in to_remove {
-            match child {
-                rowan::NodeOrToken::Node(n) => n.detach(),
-                rowan::NodeOrToken::Token(t) => t.detach(),
-            }
+        for line in to_remove {
+            line.detach();
         }
         repair_removal_boundary(&self.node, range.start);
     }
@@ -612,15 +593,16 @@ fn repair_removal_boundary(parent: &SyntaxNode, index: usize) {
             rowan::NodeOrToken::Node(node) => last_token(&node),
             rowan::NodeOrToken::Token(token) => Some(token),
         });
+    // Only a document's leading BOM is a loose token, and it never follows a
+    // removed line.
     let after = parent
         .children_with_tokens()
         .nth(index)
-        .and_then(|element| match element {
-            rowan::NodeOrToken::Node(node) => node
-                .descendants_with_tokens()
+        .and_then(rowan::NodeOrToken::into_node)
+        .and_then(|line| {
+            line.descendants_with_tokens()
                 .filter_map(rowan::NodeOrToken::into_token)
-                .find(|token| !token.text().is_empty()),
-            rowan::NodeOrToken::Token(token) => Some(token),
+                .find(|token| !token.text().is_empty())
         });
     separate_line_breaks(before, after);
 }
@@ -634,32 +616,18 @@ fn detach_preserving_line_breaks(node: &SyntaxNode) {
     }
 }
 
-/// Complete the line before an insertion point and return the updated index.
-/// Parsed error lines can be loose tokens; regular lines must keep ownership
-/// of their terminator so `remove_lines` still addresses the same physical lines.
-fn terminate_line(parent: &SyntaxNode, index: usize) -> usize {
-    let previous = parent
+/// Complete the line before an insertion point. The line keeps ownership of
+/// its terminator so `remove_lines` still addresses the same physical lines.
+fn terminate_line(parent: &SyntaxNode, index: usize) {
+    let line = parent
         .children_with_tokens()
         .nth(index - 1)
-        .expect("a missing terminator always has a preceding element");
-    let previous_token = match &previous {
-        rowan::NodeOrToken::Node(line) => {
-            last_token(line).expect("a line needing a terminator has content")
-        }
-        rowan::NodeOrToken::Token(token) => token.clone(),
-    };
+        .and_then(rowan::NodeOrToken::into_node)
+        .expect("a missing terminator always belongs to a preceding line node");
+    let previous_token = last_token(&line).expect("a line needing a terminator has content");
     let newline = SectionEditor::newline_element(previous_token.text());
-    match previous {
-        rowan::NodeOrToken::Node(line) => {
-            let end = line.children_with_tokens().count();
-            line.splice_children(end..end, vec![newline]);
-            index
-        }
-        rowan::NodeOrToken::Token(_) => {
-            parent.splice_children(index..index, vec![newline]);
-            index + 1
-        }
-    }
+    let end = line.children_with_tokens().count();
+    line.splice_children(end..end, vec![newline]);
 }
 
 /// A handle to a specific entry within a section, for position-targeted
@@ -1050,7 +1018,7 @@ mod tests {
     }
 
     #[test]
-    fn deletion_boundaries_cover_loose_tokens_and_opaque_raw_lines() {
+    fn deletion_boundaries_cover_error_lines_and_opaque_raw_lines() {
         let editor = Editor::new("[s]\n=bad\rx=remove\n\nnext=keep\n");
         assert!(editor.section("s").remove_entry("x"));
         assert_eq!(editor.finish(), "[s]\n=bad\r\r\nnext=keep\n");
@@ -1059,8 +1027,8 @@ mod tests {
             Editor::new(&editor.finish()).root.green()
         );
 
-        let editor = Editor::new("[s]\r=bad\nnext=keep\n");
-        editor.section("s").remove_lines(1..2); // remove just the loose error token
+        let editor = Editor::new("[s]\r=bad\n\nnext=keep\n");
+        editor.section("s").remove_lines(1..2); // remove the whole error line
         assert_eq!(editor.finish(), "[s]\r\r\nnext=keep\n");
 
         // Raw content is deliberately opaque and must not be reclassified as
@@ -1101,6 +1069,142 @@ mod tests {
         assert_eq!(editor.finish(), "[a]\r\r\nkeep=2\n");
         tail.remove_lines(0..1);
         assert_eq!(editor.finish(), "[a]\rkeep=2\n");
+    }
+
+    fn assert_reopens_identically(editor: &Editor) {
+        assert_eq!(
+            editor.root.green(),
+            Editor::new(&editor.finish()).root.green()
+        );
+    }
+
+    #[test]
+    fn assigning_a_key_followed_by_junk_replaces_the_junk() {
+        let spacings = [
+            (SeparatorSpacing::Preserve, " = "),
+            (SeparatorSpacing::Compact, "="),
+            (SeparatorSpacing::exact("\t", "  "), "\t=  "),
+        ];
+        for (key, junk) in [
+            ("key", " junk"),
+            ("key", "\t\tjunk"),
+            ("my", " key = value"),
+        ] {
+            for ending in ["\n", "\r\n", "\r", ""] {
+                for (spacing, separator) in &spacings {
+                    for (operation, value) in (0..4).zip(["v", "v", "", ""]) {
+                        let options = EditOptions {
+                            separator_spacing: spacing.clone(),
+                        };
+                        let source = format!("[s]\n{key}{junk}{ending}");
+                        let editor = Editor::with_edit_options(&source, &options);
+                        let snapshot = editor.file();
+                        if operation % 2 == 0 {
+                            editor.section("s").set(key, value);
+                        } else {
+                            editor.section("s").entries_mut()[0].set_value(value);
+                        }
+                        assert_eq!(
+                            editor.finish(),
+                            format!("[s]\n{key}{separator}{value}{ending}"),
+                            "{source:?}"
+                        );
+                        assert_reopens_identically(&editor);
+                        assert_eq!(snapshot.syntax().text().to_string(), source);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn removing_a_key_followed_by_junk_removes_its_whole_line() {
+        for line in ["key junk", "key\t\tjunk", "key = ok"] {
+            for operation in 0..2 {
+                let editor = Editor::new(&format!("[s]\n{line}\nnext=1\n"));
+                if operation == 0 {
+                    assert!(editor.section("s").remove_entry("key"));
+                } else {
+                    editor.section("s").entries_mut().remove(0).remove();
+                }
+                assert_eq!(editor.finish(), "[s]\nnext=1\n");
+                let keys: Vec<_> = editor
+                    .file()
+                    .sections()
+                    .flat_map(|section| {
+                        section
+                            .entries()
+                            .filter_map(|entry| entry.key())
+                            .collect::<Vec<_>>()
+                    })
+                    .collect();
+                assert_eq!(keys, ["next"]);
+                assert_reopens_identically(&editor);
+            }
+        }
+    }
+
+    #[test]
+    fn line_indices_count_each_malformed_line_once() {
+        for line in ["=bad", "  =bad", ":", "key junk", "my key = value"] {
+            for ending in ["\n", "\r\n", "\r"] {
+                let source = format!("[s]{ending}{line}{ending}b=2{ending}c=3{ending}");
+
+                let editor = Editor::new(&source);
+                editor.section("s").remove_lines(2..3);
+                assert_eq!(
+                    editor.finish(),
+                    format!("[s]{ending}{line}{ending}c=3{ending}")
+                );
+                assert_reopens_identically(&editor);
+
+                let editor = Editor::new(&source);
+                editor.section("s").remove_lines(1..2);
+                assert_eq!(
+                    editor.finish(),
+                    format!("[s]{ending}b=2{ending}c=3{ending}")
+                );
+                assert_reopens_identically(&editor);
+
+                for (index, expected) in [
+                    (
+                        2,
+                        format!("[s]{ending}{line}{ending}; note\nb=2{ending}c=3{ending}"),
+                    ),
+                    (
+                        3,
+                        format!("[s]{ending}{line}{ending}b=2{ending}; note\nc=3{ending}"),
+                    ),
+                ] {
+                    let editor = Editor::new(&source);
+                    editor.section("s").insert_raw_lines_at(index, &["; note"]);
+                    assert_eq!(editor.finish(), expected);
+                    assert_reopens_identically(&editor);
+                }
+
+                let editor = Editor::new(&format!("[s]{ending}{line}"));
+                editor.section("s").append_entry("n", "1");
+                assert_eq!(editor.finish(), format!("[s]{ending}{line}\nn = 1\n"));
+                editor.section("s").append_raw_lines(&["; note"]);
+                editor.section("s").remove_lines(2..3);
+                assert_eq!(editor.finish(), format!("[s]{ending}{line}\n; note\n"));
+                assert_reopens_identically(&editor);
+            }
+        }
+    }
+
+    #[test]
+    fn a_new_section_is_separated_from_a_final_malformed_line() {
+        for line in ["=bad", "  =bad", "key junk"] {
+            for ending in ["", "\n"] {
+                for prefix in ["", "[s]\nk=v\n\n"] {
+                    let editor = Editor::new(&format!("{prefix}{line}{ending}"));
+                    let _ = editor.section("next");
+                    assert_eq!(editor.finish(), format!("{prefix}{line}\n\n[next]\n"));
+                    assert_reopens_identically(&editor);
+                }
+            }
+        }
     }
 
     #[test]
@@ -1211,10 +1315,14 @@ mod tests {
     }
 
     #[test]
-    fn raw_insertion_reuses_a_parsed_error_lines_loose_newline() {
+    fn raw_insertion_counts_an_error_line_as_one_line() {
         let editor = Editor::new("[s]\n=bad\nk=1\n");
         editor.section("s").insert_raw_lines_at(2, &["; note"]);
         assert_eq!(editor.finish(), "[s]\n=bad\n; note\nk=1\n");
+
+        let editor = Editor::new("[s]\n=bad\nk=1\n");
+        editor.section("s").insert_raw_lines_at(3, &["; note"]);
+        assert_eq!(editor.finish(), "[s]\n=bad\nk=1\n; note\n");
     }
 
     #[test]
@@ -1918,14 +2026,11 @@ mod tests {
     }
 
     #[test]
-    fn remove_lines_detaches_loose_tokens() {
-        // A line starting with `=` lexes to a loose LEX_ERROR token (plus its
-        // newline) directly under the section, so remove_lines must detach
-        // tokens as well as line nodes.
+    fn remove_lines_counts_an_error_line_as_one_line() {
+        // A line starting with `=` is an ERROR_LINE node that owns its newline.
+        // Children: 0 SECTION_HEADER, 1 ERROR_LINE, 2 ENTRY(k).
         let ed = Editor::new("[s]\n=bad\nk = v\n");
-        // Children: 0 SECTION_HEADER, 1 LEX_ERROR token, 2 NEWLINE token,
-        //   3 ENTRY(k). Remove the two loose error tokens.
-        ed.section("s").remove_lines(1..3);
+        ed.section("s").remove_lines(1..2);
         assert_eq!(ed.finish(), "[s]\nk = v\n");
     }
 

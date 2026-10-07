@@ -66,6 +66,9 @@ RUSTFLAGS='--cfg no_zerocopy_simd_x86_avx12_1_89_0' \
 - Five libFuzzer targets independently stress round trips and
   arbitrary editor operation sequences, including reuse of section handles
   after deleting their headers and the identity property of empty insertions.
+  The round-trip target also requires every physical line, including
+  malformed ones, to be exactly one node that owns only its own terminator,
+  because editor line indices address those nodes.
   The reload target applies the same valid edits with and without reopening
   the document between operations, comparing both output and complete syntax
   trees. Its shared oracle also exhausts 3,072 short sequences in normal tests.
@@ -89,9 +92,10 @@ RUSTFLAGS='--cfg no_zerocopy_simd_x86_avx12_1_89_0' \
 - Bounded exhaustive tests enumerate all 41,371 strings of zero through four
   scalars from a 14-character alphabet containing delimiters, whitespace,
   Unicode, and a BOM. Every input runs through all four parser-option
-  combinations. Checks include losslessness, token partitioning, diagnostic
-  boundaries/locations (a leading BOM is not a column), and an independent
-  semantic expectation for a restricted single-line subset.
+  combinations. Checks include losslessness, token partitioning, one node per
+  physical line, diagnostic boundaries/locations (a leading BOM is not a
+  column), and an independent semantic expectation for a restricted
+  single-line subset.
 - Large-input tests exercise a 4 MiB value, large Unicode identifiers,
   32,768 continuations, and 65,536 malformed lines. A separate Linux child
   process measures CPU time and peak RSS for growing entry lists, errors,
