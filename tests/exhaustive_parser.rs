@@ -24,7 +24,10 @@ fn lexer_contract(source: &str) {
 }
 
 fn diagnostic_contract(source: &str, offset: usize) {
-    let prefix = source[..offset].replace("\r\n", "\n").replace('\r', "\n");
+    // A leading BOM marks the encoding; it is not a column of the first line.
+    let prefix = &source[..offset];
+    let prefix = prefix.strip_prefix('\u{FEFF}').unwrap_or(prefix);
+    let prefix = prefix.replace("\r\n", "\n").replace('\r', "\n");
     let expected = (
         prefix.split('\n').count(),
         prefix.rsplit('\n').next().unwrap().chars().count() + 1,

@@ -46,13 +46,16 @@ pub struct ParseError {
 
 impl ParseError {
     /// Compute 1-based line and column from the byte offset and source text.
+    ///
+    /// Columns count characters. A leading UTF-8 BOM is not a column.
     #[must_use]
     pub fn line_col(&self, source: &str) -> (usize, usize) {
         let mut line = 1;
         let mut col = 1;
         let mut previous_was_cr = false;
-        for (i, ch) in source.char_indices() {
-            if i >= self.offset {
+        let start = bom_len(source);
+        for (i, ch) in source[start..].char_indices() {
+            if start + i >= self.offset {
                 break;
             }
             match ch {
@@ -93,11 +96,21 @@ impl ParseError {
     }
 }
 
+/// Byte length of a leading UTF-8 BOM. It identifies the encoding and is not
+/// part of the first line, so diagnostics neither count nor display it.
+fn bom_len(source: &str) -> usize {
+    if source.starts_with('\u{FEFF}') {
+        '\u{FEFF}'.len_utf8()
+    } else {
+        0
+    }
+}
+
 fn source_line(source: &str, target_line: usize) -> &str {
     let bytes = source.as_bytes();
     let mut line = 1;
-    let mut start = 0;
-    let mut i = 0;
+    let mut start = bom_len(source);
+    let mut i = start;
 
     while i < bytes.len() {
         if bytes[i] == b'\n' || bytes[i] == b'\r' {
@@ -616,6 +629,61 @@ mod tests {
             assert!(rendered.contains("line 3, column 10"), "{rendered}");
             assert!(rendered.contains("  3 | [unclosed"), "{rendered}");
         }
+    }
+
+    #[test]
+    fn a_bom_is_not_an_error_column() {
+        // Each expected column is the number of characters before the error
+        // plus one. A BOM is zero-width, so neither the reported column nor
+        // the caret may count it.
+        let lines = [("=bad", 1), (" \t=bad", 3), ("[λ] junk", 5), ("\t[日本", 5)];
+        for bom in ["", "\u{FEFF}"] {
+            for (line, column) in lines {
+                for newline in ["\n", "\r\n", "\r", ""] {
+                    let caret = format!("\n  | {}^\n", " ".repeat(column - 1));
+
+                    let source = format!("{bom}{line}{newline}");
+                    let error = parse(&source).errors()[0].clone();
+                    assert_eq!(error.line_col(&source), (1, column), "{source:?}");
+                    let rendered = error.display(&source);
+                    assert!(
+                        rendered.contains(&format!("\n  1 | {line}\n")),
+                        "{rendered}"
+                    );
+                    assert!(rendered.contains(&caret), "{rendered}");
+
+                    // The document marker never affected later lines.
+                    let source = format!("{bom}[s]\r\n{line}{newline}");
+                    let error = parse(&source).errors()[0].clone();
+                    assert_eq!(error.line_col(&source), (2, column), "{source:?}");
+                    let rendered = error.display(&source);
+                    assert!(
+                        rendered.contains(&format!("\n  2 | {line}\n")),
+                        "{rendered}"
+                    );
+                    assert!(rendered.contains(&caret), "{rendered}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn only_a_leading_bom_is_skipped() {
+        // U+FEFF after the start of the document is an ordinary character.
+        for source in ["k\u{FEFF}\n", "\u{FEFF}k\u{FEFF}\n"] {
+            let error = ParseError {
+                message: "problem".to_string(),
+                offset: source.len() - 1,
+            };
+            assert_eq!(error.line_col(source), (1, 3), "{source:?}");
+            assert!(error.display(source).contains("\n  1 | k\u{FEFF}\n"));
+        }
+        let error = ParseError {
+            message: "problem".to_string(),
+            offset: 3,
+        };
+        assert_eq!(error.line_col("\u{FEFF}"), (1, 1));
+        assert!(error.display("\u{FEFF}").contains("\n  1 | \n  | ^\n"));
     }
 
     #[test]
