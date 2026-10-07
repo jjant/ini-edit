@@ -429,7 +429,11 @@ impl SectionEditor<'_> {
         if needs_newline {
             terminate_line(&self.node, index);
         }
+        let end = index + elements.len();
         self.node.splice_children(index..index, elements);
+        // Raw lines can begin with an LF or end with a bare CR.
+        repair_line_boundary(&self.node, index);
+        repair_line_boundary(&self.node, end);
     }
 
     /// Build the verbatim child elements for a set of raw lines. Each line
@@ -558,7 +562,7 @@ impl SectionEditor<'_> {
         for line in to_remove {
             line.detach();
         }
-        repair_removal_boundary(&self.node, range.start);
+        repair_line_boundary(&self.node, range.start);
     }
 
     fn find_entry(&self, key: &str) -> Option<Entry> {
@@ -585,26 +589,44 @@ fn separate_line_breaks(before: Option<crate::SyntaxToken>, after: Option<crate:
     parent.splice_children(index..index + 1, [SectionEditor::newline_element("\r")]);
 }
 
-fn repair_removal_boundary(parent: &SyntaxNode, index: usize) {
-    let before = index
-        .checked_sub(1)
-        .and_then(|index| parent.children_with_tokens().nth(index))
-        .and_then(|element| match element {
+/// Repair the boundary before `parent`'s child at `index`. The neighboring
+/// text can belong to another section, e.g. at a section's first line.
+fn repair_line_boundary(parent: &SyntaxNode, index: usize) {
+    separate_line_breaks(token_before(parent, index), token_after(parent, index));
+}
+
+/// The last token serialized before `parent`'s child at `index`.
+fn token_before(parent: &SyntaxNode, index: usize) -> Option<crate::SyntaxToken> {
+    let preceding: Vec<_> = parent.children_with_tokens().take(index).collect();
+    preceding
+        .into_iter()
+        .rev()
+        .find_map(|element| match element {
             rowan::NodeOrToken::Node(node) => last_token(&node),
             rowan::NodeOrToken::Token(token) => Some(token),
-        });
-    // Only a document's leading BOM is a loose token, and it never follows a
-    // removed line.
-    let after = parent
-        .children_with_tokens()
-        .nth(index)
-        .and_then(rowan::NodeOrToken::into_node)
-        .and_then(|line| {
+        })
+        .or_else(|| {
+            let grandparent = parent.parent()?;
+            token_before(&grandparent, parent.index())
+        })
+}
+
+/// The first nonempty token serialized from `parent`'s child at `index`.
+/// Only a document's leading BOM is a loose token, and it never follows a
+/// line, so only line nodes are searched.
+fn token_after(parent: &SyntaxNode, index: usize) -> Option<crate::SyntaxToken> {
+    parent
+        .children()
+        .skip_while(|line| line.index() < index)
+        .find_map(|line| {
             line.descendants_with_tokens()
                 .filter_map(rowan::NodeOrToken::into_token)
                 .find(|token| !token.text().is_empty())
-        });
-    separate_line_breaks(before, after);
+        })
+        .or_else(|| {
+            let grandparent = parent.parent()?;
+            token_after(&grandparent, parent.index() + 1)
+        })
 }
 
 fn detach_preserving_line_breaks(node: &SyntaxNode) {
@@ -612,7 +634,7 @@ fn detach_preserving_line_breaks(node: &SyntaxNode) {
     let index = node.index();
     node.detach();
     if let Some(parent) = parent {
-        repair_removal_boundary(&parent, index);
+        repair_line_boundary(&parent, index);
     }
 }
 
@@ -1205,6 +1227,134 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A raw line with the terminator the raw-line APIs append.
+    fn terminated(raw: &str) -> String {
+        if raw.ends_with(['\n', '\r']) {
+            raw.to_owned()
+        } else {
+            format!("{raw}\n")
+        }
+    }
+
+    #[test]
+    fn inserted_lines_keep_a_preceding_carriage_return_separate() {
+        for before in ["\r", "\n", "\r\n"] {
+            for raw in ["", "\n", "\r", "\r\n", "x\r", "x"] {
+                for operation in 0..3 {
+                    let source = format!("[s]{before}k=v{before}");
+                    let editor = Editor::new(&source);
+                    let snapshot = editor.file();
+                    let section = editor.section("s");
+                    match operation {
+                        0 => section.append_raw_lines(&[raw]),
+                        1 => section.insert_raw_lines_at(2, &[raw]),
+                        _ => section.insert_raw_lines_at(usize::MAX, &[raw]),
+                    }
+                    section.append_entry("n", "1");
+                    let mut line = terminated(raw);
+                    if before == "\r" && line.starts_with('\n') {
+                        line.insert(0, '\r');
+                    }
+                    assert_eq!(editor.finish(), format!("{source}{line}n = 1\n"));
+                    assert_eq!(snapshot.syntax().text().to_string(), source);
+
+                    // The inserted line must have the same index whether or
+                    // not the caller reopened the file after inserting it.
+                    let reopened = Editor::new(&editor.finish());
+                    editor.section("s").remove_lines(2..3);
+                    reopened.section("s").remove_lines(2..3);
+                    assert_eq!(editor.finish(), reopened.finish());
+                    assert_eq!(editor.finish(), format!("{source}n = 1\n"));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn inserted_carriage_returns_keep_following_blank_lines_separate() {
+        for raw in ["", "\n", "\r", "\r\n", "x\r", "x"] {
+            for blank in ["\n", "\r", "\r\n", " \n"] {
+                for operation in 0..2 {
+                    let source = format!("[s]\nk=v\n{blank}[t]\nnext=1\n");
+                    let editor = Editor::new(&source);
+                    let snapshot = editor.file();
+                    let retained = editor.section("t").entries_mut().remove(0);
+                    let section = editor.section("s");
+                    match operation {
+                        // Both insert after k=v, before the trailing blank.
+                        0 => section.append_raw_lines(&[raw]),
+                        _ => section.insert_raw_lines_at(2, &[raw]),
+                    }
+                    let line = terminated(raw);
+                    let blank = if line.ends_with('\r') && blank.starts_with('\n') {
+                        format!("\r{blank}")
+                    } else {
+                        blank.to_owned()
+                    };
+                    assert_eq!(
+                        editor.finish(),
+                        format!("[s]\nk=v\n{line}{blank}[t]\nnext=1\n")
+                    );
+                    assert_eq!(snapshot.syntax().text().to_string(), source);
+
+                    let reopened = Editor::new(&editor.finish());
+                    editor.section("s").remove_lines(3..4);
+                    reopened.section("s").remove_lines(3..4);
+                    assert_eq!(editor.finish(), reopened.finish());
+                    assert_eq!(editor.finish(), format!("[s]\nk=v\n{line}[t]\nnext=1\n"));
+                    retained.set_value("2");
+                    assert!(editor.finish().ends_with("[t]\nnext=2\n"));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn line_boundaries_are_repaired_across_sections() {
+        // Lines inserted before a header follow the previous section's line.
+        let editor = Editor::new("[a]\rk=v\r[b]\nx=1\n");
+        editor.section("b").insert_raw_lines_at(0, &[""]);
+        assert_eq!(editor.finish(), "[a]\rk=v\r\r\n[b]\nx=1\n");
+        let reopened = Editor::new(&editor.finish());
+        editor.section("b").remove_lines(0..1);
+        reopened.section("a").remove_lines(2..3);
+        assert_eq!(editor.finish(), reopened.finish());
+        assert_eq!(editor.finish(), "[a]\rk=v\r[b]\nx=1\n");
+
+        // Removing a header exposes the section's first line to the previous
+        // section's terminator.
+        let editor = Editor::new("[a]\r[b]\n\nx=1\n");
+        let headless = editor.section("b");
+        headless.remove_lines(0..1);
+        assert_eq!(editor.finish(), "[a]\r\r\nx=1\n");
+        let reopened = Editor::new(&editor.finish());
+        headless.remove_lines(0..1);
+        reopened.section("a").remove_lines(1..2);
+        assert_eq!(editor.finish(), reopened.finish());
+        assert_eq!(editor.finish(), "[a]\rx=1\n");
+
+        // An appended CR can precede the first line of a headless section.
+        let editor = Editor::new("[a]\nk=v\n[b]\n\nx=1\n");
+        let headless = editor.section("b");
+        headless.remove_lines(0..1);
+        editor.section("a").append_raw_lines(&["r\r"]);
+        assert_eq!(editor.finish(), "[a]\nk=v\nr\r\r\nx=1\n");
+        let reopened = Editor::new(&editor.finish());
+        headless.remove_lines(0..1);
+        reopened.section("a").remove_lines(3..4);
+        assert_eq!(editor.finish(), reopened.finish());
+        assert_eq!(editor.finish(), "[a]\nk=v\nr\rx=1\n");
+
+        // Detached sections and the document edges have no neighbors.
+        let editor = Editor::new("[a]\rx=1\n");
+        let detached = editor.section("a");
+        editor.section("a").remove();
+        detached.insert_raw_lines_at(0, &[""]);
+        detached.append_raw_lines(&["r\r"]);
+        assert_eq!(editor.finish(), "");
+        assert_eq!(detached.node.text().to_string(), "\n[a]\rx=1\nr\r");
     }
 
     #[test]

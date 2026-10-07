@@ -1,17 +1,19 @@
 use ini_edit::ast::AstNode;
 use ini_edit::editor::Editor;
 
-pub const SOURCES: [&str; 6] = [
+pub const SOURCES: [&str; 7] = [
     "",
     "[a]",
     "[a]\nx=0",
     "[a]\nx=0\n",
     "[a]\n; tail",
     "\u{FEFF}[a]\r\nx=0\r\n",
+    "[a]\rx=0\r",
 ];
+pub const OPERATIONS: u8 = 9;
 
 fn apply(editor: &Editor, operation: u8) {
-    match operation % 8 {
+    match operation % OPERATIONS {
         0 => editor.section("a").append_entry("x", "1"),
         1 => editor.section("a").insert_entry_at_line(0, "y", "2"),
         2 => editor.section("a").remove_lines(1..2),
@@ -19,7 +21,9 @@ fn apply(editor: &Editor, operation: u8) {
         4 => editor.section("a").remove(),
         5 => editor.section("b").remove_lines(1..usize::MAX),
         6 => editor.section("a").set("x", ""),
-        _ => editor.section("a").append_raw_lines(&["; tail"]),
+        7 => editor.section("a").append_raw_lines(&["; tail"]),
+        // Lands before a blank separator, which must not join its CR.
+        _ => editor.section("a").append_raw_lines(&["; tail\r"]),
     }
 }
 

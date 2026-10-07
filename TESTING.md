@@ -71,7 +71,9 @@ RUSTFLAGS='--cfg no_zerocopy_simd_x86_avx12_1_89_0' \
   because editor line indices address those nodes.
   The reload target applies the same valid edits with and without reopening
   the document between operations, comparing both output and complete syntax
-  trees. Its shared oracle also exhausts 3,072 short sequences in normal tests.
+  trees. Its shared oracle also exhausts 5,103 short sequences in normal tests,
+  including a CR-only document and a raw line ending in CR that is inserted
+  before a blank separator line.
 - An independent identity-based model checks up to 128 edits per fuzz input.
   It tracks duplicate keys, continued values, bare keys, retained entry and
   section handles, detached objects, and immutable file snapshots across
