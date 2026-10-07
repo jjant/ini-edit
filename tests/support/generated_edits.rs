@@ -136,6 +136,47 @@ impl Section {
         entry
     }
 
+    /// Append an entry after the last line that is not blank, as
+    /// `append_entry` does, completing an unterminated line first.
+    fn append(&mut self, key: &str, value: &str, spacing: &SeparatorSpacing, ending: &str) {
+        let position = self
+            .lines
+            .iter()
+            .rposition(|line| match line {
+                Line::Entry(_) => true,
+                Line::Trivia(text) => {
+                    !text.trim_start_matches([' ', '\t']).is_empty()
+                        && !text
+                            .trim_start_matches([' ', '\t'])
+                            .starts_with(['\r', '\n'])
+                }
+            })
+            .map_or(0, |index| index + 1);
+        if let Some(previous) = position.checked_sub(1) {
+            match &mut self.lines[previous] {
+                Line::Entry(entry) if entry.ending.is_empty() => entry.ending = ending.into(),
+                Line::Trivia(text) if !text.ends_with(['\r', '\n']) => text.push_str(ending),
+                _ => {}
+            }
+        }
+        let (before, after) = match spacing {
+            SeparatorSpacing::Preserve => (" ", " "),
+            SeparatorSpacing::Compact => ("", ""),
+            SeparatorSpacing::Exact { before, after } => (before.as_str(), after.as_str()),
+        };
+        let entry = Entry {
+            indent: String::new(),
+            key: key.into(),
+            before: before.into(),
+            separator: Some('='),
+            after: after.into(),
+            value: Some(value.into()),
+            suffix: String::new(),
+            ending: ending.into(),
+        };
+        self.lines.insert(position, Line::Entry(entry));
+    }
+
     fn first_key(&self, key: &str) -> usize {
         self.entries()
             .into_iter()
@@ -151,6 +192,16 @@ struct Document {
 }
 
 impl Document {
+    /// New lines use the first line break in the text, or LF without one.
+    fn line_ending(&self) -> &'static str {
+        let text = self.render();
+        match text.find(['\r', '\n']) {
+            Some(start) if text[start..].starts_with("\r\n") => "\r\n",
+            Some(start) if text[start..].starts_with('\r') => "\r",
+            _ => "\n",
+        }
+    }
+
     fn render(&self) -> String {
         let mut text = self.bom.clone();
         for section in &self.sections {
@@ -329,6 +380,7 @@ struct Edit<'a> {
 }
 
 fn apply(editor: &Editor, expected: &mut Document, edit: &Edit<'_>) {
+    let ending = expected.line_ending();
     let section = &mut expected.sections[edit.section];
     let name = section.name.as_deref().unwrap();
     let actual = editor.section(name);
@@ -336,7 +388,7 @@ fn apply(editor: &Editor, expected: &mut Document, edit: &Edit<'_>) {
     let key = section.entry(index).key.clone();
     let mut handles = actual.entries_mut();
     assert_eq!(handles.len(), section.entries().len());
-    match edit.operation % 8 {
+    match edit.operation % OPERATIONS {
         0 => {
             actual.set(&key, edit.replacement_value);
             let first = section.first_key(&key);
@@ -378,6 +430,17 @@ fn apply(editor: &Editor, expected: &mut Document, edit: &Edit<'_>) {
             actual.remove();
             expected.sections.remove(edit.section);
         }
+        7 => {
+            // Generated values never end in CR, so the new line simply uses
+            // the document's line ending.
+            actual.append_entry(edit.replacement_key, edit.replacement_value);
+            section.append(
+                edit.replacement_key,
+                edit.replacement_value,
+                edit.spacing,
+                ending,
+            );
+        }
         _ => {
             actual.append_raw_lines(&[]);
             actual.insert_raw_lines_at(usize::MAX, &[]);
@@ -386,6 +449,9 @@ fn apply(editor: &Editor, expected: &mut Document, edit: &Edit<'_>) {
     }
     expected.separate_blank_lines();
 }
+
+/// Number of distinct edit operations selected by the first input byte.
+pub const OPERATIONS: u8 = 9;
 
 /// Generate a whole document and compare edits against independent text and
 /// meaning. Input size, line counts, word lengths, and continuations are bounded.

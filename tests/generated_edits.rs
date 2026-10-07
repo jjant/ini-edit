@@ -5,7 +5,8 @@ mod generated_edits;
 
 #[test]
 fn generated_edits_preserve_meaning_and_untouched_bytes() {
-    for seed in 0u64..192 {
+    let operations = u64::from(generated_edits::OPERATIONS);
+    for seed in 0..operations * 24 {
         let mut state = seed + 1;
         let mut input = Vec::new();
         for _ in 0..128 {
@@ -14,9 +15,9 @@ fn generated_edits_preserve_meaning_and_untouched_bytes() {
                 .wrapping_add(1);
             input.extend_from_slice(&state.to_le_bytes()[4..]);
         }
-        input[0] = u8::try_from(seed % 8).unwrap();
-        input[3] = u8::try_from(seed / 8 % 3).unwrap();
-        input[4] = u8::try_from(seed / 24 % 4).unwrap();
+        input[0] = u8::try_from(seed % operations).unwrap();
+        input[3] = u8::try_from(seed / operations % 3).unwrap();
+        input[4] = u8::try_from(seed / (operations * 3) % 4).unwrap();
         generated_edits::check(&input);
     }
 }

@@ -83,9 +83,11 @@ RUSTFLAGS='--cfg no_zerocopy_simd_x86_avx12_1_89_0' \
 - A generated-document model constructs source text and expected meaning
   together, without parsing to obtain the expected result. It varies section
   and key names, duplicates, Unicode, BOMs, separators, indentation, comments,
-  line endings, continuations, and missing final newlines. Eight edit operations
+  line endings, continuations, and missing final newlines. Nine edit operations
   check the entire output byte for byte, including all untouched text, and
-  compare live/reparsed values and syntax trees. Normal tests run 192 cases
+  compare live/reparsed values and syntax trees. Appended entries must use the
+  first line break in the document, predicted from the model's own text.
+  Normal tests run 216 cases
   covering all operations, spacing policies, and parser options; the
   `generated_edits` fuzz target explores more documents using the same oracle.
   Unindented blank lines stay separate when deleting their neighbor brings a
