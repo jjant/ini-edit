@@ -1208,6 +1208,62 @@ mod tests {
     }
 
     #[test]
+    fn editing_a_bare_key_keeps_its_inline_comment() {
+        let parse_options = ParseOptions {
+            allow_no_value: true,
+            inline_comments: true,
+        };
+        let spacings = [
+            (SeparatorSpacing::Preserve, " = "),
+            (SeparatorSpacing::Compact, "="),
+            (SeparatorSpacing::exact("\t", "  "), "\t=  "),
+        ];
+        for (gap, comment) in [(" ", "; note"), ("\t", "#"), (" \t ", "; λ")] {
+            for ending in ["\n", "\r\n", "\r", ""] {
+                for (spacing, separator) in &spacings {
+                    for operation in 0..4 {
+                        let edit_options = EditOptions {
+                            separator_spacing: spacing.clone(),
+                        };
+                        let source = format!("[s]\nflag{gap}{comment}{ending}");
+                        let editor = Editor::with_options(&source, &parse_options, &edit_options);
+                        let snapshot = editor.file();
+                        let expected = match operation {
+                            0 => {
+                                editor.section("s").set("flag", "1");
+                                format!("[s]\nflag{separator}1{gap}{comment}{ending}")
+                            }
+                            1 => {
+                                editor.section("s").entries_mut()[0].set_value("1");
+                                format!("[s]\nflag{separator}1{gap}{comment}{ending}")
+                            }
+                            2 => {
+                                // An empty value cannot precede a marker, so
+                                // the comment moves to its own line.
+                                editor.section("s").set("flag", "");
+                                let terminator = if ending.is_empty() { "\n" } else { ending };
+                                format!("[s]\n{gap}{comment}{terminator}flag{separator}{ending}")
+                            }
+                            _ => {
+                                assert!(editor.section("s").rename_key("flag", "other"));
+                                format!("[s]\nother{gap}{comment}{ending}")
+                            }
+                        };
+                        assert_eq!(editor.finish(), expected, "{source:?}");
+                        let reopened = Editor::with_parse_options(&editor.finish(), &parse_options);
+                        assert_eq!(editor.root.green(), reopened.root.green());
+                        assert_eq!(snapshot.syntax().text().to_string(), source);
+                    }
+                }
+            }
+        }
+
+        let editor = Editor::with_parse_options("[s]\nflag ; note\nnext=1\n", &parse_options);
+        assert!(editor.section("s").remove_entry("flag"));
+        assert_eq!(editor.finish(), "[s]\nnext=1\n");
+    }
+
+    #[test]
     fn file_views_are_immutable_snapshots() {
         let source = "[s]\nk=old\nk=duplicate\n[t]\nx=1\n";
         let editor = Editor::new(source);

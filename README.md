@@ -100,7 +100,7 @@ INI has no formal spec. `ini-edit` makes these choices:
 | Comment markers | `;` and `#` |
 | Separators | `=` and `:` |
 | Spaces in section names | Allowed: `[my section]` |
-| Inline comments | Opt-in via `parse_with(.., &ParseOptions { inline_comments: true, ..Default::default() })`; a `;`/`#` preceded by whitespace starts a trailing comment (`key = value ; comment`). Off by default, so the marker stays part of the value. |
+| Inline comments | Opt-in via `parse_with(.., &ParseOptions { inline_comments: true, ..Default::default() })`; a `;`/`#` preceded by whitespace starts a trailing comment (`key = value ; comment`, or `flag ; comment` for a bare key). Off by default, so the marker stays part of the value. |
 | Backslash continuation | Supported: `key = long \`<br>`value` |
 | Empty values | `key =` is valid, value is `""` |
 | Preamble entries | Keys before first `[section]` accessible via `File::preamble_entries()` |

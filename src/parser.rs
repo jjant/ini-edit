@@ -164,6 +164,9 @@ pub struct ParseOptions {
     /// color  = #fff         ; comment, value is "#fff"
     /// ```
     ///
+    /// A bare key accepted by [`allow_no_value`](Self::allow_no_value) can
+    /// carry one too: `quick  # dump rows one at a time`.
+    ///
     /// Disabled by default: the safest behavior for a lossless parser is to
     /// leave value bytes uninterpreted.
     pub inline_comments: bool,
@@ -362,9 +365,16 @@ impl Parser<'_> {
         self.bump();
         self.builder.finish_node();
 
-        self.bump_if(SyntaxKind::WHITESPACE);
+        // Whitespace before a bare key's inline comment follows the empty
+        // value, as it does after any other value.
+        if self.tokens.get(self.cursor + 1).map(|t| t.kind) != Some(SyntaxKind::COMMENT) {
+            self.bump_if(SyntaxKind::WHITESPACE);
+        }
         match self.peek() {
-            Some(SyntaxKind::EQ | SyntaxKind::COLON) => self.bump(),
+            Some(SyntaxKind::EQ | SyntaxKind::COLON) => {
+                self.bump();
+                self.bump_if(SyntaxKind::WHITESPACE);
+            }
             _ => {
                 if !self.options.allow_no_value {
                     self.error("expected '=' or ':'");
@@ -378,7 +388,6 @@ impl Parser<'_> {
             self.error(format!("unexpected token: {:?}", SyntaxKind::LEX_ERROR));
             self.bump();
         }
-        self.bump_if(SyntaxKind::WHITESPACE);
 
         self.builder.start_node(SyntaxKind::VALUE.into());
         if self.peek() == Some(SyntaxKind::VALUE_TEXT) {
@@ -564,6 +573,71 @@ mod tests {
                             assert_eq!(messages, expected, "{source:?}");
                             for error in parsed.errors() {
                                 assert_eq!(error.offset, header.len() + indent.len() + column);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn bare_keys_accept_inline_comments() {
+        for header in ["", "[s]\n"] {
+            for indent in ["", " \t"] {
+                for gap in [" ", "\t", " \t "] {
+                    for comment in [";", "# note", "; λ ; x"] {
+                        for ending in ["\n", "\r\n", "\r", ""] {
+                            for allow_no_value in [false, true] {
+                                let options = ParseOptions {
+                                    allow_no_value,
+                                    inline_comments: true,
+                                };
+                                let next = if ending.is_empty() { "" } else { "next=1\n" };
+                                let source =
+                                    format!("{header}{indent}flag{gap}{comment}{ending}{next}");
+                                let parsed = parse_with(&source, &options);
+                                assert_eq!(parsed.syntax().text().to_string(), source);
+
+                                let file = File::cast(parsed.syntax()).unwrap();
+                                let entry = match file.sections().next() {
+                                    Some(section) => section.entries().next(),
+                                    None => file.preamble_entries().next(),
+                                }
+                                .unwrap();
+                                assert_eq!(entry.key().as_deref(), Some("flag"));
+                                assert_eq!(entry.value(), None);
+                                assert_eq!(entry.inline_comment().as_deref(), Some(comment));
+                                // The gap follows the empty value, like any
+                                // whitespace before an inline comment.
+                                let kinds: Vec<_> = entry
+                                    .syntax()
+                                    .children_with_tokens()
+                                    .map(|element| element.kind())
+                                    .collect();
+                                let leading = usize::from(!indent.is_empty());
+                                assert_eq!(
+                                    kinds[leading..leading + 4],
+                                    [
+                                        SyntaxKind::KEY,
+                                        SyntaxKind::VALUE,
+                                        SyntaxKind::WHITESPACE,
+                                        SyntaxKind::COMMENT
+                                    ],
+                                    "{source:?}"
+                                );
+
+                                let errors: Vec<_> = parsed
+                                    .errors()
+                                    .iter()
+                                    .map(|e| (e.message.as_str(), e.offset))
+                                    .collect();
+                                if allow_no_value {
+                                    assert!(errors.is_empty(), "{source:?}: {errors:?}");
+                                } else {
+                                    let offset = header.len() + indent.len() + "flag".len();
+                                    assert_eq!(errors, [("expected '=' or ':'", offset)]);
+                                }
                             }
                         }
                     }

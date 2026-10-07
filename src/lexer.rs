@@ -174,6 +174,13 @@ impl Lexer<'_> {
         match self.rest.chars().next() {
             Some('=') => self.bump(SyntaxKind::EQ, 1),
             Some(':') => self.bump(SyntaxKind::COLON, 1),
+            // A key ends at whitespace, so a marker here is whitespace-preceded:
+            // a bare key's inline comment (`flag ; note`).
+            Some(';' | '#') if self.inline_comments => {
+                self.lex_comment_to_eol();
+                self.eat_newline();
+                return;
+            }
             _ => {
                 self.lex_rest_of_line_as_error();
                 self.eat_newline();
@@ -681,6 +688,34 @@ mod tests {
         let toks = lex_with("k = v\t; note\n", true);
         assert_eq!(val(&toks), Some("v"));
         assert_eq!(com(&toks), Some("; note"));
+    }
+
+    #[test]
+    fn inline_comment_after_bare_key() {
+        for (input, comment) in [
+            ("flag ; note\n", "; note"),
+            ("flag\t#\r", "#"),
+            ("flag  ; λ", "; λ"),
+        ] {
+            let toks = lex_with(input, true);
+            assert_eq!(toks.iter().map(|t| t.text).collect::<String>(), input);
+            let kinds: Vec<_> = toks.iter().map(|t| t.kind).collect();
+            assert_eq!(&kinds[..3], [IDENT, WHITESPACE, COMMENT], "{input:?}");
+            assert_eq!(com(&toks), Some(comment));
+            // Without the option, the marker is unexpected text after the key.
+            let toks = lex(input);
+            assert_eq!(toks[2].kind, LEX_ERROR, "{input:?}");
+        }
+        // Markers need whitespace before them, and text after a key is not a
+        // comment just because it contains one.
+        assert_eq!(lex_kinds("flag;note\n"), vec![IDENT, NEWLINE]);
+        assert_eq!(
+            lex_with("flag junk ; note", true)
+                .iter()
+                .map(|t| t.kind)
+                .collect::<Vec<_>>(),
+            vec![IDENT, WHITESPACE, LEX_ERROR]
+        );
     }
 
     #[test]
