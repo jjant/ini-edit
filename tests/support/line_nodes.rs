@@ -1,6 +1,6 @@
 //! Structural oracle: every physical line is exactly one CST node.
 
-use ini_edit::{SyntaxKind, SyntaxNode};
+use ini_edit::{SyntaxElement, SyntaxKind, SyntaxNode};
 
 /// Editor line indices address children of the root and of each section, so
 /// every physical line must be a single node owning exactly its terminator.
@@ -27,7 +27,7 @@ pub fn check(source: &str, root: &SyntaxNode) {
     for (index, line) in lines.into_iter().enumerate() {
         let newlines: Vec<_> = line
             .descendants_with_tokens()
-            .filter_map(|element| element.into_token())
+            .filter_map(SyntaxElement::into_token)
             .filter(|token| token.kind() == SyntaxKind::NEWLINE)
             .collect();
         let ends_with_newline = line
