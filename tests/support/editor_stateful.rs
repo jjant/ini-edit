@@ -329,10 +329,11 @@ fn scenario(data: &[u8]) -> Scenario {
     } else {
         ""
     };
+    // A bare key can carry an inline comment too.
     let bare = if options.allow_no_value {
-        "flag"
+        format!("flag{comment}")
     } else {
-        "flag="
+        "flag=".to_owned()
     };
     let source = format!(
         "{bom}global=stay{ending}[s]{ending}dup : first{comment}{ending}dup=second  {ending}{bare}{ending}multi={continued}{ending}{ending}[other]{ending}keep=value"
