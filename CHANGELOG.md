@@ -9,35 +9,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.4.0] - 2026-10-08
 
-### Documentation
+### Changed
 
-- Explain that values ending in a backslash continue on the next line ([#67](https://github.com/jjant/ini-edit/pull/67))
+- **Breaking:** every malformed line is now a single node in the syntax tree. A line that starts with an unexpected token is wrapped in the new `SyntaxKind::ERROR_LINE`, and text after a key without a separator (`key junk`) stays inside its `ENTRY`. Code that matches exhaustively on `SyntaxKind`, or walks the children of malformed lines, needs updating. Diagnostics are unchanged ([#60](https://github.com/jjant/ini-edit/pull/60))
+- Lines added by the editor use the document's line ending instead of always `\n`. This is the first line break in the current text, or `\n` if there is none, so editing CRLF or CR files no longer mixes line endings ([#63](https://github.com/jjant/ini-edit/pull/63))
+- Report unexpected text after a section header (`[s] extra`) as a parse error. It was previously accepted silently ([#52](https://github.com/jjant/ini-edit/pull/52))
+- With both `allow_no_value` and `inline_comments` enabled, a bare key can carry an inline comment (`quick  # note`). This was previously a parse error, and assigning a value glued the comment onto it ([#62](https://github.com/jjant/ini-edit/pull/62))
+- `Editor::file()` returns an immutable snapshot, as documented, instead of the editor's live tree, so a saved view no longer changes when the editor is edited ([#54](https://github.com/jjant/ini-edit/pull/54))
 
 ### Fixed
 
-- Make insert_entry_at_line past the end match append_entry ([#66](https://github.com/jjant/ini-edit/pull/66))
-- Accept inline comments after bare keys ([#62](https://github.com/jjant/ini-edit/pull/62))
-- Use the document's line ending for inserted lines ([#63](https://github.com/jjant/ini-edit/pull/63))
-- Keep CR and LF separate at inserted line boundaries ([#61](https://github.com/jjant/ini-edit/pull/61))
-- Keep each malformed line in a single line node ([#60](https://github.com/jjant/ini-edit/pull/60))
-- Don't count a UTF-8 BOM as an error column ([#59](https://github.com/jjant/ini-edit/pull/59))
-- Preserve blank lines across mixed CR and LF deletions ([#58](https://github.com/jjant/ini-edit/pull/58))
-- Report unexpected text after section headers ([#52](https://github.com/jjant/ini-edit/pull/52))
-- Preserve line boundaries across edits and reloads ([#49](https://github.com/jjant/ini-edit/pull/49))
-- Preserve empty values when retaining inline comments ([#50](https://github.com/jjant/ini-edit/pull/50))
-- Preserve editor insertion boundaries after deletions ([#47](https://github.com/jjant/ini-edit/pull/47))
-- Avoid quadratic parsing of malformed input ([#46](https://github.com/jjant/ini-edit/pull/46))
-- Preserve BOM and parse indented first lines ([#45](https://github.com/jjant/ini-edit/pull/45))
+- Editing a key followed by junk (`key junk`, MySQL's `!includedir /path`) no longer glues the new value onto the junk, and removing that key no longer leaves the junk behind as a new key ([#60](https://github.com/jjant/ini-edit/pull/60))
+- `remove_lines` and `insert_raw_lines_at` count each malformed line as one line, so later indices are no longer shifted and removing a line can no longer join two lines ([#60](https://github.com/jjant/ini-edit/pull/60))
+- Keep a bare `\r` and a following `\n` as two line breaks when inserting lines, including between lines inserted together, so line indices match a reopened file ([#61](https://github.com/jjant/ini-edit/pull/61))
+- Keep a bare `\r` and a following `\n` as two line breaks when deleting entries, sections, or lines in files with mixed line endings ([#58](https://github.com/jjant/ini-edit/pull/58))
+- `insert_entry_at_line` with a `line` past the last content line inserts exactly where `append_entry` does, including after trailing malformed lines ([#66](https://github.com/jjant/ini-edit/pull/66))
+- Don't count a leading UTF-8 BOM as a column in `ParseError::line_col` and `display` ([#59](https://github.com/jjant/ini-edit/pull/59))
+- Parse a first line that is indented after a UTF-8 BOM, and keep the BOM when removing the first section or entry ([#45](https://github.com/jjant/ini-edit/pull/45))
+- Fix a panic when adding to a retained section handle after removing all its lines, and keep insertions from joining lines after deletions ([#47](https://github.com/jjant/ini-edit/pull/47))
+- Give the same results whether or not a file is saved and reopened between edits. Inserted line breaks belong to their line, so `remove_lines` can no longer join a header to a setting, and a new section after an empty, unterminated value no longer ends up inside that value ([#49](https://github.com/jjant/ini-edit/pull/49))
+- Clearing a value no longer turns its inline comment into the value when the file is reopened ([#50](https://github.com/jjant/ini-edit/pull/50))
+- Assigning a continued value that ends on a blank line no longer absorbs the inline comment, and clearing a value with `Compact` or `Exact` spacing no longer keeps the old surrounding spaces ([#53](https://github.com/jjant/ini-edit/pull/53))
 
 ### Performance
 
-- Repair inserted line boundaries before attaching nodes ([#64](https://github.com/jjant/ini-edit/pull/64))
+- Parse input with many malformed lines in linear time instead of quadratic time ([#46](https://github.com/jjant/ini-edit/pull/46))
+- Repair line boundaries between inserted lines before attaching them to the document, about twice as fast for large raw-line batches that need repairs ([#64](https://github.com/jjant/ini-edit/pull/64))
+
+### Documentation
+
+- Explain that a value ending in a backslash continues on the next line when the file is reopened ([#67](https://github.com/jjant/ini-edit/pull/67))
 
 ## [0.3.2] - 2026-09-22
-
-### Added
-
-- Add configurable separator spacing for edited entries ([#43](https://github.com/jjant/ini-edit/pull/43))
 
 ### Added
 
