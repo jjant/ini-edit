@@ -492,15 +492,16 @@ impl SectionEditor<'_> {
         if needs_newline {
             terminate_line(&self.node, index, ending);
         }
-        let end = index + lines.len();
-        self.node
-            .splice_children(index..index, lines.iter().cloned().map(Into::into));
-        // Raw lines can begin with an LF or end with a bare CR, so repair the
-        // boundary before every inserted line, between them, and after them.
-        repair_line_boundary(&self.node, index);
+        // Repair internal boundaries while the new lines are still detached,
+        // so each newline edit only rebuilds that line, not the document.
         for pair in lines.windows(2) {
             separate_line_breaks(last_token(&pair[0]), first_token(&pair[1]));
         }
+        let end = index + lines.len();
+        self.node
+            .splice_children(index..index, lines.iter().cloned().map(Into::into));
+        // Repair the two boundaries that depend on the surrounding document.
+        repair_line_boundary(&self.node, index);
         repair_line_boundary(&self.node, end);
     }
 
