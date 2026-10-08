@@ -84,6 +84,70 @@ impl SeparatorSpacing {
 /// ed.section("server").append_entry("port", "8080");
 /// assert_eq!(ed.finish(), "[server]\r\nhost = 0.0.0.0\r\nport = 8080\r\n");
 /// ```
+///
+/// # Values that end in a backslash
+///
+/// A line that ends in `\` (ignoring trailing spaces and tabs) continues on
+/// the next line. The editor writes values verbatim and cannot escape that
+/// backslash, so a value ending in `\` swallows the line that follows it the
+/// next time the text is parsed. This editor still shows the following line
+/// separately; only a reopened copy sees the merge.
+///
+/// For example, setting `path` to `C:\dir\` in this section:
+///
+/// ```text
+/// [s]
+/// path=old
+/// next=2
+/// ```
+///
+/// produces this text:
+///
+/// ```text
+/// [s]
+/// path=C:\dir\
+/// next=2
+/// ```
+///
+/// Reopening it finds a single entry: `path`, whose value is `C:\dir\`, a line
+/// break, and `next=2`. The `next` key is gone.
+///
+/// ```
+/// use ini_edit::ast::{AstNode, File};
+/// use ini_edit::editor::Editor;
+///
+/// let editor = Editor::new("[s]\npath=old\nnext=2\n");
+/// editor.section("s").set("path", r"C:\dir\");
+/// let saved = editor.finish();
+/// assert_eq!(saved, "[s]\npath=C:\\dir\\\nnext=2\n");
+///
+/// let reopened = File::cast(ini_edit::parse(&saved).syntax()).unwrap();
+/// let section = reopened.sections().next().unwrap();
+/// let entries: Vec<_> = section
+///     .entries()
+///     .map(|entry| (entry.key().unwrap(), entry.value().unwrap()))
+///     .collect();
+/// assert_eq!(entries, [("path".into(), "C:\\dir\\\nnext=2".into())]);
+/// ```
+///
+/// This applies to every value the editor writes:
+/// [`set`](SectionEditor::set), [`set_value`](EntryEditor::set_value),
+/// [`append_entry`](SectionEditor::append_entry), and
+/// [`insert_entry_at_line`](SectionEditor::insert_entry_at_line). It also
+/// applies to an existing last line that ends in `\` without a line break.
+/// That value is read literally, because nothing follows it, but adding any
+/// line after it gives it a line break, and the backslash then continues
+/// onto the added line.
+///
+/// A value ending in `\` reads back unchanged only when nothing follows the
+/// backslash on later lines:
+///
+/// - it is the last line of the text and has no line break, or
+/// - the file is edited with
+///   [`inline_comments`](crate::ParseOptions::inline_comments) and the
+///   entry keeps an inline comment, so its line ends with the comment.
+///
+/// Otherwise, drop the trailing backslash (`C:\dir` instead of `C:\dir\`).
 #[derive(Debug)]
 pub struct Editor {
     root: SyntaxNode,
@@ -320,6 +384,10 @@ impl SectionEditor<'_> {
     /// Clearing a value moves its inline comment to a preceding comment line,
     /// so reopening the file keeps the value empty.
     /// The same applies to a continuation ending on a blank line.
+    ///
+    /// A `value` ending in `\` continues on the next line when the text is
+    /// parsed again; see [values that end in a
+    /// backslash](Editor#values-that-end-in-a-backslash).
     pub fn set(&self, key: &str, value: &str) {
         if let Some(entry) = self.find_entry(key) {
             replace_value(
@@ -341,6 +409,10 @@ impl SectionEditor<'_> {
     /// drifting below the blank-line gap. If the preceding content line has no
     /// terminating newline (e.g. at end of file), a separating newline is
     /// inserted first. Both use the document's line ending (see [`Editor`]).
+    ///
+    /// A `value` ending in `\` continues on the next line when the text is
+    /// parsed again; see [values that end in a
+    /// backslash](Editor#values-that-end-in-a-backslash).
     pub fn append_entry(&self, key: &str, value: &str) {
         let (index, needs_newline) = self.content_end();
         self.insert_elements(index, needs_newline, |ending| {
@@ -364,6 +436,10 @@ impl SectionEditor<'_> {
     /// verbatim, opaque text — this counts only content lines and inserts a
     /// parsed entry, so the result is found by [`set`](Self::set),
     /// [`remove_entry`](Self::remove_entry), and [`rename_key`](Self::rename_key).
+    ///
+    /// A `value` ending in `\` continues on the next line when the text is
+    /// parsed again; see [values that end in a
+    /// backslash](Editor#values-that-end-in-a-backslash).
     pub fn insert_entry_at_line(&self, line: usize, key: &str, value: &str) {
         let (index, needs_newline) = self.after_content_line(line);
         self.insert_elements(index, needs_newline, |ending| {
@@ -815,6 +891,10 @@ impl EntryEditor {
     /// value (`key =` with the default options).
     /// Inline comments move to a preceding comment line when the replacement
     /// ends on a blank physical line.
+    ///
+    /// A `value` ending in `\` continues on the next line when the text is
+    /// parsed again; see [values that end in a
+    /// backslash](Editor#values-that-end-in-a-backslash).
     pub fn set_value(&self, value: &str) {
         replace_value(&self.node, value, &self.separator_spacing);
     }
@@ -2645,6 +2725,177 @@ mod tests {
             editor.finish(),
             "[s]\nx = 0\na=1\ny = 1\n=bad\nb=2\n=worse\n"
         );
+    }
+
+    // --- values that end in a backslash (documented limitation) ---
+    //
+    // A line ending in `\` continues on the next line, and the editor writes
+    // values verbatim. These tests pin the behavior that the `Editor` docs
+    // describe under "Values that end in a backslash": the live editor keeps
+    // the following line separate, but reopening the saved text merges it
+    // into the value. If the editor ever learns to reject or escape such
+    // values, update these tests together with those docs.
+
+    /// `(key, value)` pairs of every entry, in document order.
+    type Entries = Vec<(String, Option<String>)>;
+
+    fn entries_of(file: &File) -> Entries {
+        let preamble = file.preamble_entries();
+        let sections = file
+            .sections()
+            .flat_map(|section| section.entries().collect::<Vec<_>>());
+        preamble
+            .chain(sections)
+            .map(|entry| (entry.key().unwrap(), entry.value()))
+            .collect()
+    }
+
+    /// Entries as seen by the live editor and by a fresh parse of its text.
+    fn live_and_reopened(editor: &Editor, options: &ParseOptions) -> (Entries, Entries) {
+        let reopened = File::cast(parse_with(&editor.finish(), options).syntax()).unwrap();
+        (entries_of(&editor.file()), entries_of(&reopened))
+    }
+
+    fn entry(key: &str, value: &str) -> (String, Option<String>) {
+        (key.to_owned(), Some(value.to_owned()))
+    }
+
+    #[test]
+    fn a_written_value_ending_in_a_backslash_absorbs_the_next_line() {
+        let options = ParseOptions::default();
+        // Trailing spaces and tabs after the backslash do not stop the
+        // continuation, so they are no workaround.
+        for value in [r"C:\dir\", "C:\\dir\\ \t"] {
+            for ending in ["\n", "\r\n", "\r"] {
+                // Every way of writing a value: replacing an existing one
+                // (`set`, `set_value`) or creating an entry above another
+                // line (`append_entry`, `insert_entry_at_line`).
+                for operation in 0..4 {
+                    let source = format!("[s]{ending}path=old{ending}next=2{ending}");
+                    let editor = Editor::new(&source);
+                    let section = editor.section("s");
+                    let saved_path = match operation {
+                        0 => {
+                            section.set("path", value);
+                            format!("path={value}")
+                        }
+                        1 => {
+                            section.entries_mut()[0].set_value(value);
+                            format!("path={value}")
+                        }
+                        2 => {
+                            // Appended at the end, then followed by another
+                            // appended entry.
+                            assert!(section.remove_entry("path"));
+                            assert!(section.remove_entry("next"));
+                            section.append_entry("path", value);
+                            section.append_entry("next", "2");
+                            format!("path = {value}")
+                        }
+                        _ => {
+                            assert!(section.remove_entry("path"));
+                            section.insert_entry_at_line(0, "path", value);
+                            format!("path = {value}")
+                        }
+                    };
+                    let next = if operation == 2 { "next = 2" } else { "next=2" };
+                    assert_eq!(
+                        editor.finish(),
+                        format!("[s]{ending}{saved_path}{ending}{next}{ending}")
+                    );
+
+                    let (live, reopened) = live_and_reopened(&editor, &options);
+                    // The live editor still has two entries...
+                    assert_eq!(live, [entry("path", value), entry("next", "2")]);
+                    // ...but the reopened text has one: `next` became part of
+                    // `path`'s value, together with the line break before it.
+                    let swallowed = format!("{value}{ending}{next}");
+                    assert_eq!(
+                        reopened,
+                        [entry("path", &swallowed)],
+                        "{value:?} {ending:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_value_ending_in_a_backslash_changes_even_as_the_last_terminated_line() {
+        // Nothing follows the backslash except the entry's own line break,
+        // and the continuation keeps that line break in the value.
+        let editor = Editor::new("[s]\npath=old\n");
+        editor.section("s").set("path", r"C:\dir\");
+        assert_eq!(editor.finish(), "[s]\npath=C:\\dir\\\n");
+        let (live, reopened) = live_and_reopened(&editor, &ParseOptions::default());
+        assert_eq!(live, [entry("path", r"C:\dir\")]);
+        assert_eq!(reopened, [entry("path", "C:\\dir\\\n")]);
+    }
+
+    #[test]
+    fn adding_a_line_after_a_final_backslash_turns_it_into_a_continuation() {
+        let options = ParseOptions::default();
+        // Without a final line break, the backslash is read literally,
+        // because there is no next line to continue on.
+        let source = "[s]\npath=C:\\dir\\";
+        let (_, reopened) = live_and_reopened(&Editor::new(source), &options);
+        assert_eq!(reopened, [entry("path", r"C:\dir\")]);
+
+        // Appending an entry first terminates that line, so the new entry
+        // becomes the continuation.
+        let editor = Editor::new(source);
+        editor.section("s").append_entry("n", "1");
+        assert_eq!(editor.finish(), "[s]\npath=C:\\dir\\\nn = 1\n");
+        let (live, reopened) = live_and_reopened(&editor, &options);
+        assert_eq!(live, [entry("path", r"C:\dir\"), entry("n", "1")]);
+        assert_eq!(reopened, [entry("path", "C:\\dir\\\nn = 1")]);
+
+        // A new section is separated by a blank line. The continuation takes
+        // that blank line, so the section survives, but `path` gains a
+        // trailing line break.
+        let editor = Editor::new(source);
+        let _ = editor.section("t");
+        assert_eq!(editor.finish(), "[s]\npath=C:\\dir\\\n\n[t]\n");
+        let reopened = parse_with(&editor.finish(), &options);
+        let reopened = File::cast(reopened.syntax()).unwrap();
+        assert_eq!(entries_of(&reopened), [entry("path", "C:\\dir\\\n")]);
+        assert_eq!(
+            reopened
+                .sections()
+                .filter_map(|s| s.name())
+                .collect::<Vec<_>>(),
+            ["s", "t"]
+        );
+    }
+
+    #[test]
+    fn values_ending_in_a_backslash_read_back_unchanged_when_nothing_follows() {
+        // The last line of the text, without a line break.
+        let editor = Editor::new("[s]\npath=old");
+        editor.section("s").set("path", r"C:\dir\");
+        let (live, reopened) = live_and_reopened(&editor, &ParseOptions::default());
+        assert_eq!(live, reopened);
+        assert_eq!(reopened, [entry("path", r"C:\dir\")]);
+
+        // With inline comments enabled, an entry that keeps its comment ends
+        // its line with the comment rather than with the backslash.
+        let options = ParseOptions {
+            inline_comments: true,
+            ..ParseOptions::default()
+        };
+        let editor = Editor::with_parse_options("[s]\npath = old ; note\nnext=2\n", &options);
+        editor.section("s").set("path", r"C:\dir\");
+        assert_eq!(editor.finish(), "[s]\npath = C:\\dir\\ ; note\nnext=2\n");
+        let (live, reopened) = live_and_reopened(&editor, &options);
+        assert_eq!(live, reopened);
+        assert_eq!(reopened, [entry("path", r"C:\dir\"), entry("next", "2")]);
+
+        // The documented workaround: drop the trailing backslash.
+        let editor = Editor::new("[s]\npath=old\nnext=2\n");
+        editor.section("s").set("path", r"C:\dir");
+        let (live, reopened) = live_and_reopened(&editor, &ParseOptions::default());
+        assert_eq!(live, reopened);
+        assert_eq!(reopened, [entry("path", r"C:\dir"), entry("next", "2")]);
     }
 
     // --- coverage for raw-line and edge paths ---
