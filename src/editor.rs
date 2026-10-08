@@ -298,7 +298,7 @@ impl SectionEditor<'_> {
         let (before, after) = spacing_for_new_entry(&self.editor.options.separator_spacing);
         let entry = SyntaxNode::new_root(green_builders::entry_node(key, value, before, after))
             .clone_for_update();
-        self.insert_elements(index, needs_newline, vec![entry.into()]);
+        self.insert_elements(index, needs_newline, &[entry]);
     }
 
     /// Insert a new entry after the `line`-th logical content line within this
@@ -318,7 +318,7 @@ impl SectionEditor<'_> {
         let (before, after) = spacing_for_new_entry(&self.editor.options.separator_spacing);
         let entry = SyntaxNode::new_root(green_builders::entry_node(key, value, before, after))
             .clone_for_update();
-        self.insert_elements(index, needs_newline, vec![entry.into()]);
+        self.insert_elements(index, needs_newline, &[entry]);
     }
 
     /// Remove an entry by key name. Returns true if found and removed.
@@ -395,7 +395,7 @@ impl SectionEditor<'_> {
             return;
         }
         let (index, needs_newline) = self.content_end();
-        self.insert_elements(index, needs_newline, Self::raw_line_elements(lines));
+        self.insert_elements(index, needs_newline, &Self::raw_line_elements(lines));
     }
 
     /// Insert raw text lines at a specific child index within this section.
@@ -416,31 +416,31 @@ impl SectionEditor<'_> {
         } else {
             Self::after_line(&children, index - 1)
         };
-        self.insert_elements(index, needs_newline, Self::raw_line_elements(lines));
+        self.insert_elements(index, needs_newline, &Self::raw_line_elements(lines));
     }
 
     /// Preserve physical-line indices when completing an unterminated line.
-    fn insert_elements(
-        &self,
-        index: usize,
-        needs_newline: bool,
-        elements: Vec<crate::SyntaxElement>,
-    ) {
+    fn insert_elements(&self, index: usize, needs_newline: bool, lines: &[SyntaxNode]) {
         if needs_newline {
             terminate_line(&self.node, index);
         }
-        let end = index + elements.len();
-        self.node.splice_children(index..index, elements);
-        // Raw lines can begin with an LF or end with a bare CR.
+        let end = index + lines.len();
+        self.node
+            .splice_children(index..index, lines.iter().cloned().map(Into::into));
+        // Raw lines can begin with an LF or end with a bare CR, so repair the
+        // boundary before every inserted line, between them, and after them.
         repair_line_boundary(&self.node, index);
+        for pair in lines.windows(2) {
+            separate_line_breaks(last_token(&pair[0]), first_token(&pair[1]));
+        }
         repair_line_boundary(&self.node, end);
     }
 
     /// Build the verbatim child elements for a set of raw lines. Each line
     /// becomes a `COMMENT_LINE` node: its content is an opaque `COMMENT` token
     /// followed by its newline, keeping the line-node invariant intact.
-    fn raw_line_elements(lines: &[&str]) -> Vec<crate::SyntaxElement> {
-        let mut elements: Vec<crate::SyntaxElement> = Vec::new();
+    fn raw_line_elements(lines: &[&str]) -> Vec<SyntaxNode> {
+        let mut elements = Vec::new();
         for line in lines {
             let text = if line.ends_with('\n') || line.ends_with('\r') {
                 (*line).to_string()
@@ -470,8 +470,7 @@ impl SectionEditor<'_> {
                 b.finish_node();
                 b.finish()
             };
-            let node = SyntaxNode::new_root(green).clone_for_update();
-            elements.push(node.into());
+            elements.push(SyntaxNode::new_root(green).clone_for_update());
         }
         elements
     }
@@ -618,15 +617,19 @@ fn token_after(parent: &SyntaxNode, index: usize) -> Option<crate::SyntaxToken> 
     parent
         .children()
         .skip_while(|line| line.index() < index)
-        .find_map(|line| {
-            line.descendants_with_tokens()
-                .filter_map(rowan::NodeOrToken::into_token)
-                .find(|token| !token.text().is_empty())
-        })
+        .find_map(|line| first_token(&line))
         .or_else(|| {
             let grandparent = parent.parent()?;
             token_after(&grandparent, parent.index() + 1)
         })
+}
+
+/// The first nonempty token of `node`. Inserted blank lines can have empty
+/// content tokens before their newline.
+fn first_token(node: &SyntaxNode) -> Option<crate::SyntaxToken> {
+    node.descendants_with_tokens()
+        .filter_map(rowan::NodeOrToken::into_token)
+        .find(|token| !token.text().is_empty())
 }
 
 fn detach_preserving_line_breaks(node: &SyntaxNode) {
@@ -1309,6 +1312,65 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn lines_inserted_together_keep_their_shared_boundaries() {
+        // Each pair joins a bare CR to a following LF unless repaired.
+        let pairs = [
+            (vec!["; raw\r", ""], "; raw\r\r\n"),
+            (vec!["\r", "\n"], "\r\r\n"),
+            (vec!["x\r", "", ""], "x\r\r\n\n"),
+            (vec!["x\r", "\r", ""], "x\r\r\r\n"),
+            (vec!["", "x\r", "\n", "y"], "\nx\r\r\ny\n"),
+        ];
+        for (raw, inserted) in pairs {
+            let count = raw.len();
+            for operation in 0..3 {
+                let source = "[s]\nk=v\n\nlast=1\n";
+                let live = Editor::new(source);
+                let snapshot = live.file();
+                let section = live.section("s");
+                match operation {
+                    0 => section.append_raw_lines(&raw),
+                    1 => section.insert_raw_lines_at(2, &raw),
+                    _ => section.insert_raw_lines_at(1, &raw),
+                }
+                let (expected, first) = match operation {
+                    0 => (format!("{source}{inserted}"), 4),
+                    1 => (format!("[s]\nk=v\n{inserted}\nlast=1\n"), 2),
+                    _ => (format!("[s]\n{inserted}k=v\n\nlast=1\n"), 1),
+                };
+                // Raw lines stay opaque, so compare text and line indices
+                // rather than trees.
+                assert_eq!(live.finish(), expected, "{raw:?}");
+                assert_eq!(snapshot.syntax().text().to_string(), source);
+
+                // Every inserted line keeps its index after reopening.
+                for line in first..first + count {
+                    let live = Editor::new(source);
+                    match operation {
+                        0 => live.section("s").append_raw_lines(&raw),
+                        1 => live.section("s").insert_raw_lines_at(2, &raw),
+                        _ => live.section("s").insert_raw_lines_at(1, &raw),
+                    }
+                    let reopened = Editor::new(&live.finish());
+                    live.section("s").remove_lines(line..line + 1);
+                    reopened.section("s").remove_lines(line..line + 1);
+                    assert_eq!(live.finish(), reopened.finish(), "{raw:?} line {line}");
+                }
+            }
+        }
+
+        // The reported reproduction, followed by a parsed entry.
+        let live = Editor::new("[s]\nk=v\n");
+        live.section("s").append_raw_lines(&["; raw\r", ""]);
+        live.section("s").append_entry("n", "1");
+        let reopened = Editor::new(&live.finish());
+        live.section("s").remove_lines(3..4);
+        reopened.section("s").remove_lines(3..4);
+        assert_eq!(live.finish(), reopened.finish());
+        assert_eq!(live.finish(), "[s]\nk=v\n; raw\rn = 1\n");
     }
 
     #[test]
