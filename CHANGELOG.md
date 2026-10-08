@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-08
+
+### Documentation
+
+- Explain that values ending in a backslash continue on the next line ([#67](https://github.com/jjant/ini-edit/pull/67))
+
+### Fixed
+
+- Make insert_entry_at_line past the end match append_entry ([#66](https://github.com/jjant/ini-edit/pull/66))
+- Accept inline comments after bare keys ([#62](https://github.com/jjant/ini-edit/pull/62))
+- Use the document's line ending for inserted lines ([#63](https://github.com/jjant/ini-edit/pull/63))
+- Keep CR and LF separate at inserted line boundaries ([#61](https://github.com/jjant/ini-edit/pull/61))
+- Keep each malformed line in a single line node ([#60](https://github.com/jjant/ini-edit/pull/60))
+- Don't count a UTF-8 BOM as an error column ([#59](https://github.com/jjant/ini-edit/pull/59))
+- Preserve blank lines across mixed CR and LF deletions ([#58](https://github.com/jjant/ini-edit/pull/58))
+- Report unexpected text after section headers ([#52](https://github.com/jjant/ini-edit/pull/52))
+- Preserve line boundaries across edits and reloads ([#49](https://github.com/jjant/ini-edit/pull/49))
+- Preserve empty values when retaining inline comments ([#50](https://github.com/jjant/ini-edit/pull/50))
+- Preserve editor insertion boundaries after deletions ([#47](https://github.com/jjant/ini-edit/pull/47))
+- Avoid quadratic parsing of malformed input ([#46](https://github.com/jjant/ini-edit/pull/46))
+- Preserve BOM and parse indented first lines ([#45](https://github.com/jjant/ini-edit/pull/45))
+
+### Performance
+
+- Repair inserted line boundaries before attaching nodes ([#64](https://github.com/jjant/ini-edit/pull/64))
+
 ## [0.3.2] - 2026-09-22
 
 ### Added
