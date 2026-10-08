@@ -90,8 +90,8 @@ RUSTFLAGS='--cfg no_zerocopy_simd_x86_avx12_1_89_0' \
   scalars from a 14-character alphabet containing delimiters, whitespace,
   Unicode, and a BOM. Every input runs through all four parser-option
   combinations. Checks include losslessness, token partitioning, diagnostic
-  boundaries/locations, and an independent semantic expectation for a
-  restricted single-line subset.
+  boundaries/locations (a leading BOM is not a column), and an independent
+  semantic expectation for a restricted single-line subset.
 - Large-input tests exercise a 4 MiB value, large Unicode identifiers,
   32,768 continuations, and 65,536 malformed lines. A separate Linux child
   process measures CPU time and peak RSS for growing entry lists, errors,
