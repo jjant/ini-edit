@@ -248,7 +248,7 @@ fn editor_boundary_decision_table() {
     editor
         .section("s")
         .append_raw_lines(&["lf\n", "crlf\r\n", "cr\r", "unterminated"]);
-    assert_eq!(editor.finish(), "[s]\r\nlf\ncrlf\r\ncr\runterminated\n");
+    assert_eq!(editor.finish(), "[s]\r\nlf\ncrlf\r\ncr\runterminated\r\n");
 
     let editor = Editor::new("[s]\na: 1\n");
     editor.section("s").set("a", "2");

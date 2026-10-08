@@ -38,11 +38,12 @@ def seed_corpus(root):
                 data = bytearray((flags, spacing, flags % 3))
                 data.extend(random_bytes(flags * 7 + spacing, operations * 4))
                 add("editor_stateful", data)
-    for seed in range(192):
+    operations = 9  # tests/support/generated_edits.rs OPERATIONS
+    for seed in range(operations * 24):
         data = random_bytes(seed, 1536)
-        data[0] = seed % 8
-        data[3] = seed // 8 % 3
-        data[4] = seed // 24 % 4
+        data[0] = seed % operations
+        data[3] = seed // operations % 3
+        data[4] = seed // (operations * 3) % 4
         add("generated_edits", data)
 
 

@@ -69,6 +69,21 @@ impl SeparatorSpacing {
 }
 
 /// A format-preserving editor for INI files.
+///
+/// Lines the editor adds (entries, sections, blank separators, raw lines
+/// without a terminator, and the terminator of an unterminated final line) use
+/// the document's line ending: the first line break in its current text, or
+/// `\n` if it has none. Existing line endings are preserved, except that an
+/// `\n` an edit places directly after a bare `\r` becomes `\r\n`, so the two
+/// line breaks stay separate.
+///
+/// ```
+/// use ini_edit::editor::Editor;
+///
+/// let ed = Editor::new("[server]\r\nhost = 0.0.0.0\r\n");
+/// ed.section("server").append_entry("port", "8080");
+/// assert_eq!(ed.finish(), "[server]\r\nhost = 0.0.0.0\r\nport = 8080\r\n");
+/// ```
 #[derive(Debug)]
 pub struct Editor {
     root: SyntaxNode,
@@ -134,7 +149,8 @@ impl Editor {
 
         // Create the section at the end of the file. It always starts on its
         // own line, separated from existing content by one blank line.
-        let new_section_green = green_builders::empty_section_node(name);
+        let ending = document_line_ending(&self.root);
+        let new_section_green = green_builders::empty_section_node(name, ending);
         let new_section = SyntaxNode::new_root(new_section_green).clone_for_update();
 
         // Separators belong to the preceding section, just as they do when
@@ -149,11 +165,12 @@ impl Editor {
         let index = separator_parent.children_with_tokens().count();
         let mut blank_lines = self.separator_blank_lines();
         if needs_newline && blank_lines != 0 {
-            terminate_line(&separator_parent, index);
+            terminate_line(&separator_parent, index, ending);
             blank_lines -= 1;
         }
         for _ in 0..blank_lines {
-            let blank = SyntaxNode::new_root(green_builders::blank_line_node()).clone_for_update();
+            let blank =
+                SyntaxNode::new_root(green_builders::blank_line_node(ending)).clone_for_update();
             separate_line_breaks(last_token(&self.root), blank.first_token());
             separator_parent.splice_children(index..index, vec![blank.into()]);
         }
@@ -260,6 +277,37 @@ fn last_token(node: &SyntaxNode) -> Option<crate::SyntaxToken> {
     None
 }
 
+/// The first line terminator in the text of `node`'s tree, read as the lexer
+/// reads it (CR followed by LF is one CRLF), or LF if there is none.
+///
+/// Lines the editor creates use this ending, so CRLF and CR documents keep a
+/// single style. It depends only on the current text: reopening the output
+/// never changes how later lines are terminated.
+fn document_line_ending(node: &SyntaxNode) -> &'static str {
+    let root = node.ancestors().last().expect("a node is its own ancestor");
+    let mut after_cr = false;
+    for token in root
+        .descendants_with_tokens()
+        .filter_map(rowan::NodeOrToken::into_token)
+    {
+        let text = token.text();
+        // A token ending in CR is followed by the next nonempty token.
+        if after_cr && !text.is_empty() {
+            return if text.starts_with('\n') { "\r\n" } else { "\r" };
+        }
+        let Some(start) = text.find(['\r', '\n']) else {
+            continue;
+        };
+        match &text[start..] {
+            "\r" => after_cr = true,
+            rest if rest.starts_with("\r\n") => return "\r\n",
+            rest if rest.starts_with('\r') => return "\r",
+            _ => return "\n",
+        }
+    }
+    if after_cr { "\r" } else { "\n" }
+}
+
 /// Handle for editing a specific section.
 pub struct SectionEditor<'a> {
     editor: &'a Editor,
@@ -292,13 +340,12 @@ impl SectionEditor<'_> {
     /// section from the next, so it joins the section's body rather than
     /// drifting below the blank-line gap. If the preceding content line has no
     /// terminating newline (e.g. at end of file), a separating newline is
-    /// inserted first.
+    /// inserted first. Both use the document's line ending (see [`Editor`]).
     pub fn append_entry(&self, key: &str, value: &str) {
         let (index, needs_newline) = self.content_end();
-        let (before, after) = spacing_for_new_entry(&self.editor.options.separator_spacing);
-        let entry = SyntaxNode::new_root(green_builders::entry_node(key, value, before, after))
-            .clone_for_update();
-        self.insert_elements(index, needs_newline, &[entry]);
+        self.insert_elements(index, needs_newline, |ending| {
+            vec![self.entry_element(key, value, ending)]
+        });
     }
 
     /// Insert a new entry after the `line`-th logical content line within this
@@ -315,10 +362,16 @@ impl SectionEditor<'_> {
     /// [`remove_entry`](Self::remove_entry), and [`rename_key`](Self::rename_key).
     pub fn insert_entry_at_line(&self, line: usize, key: &str, value: &str) {
         let (index, needs_newline) = self.after_content_line(line);
+        self.insert_elements(index, needs_newline, |ending| {
+            vec![self.entry_element(key, value, ending)]
+        });
+    }
+
+    /// A new entry using the configured separator spacing.
+    fn entry_element(&self, key: &str, value: &str, ending: &'static str) -> SyntaxNode {
         let (before, after) = spacing_for_new_entry(&self.editor.options.separator_spacing);
-        let entry = SyntaxNode::new_root(green_builders::entry_node(key, value, before, after))
-            .clone_for_update();
-        self.insert_elements(index, needs_newline, &[entry]);
+        let entry = green_builders::entry_node(key, value, before, after, ending);
+        SyntaxNode::new_root(entry).clone_for_update()
     }
 
     /// Remove an entry by key name. Returns true if found and removed.
@@ -386,8 +439,9 @@ impl SectionEditor<'_> {
 
     /// Append raw text lines to this section's body.
     ///
-    /// Lines are inserted **verbatim** — no parsing, no reformatting. A newline
-    /// is appended to each line that doesn't already end with one. Like
+    /// Lines are inserted **verbatim** — no parsing, no reformatting. The
+    /// document's line ending (see [`Editor`]) is appended to each line that
+    /// doesn't already end with `\n` or `\r`. Like
     /// [`append_entry`](Self::append_entry), lines land after the last content
     /// line and before any trailing blank lines. An empty slice is a no-op.
     pub fn append_raw_lines(&self, lines: &[&str]) {
@@ -395,13 +449,16 @@ impl SectionEditor<'_> {
             return;
         }
         let (index, needs_newline) = self.content_end();
-        self.insert_elements(index, needs_newline, &Self::raw_line_elements(lines));
+        self.insert_elements(index, needs_newline, |ending| {
+            Self::raw_line_elements(lines, ending)
+        });
     }
 
     /// Insert raw text lines at a specific child index within this section.
     ///
     /// Index 0 is the section header. Lines are inserted **verbatim**.
-    /// A newline is appended to each line that doesn't already end with one.
+    /// The document's line ending (see [`Editor`]) is appended to each line
+    /// that doesn't already end with `\n` or `\r`.
     /// If `index` exceeds the number of children, lines are appended at the end.
     /// An unterminated preceding line is separated with a newline first.
     /// An empty slice is a no-op.
@@ -416,13 +473,24 @@ impl SectionEditor<'_> {
         } else {
             Self::after_line(&children, index - 1)
         };
-        self.insert_elements(index, needs_newline, &Self::raw_line_elements(lines));
+        self.insert_elements(index, needs_newline, |ending| {
+            Self::raw_line_elements(lines, ending)
+        });
     }
 
     /// Preserve physical-line indices when completing an unterminated line.
-    fn insert_elements(&self, index: usize, needs_newline: bool, lines: &[SyntaxNode]) {
+    /// `lines` builds the new lines with the document's line ending, which is
+    /// read before any terminator is added.
+    fn insert_elements(
+        &self,
+        index: usize,
+        needs_newline: bool,
+        lines: impl FnOnce(&'static str) -> Vec<SyntaxNode>,
+    ) {
+        let ending = document_line_ending(&self.node);
+        let lines = lines(ending);
         if needs_newline {
-            terminate_line(&self.node, index);
+            terminate_line(&self.node, index, ending);
         }
         let end = index + lines.len();
         self.node
@@ -439,13 +507,14 @@ impl SectionEditor<'_> {
     /// Build the verbatim child elements for a set of raw lines. Each line
     /// becomes a `COMMENT_LINE` node: its content is an opaque `COMMENT` token
     /// followed by its newline, keeping the line-node invariant intact.
-    fn raw_line_elements(lines: &[&str]) -> Vec<SyntaxNode> {
+    /// Unterminated lines receive the document's line `ending`.
+    fn raw_line_elements(lines: &[&str], ending: &str) -> Vec<SyntaxNode> {
         let mut elements = Vec::new();
         for line in lines {
             let text = if line.ends_with('\n') || line.ends_with('\r') {
                 (*line).to_string()
             } else {
-                format!("{line}\n")
+                format!("{line}{ending}")
             };
             // Emit the line content (without newline) as a COMMENT token
             // and the newline separately, wrapped in a COMMENT_LINE node.
@@ -475,15 +544,11 @@ impl SectionEditor<'_> {
         elements
     }
 
-    /// A standalone `NEWLINE` token element, used to separate appended content
-    /// from a preceding line that lacks its own terminator.
-    fn newline_element(after: &str) -> crate::SyntaxElement {
+    /// A standalone `NEWLINE` token element with the given terminator text.
+    fn newline_element(text: &str) -> crate::SyntaxElement {
         let mut b = rowan::GreenNodeBuilder::new();
         b.start_node(SyntaxKind::ROOT.into());
-        b.token(
-            SyntaxKind::NEWLINE.into(),
-            green_builders::newline_after(after),
-        );
+        b.token(SyntaxKind::NEWLINE.into(), text);
         b.finish_node();
         let wrapper = SyntaxNode::new_root(b.finish()).clone_for_update();
         wrapper
@@ -585,7 +650,7 @@ fn separate_line_breaks(before: Option<crate::SyntaxToken>, after: Option<crate:
     };
     let parent = after.parent().expect("a newline token has a parent");
     let index = after.index();
-    parent.splice_children(index..index + 1, [SectionEditor::newline_element("\r")]);
+    parent.splice_children(index..index + 1, [SectionEditor::newline_element("\r\n")]);
 }
 
 /// Repair the boundary before `parent`'s child at `index`. The neighboring
@@ -641,16 +706,20 @@ fn detach_preserving_line_breaks(node: &SyntaxNode) {
     }
 }
 
-/// Complete the line before an insertion point. The line keeps ownership of
-/// its terminator so `remove_lines` still addresses the same physical lines.
-fn terminate_line(parent: &SyntaxNode, index: usize) {
+/// Complete the line before an insertion point with the document's line
+/// `ending`. The line keeps ownership of its terminator so `remove_lines`
+/// still addresses the same physical lines.
+fn terminate_line(parent: &SyntaxNode, index: usize, ending: &'static str) {
     let line = parent
         .children_with_tokens()
         .nth(index - 1)
         .and_then(rowan::NodeOrToken::into_node)
         .expect("a missing terminator always belongs to a preceding line node");
     let previous_token = last_token(&line).expect("a line needing a terminator has content");
-    let newline = SectionEditor::newline_element(previous_token.text());
+    let newline = SectionEditor::newline_element(green_builders::newline_after(
+        previous_token.text(),
+        ending,
+    ));
     let end = line.children_with_tokens().count();
     line.splice_children(end..end, vec![newline]);
 }
@@ -820,7 +889,7 @@ fn preserve_value_carriage_return(entry: &SyntaxNode, value_node: &SyntaxNode, v
         return;
     };
     let index = newline.index();
-    entry.splice_children(index..index + 1, [SectionEditor::newline_element(value)]);
+    entry.splice_children(index..index + 1, [SectionEditor::newline_element("\r\n")]);
 }
 
 /// With no value text, all whitespace after the separator belongs to its gap.
@@ -888,12 +957,11 @@ fn move_inline_comment_before(entry: &SyntaxNode) {
         builder.token(token.kind().into(), token.text());
     }
     let newline = entry.last_token().expect("an inline comment is nonempty");
-    let ending = if newline.kind() == SyntaxKind::NEWLINE {
-        newline.text()
+    if newline.kind() == SyntaxKind::NEWLINE {
+        builder.token(SyntaxKind::NEWLINE.into(), newline.text());
     } else {
-        "\n"
-    };
-    builder.token(SyntaxKind::NEWLINE.into(), ending);
+        builder.token(SyntaxKind::NEWLINE.into(), document_line_ending(&parent));
+    }
     builder.finish_node();
     let comment = SyntaxNode::new_root(builder.finish()).clone_for_update();
     for element in &children[first..=comment_index] {
@@ -975,12 +1043,16 @@ mod tests {
 
     #[test]
     fn creating_a_section_after_cr_retains_a_blank_separator_line() {
-        for ending in ["\r", "\n", "\r\n"] {
-            let source = format!("[s]{ending}k=v{ending}");
-            let editor = Editor::new(&source);
+        for (source, expected) in [
+            ("[s]\rk=v\r", "[s]\rk=v\r\r[next]\r"),
+            ("[s]\nk=v\n", "[s]\nk=v\n\n[next]\n"),
+            ("[s]\r\nk=v\r\n", "[s]\r\nk=v\r\n\r\n[next]\r\n"),
+            // An LF blank after a final CR line must not join it as CRLF.
+            ("[s]\nk=v\r", "[s]\nk=v\r\r\n[next]\n"),
+        ] {
+            let editor = Editor::new(source);
             let _ = editor.section("next");
-            let blank = if ending == "\r" { "\r\n" } else { "\n" };
-            assert_eq!(editor.finish(), format!("{source}{blank}[next]\n"));
+            assert_eq!(editor.finish(), expected);
             let reloaded = Editor::new(&editor.finish());
             assert_eq!(editor.root.green(), reloaded.root.green());
         }
@@ -1025,18 +1097,22 @@ mod tests {
                         1 => editor.section("s").entries_mut().remove(0).remove(),
                         _ => editor.section("s").remove_lines(1..2),
                     }
-                    let ending = if raw.is_empty() { "\n" } else { raw };
+                    // New lines use the document's first line ending.
+                    let ending = if raw.is_empty() { before } else { raw };
                     let ending = if before == "\r" && ending == "\n" {
                         "\r\n"
                     } else {
                         ending
                     };
-                    assert_eq!(editor.finish(), format!("[s]{before}{ending}keep = 2\n"));
+                    assert_eq!(
+                        editor.finish(),
+                        format!("[s]{before}{ending}keep = 2{before}")
+                    );
                     let reopened = Editor::new(&editor.finish());
                     editor.section("s").remove_lines(1..2);
                     reopened.section("s").remove_lines(1..2);
                     assert_eq!(editor.finish(), reopened.finish());
-                    assert_eq!(editor.finish(), format!("[s]{before}keep = 2\n"));
+                    assert_eq!(editor.finish(), format!("[s]{before}keep = 2{before}"));
                 }
             }
         }
@@ -1080,7 +1156,7 @@ mod tests {
         editor.section("b").remove(); // the following section is empty
         assert_eq!(editor.finish(), "[a]\r");
         let _ = editor.section("next");
-        assert_eq!(editor.finish(), "[a]\r\r\n[next]\n");
+        assert_eq!(editor.finish(), "[a]\r\r[next]\r");
 
         let editor = Editor::new("[a]\n[b]\nx=1\n");
         editor.section("a").remove_lines(0..usize::MAX);
@@ -1194,11 +1270,11 @@ mod tests {
                 for (index, expected) in [
                     (
                         2,
-                        format!("[s]{ending}{line}{ending}; note\nb=2{ending}c=3{ending}"),
+                        format!("[s]{ending}{line}{ending}; note{ending}b=2{ending}c=3{ending}"),
                     ),
                     (
                         3,
-                        format!("[s]{ending}{line}{ending}b=2{ending}; note\nc=3{ending}"),
+                        format!("[s]{ending}{line}{ending}b=2{ending}; note{ending}c=3{ending}"),
                     ),
                 ] {
                     let editor = Editor::new(&source);
@@ -1209,10 +1285,16 @@ mod tests {
 
                 let editor = Editor::new(&format!("[s]{ending}{line}"));
                 editor.section("s").append_entry("n", "1");
-                assert_eq!(editor.finish(), format!("[s]{ending}{line}\nn = 1\n"));
+                assert_eq!(
+                    editor.finish(),
+                    format!("[s]{ending}{line}{ending}n = 1{ending}")
+                );
                 editor.section("s").append_raw_lines(&["; note"]);
                 editor.section("s").remove_lines(2..3);
-                assert_eq!(editor.finish(), format!("[s]{ending}{line}\n; note\n"));
+                assert_eq!(
+                    editor.finish(),
+                    format!("[s]{ending}{line}{ending}; note{ending}")
+                );
                 assert_reopens_identically(&editor);
             }
         }
@@ -1232,12 +1314,13 @@ mod tests {
         }
     }
 
-    /// A raw line with the terminator the raw-line APIs append.
-    fn terminated(raw: &str) -> String {
+    /// A raw line with the terminator the raw-line APIs append in a document
+    /// whose first line ends with `ending`.
+    fn terminated(raw: &str, ending: &str) -> String {
         if raw.ends_with(['\n', '\r']) {
             raw.to_owned()
         } else {
-            format!("{raw}\n")
+            format!("{raw}{ending}")
         }
     }
 
@@ -1256,11 +1339,11 @@ mod tests {
                         _ => section.insert_raw_lines_at(usize::MAX, &[raw]),
                     }
                     section.append_entry("n", "1");
-                    let mut line = terminated(raw);
+                    let mut line = terminated(raw, before);
                     if before == "\r" && line.starts_with('\n') {
                         line.insert(0, '\r');
                     }
-                    assert_eq!(editor.finish(), format!("{source}{line}n = 1\n"));
+                    assert_eq!(editor.finish(), format!("{source}{line}n = 1{before}"));
                     assert_eq!(snapshot.syntax().text().to_string(), source);
 
                     // The inserted line must have the same index whether or
@@ -1269,7 +1352,7 @@ mod tests {
                     editor.section("s").remove_lines(2..3);
                     reopened.section("s").remove_lines(2..3);
                     assert_eq!(editor.finish(), reopened.finish());
-                    assert_eq!(editor.finish(), format!("{source}n = 1\n"));
+                    assert_eq!(editor.finish(), format!("{source}n = 1{before}"));
                 }
             }
         }
@@ -1290,7 +1373,7 @@ mod tests {
                         0 => section.append_raw_lines(&[raw]),
                         _ => section.insert_raw_lines_at(2, &[raw]),
                     }
-                    let line = terminated(raw);
+                    let line = terminated(raw, "\n");
                     let blank = if line.ends_with('\r') && blank.starts_with('\n') {
                         format!("\r{blank}")
                     } else {
@@ -1374,16 +1457,38 @@ mod tests {
     }
 
     #[test]
+    fn lines_inserted_together_in_a_cr_document_stay_separate() {
+        // Unterminated raw lines receive CR here, so a following raw LF must
+        // not join it, whichever line in the run it follows.
+        for (raw, inserted) in [
+            (vec!["x", "\n"], "x\r\r\n"),
+            (vec!["", "\n", "y"], "\r\r\ny\r"),
+            (vec!["x", "", "\n"], "x\r\r\r\n"),
+        ] {
+            for line in 2..2 + raw.len() {
+                let live = Editor::new("[s]\rk=v\r");
+                live.section("s").append_raw_lines(&raw);
+                live.section("s").append_entry("n", "1");
+                assert_eq!(live.finish(), format!("[s]\rk=v\r{inserted}n = 1\r"));
+                let reopened = Editor::new(&live.finish());
+                live.section("s").remove_lines(line..line + 1);
+                reopened.section("s").remove_lines(line..line + 1);
+                assert_eq!(live.finish(), reopened.finish(), "{raw:?} line {line}");
+            }
+        }
+    }
+
+    #[test]
     fn line_boundaries_are_repaired_across_sections() {
         // Lines inserted before a header follow the previous section's line.
-        let editor = Editor::new("[a]\rk=v\r[b]\nx=1\n");
+        let editor = Editor::new("[a]\nk=v\r[b]\nx=1\n");
         editor.section("b").insert_raw_lines_at(0, &[""]);
-        assert_eq!(editor.finish(), "[a]\rk=v\r\r\n[b]\nx=1\n");
+        assert_eq!(editor.finish(), "[a]\nk=v\r\r\n[b]\nx=1\n");
         let reopened = Editor::new(&editor.finish());
         editor.section("b").remove_lines(0..1);
         reopened.section("a").remove_lines(2..3);
         assert_eq!(editor.finish(), reopened.finish());
-        assert_eq!(editor.finish(), "[a]\rk=v\r[b]\nx=1\n");
+        assert_eq!(editor.finish(), "[a]\nk=v\r[b]\nx=1\n");
 
         // Removing a header exposes the section's first line to the previous
         // section's terminator.
@@ -1416,7 +1521,183 @@ mod tests {
         detached.insert_raw_lines_at(0, &[""]);
         detached.append_raw_lines(&["r\r"]);
         assert_eq!(editor.finish(), "");
-        assert_eq!(detached.node.text().to_string(), "\n[a]\rx=1\nr\r");
+        assert_eq!(detached.node.text().to_string(), "\r[a]\rx=1\nr\r");
+    }
+
+    fn assert_reopens_identically_with(editor: &Editor, options: &ParseOptions) {
+        let reopened = Editor::with_parse_options(&editor.finish(), options);
+        assert_eq!(editor.root.green(), reopened.root.green());
+    }
+
+    #[test]
+    fn inserted_lines_use_the_documents_first_line_ending() {
+        let options = ParseOptions::default();
+        // (first line ending, later line endings, expected ending)
+        let endings = [
+            ("\n", "\n", "\n"),
+            ("\r\n", "\r\n", "\r\n"),
+            ("\r", "\r", "\r"),
+            // Mixed documents follow their first line.
+            ("\r\n", "\n", "\r\n"),
+            ("\r", "\r\n", "\r"),
+            ("\n", "\r\n", "\n"),
+        ];
+        for (first, rest, e) in endings {
+            for terminated in [true, false] {
+                let last = if terminated { rest } else { "" };
+                let source = format!("[s]{first}a=1{rest}k=v{last}");
+                let body = format!("[s]{first}a=1{rest}");
+                // An unterminated final line is completed with the same ending.
+                let tail = format!("{body}k=v{}", if terminated { rest } else { e });
+                for operation in 0..8 {
+                    let editor = Editor::new(&source);
+                    let snapshot = editor.file();
+                    let expected = match operation {
+                        0 => {
+                            editor.section("s").set("n", "1");
+                            format!("{tail}n = 1{e}")
+                        }
+                        1 => {
+                            editor.section("s").append_entry("n", "1");
+                            format!("{tail}n = 1{e}")
+                        }
+                        2 => {
+                            editor.section("s").insert_entry_at_line(0, "n", "1");
+                            format!("[s]{first}n = 1{e}a=1{rest}k=v{last}")
+                        }
+                        3 => {
+                            editor.section("s").append_raw_lines(&["; raw", "# x"]);
+                            format!("{tail}; raw{e}# x{e}")
+                        }
+                        4 => {
+                            editor.section("s").insert_raw_lines_at(2, &["; raw"]);
+                            format!("{body}; raw{e}k=v{last}")
+                        }
+                        5 => {
+                            let _ = editor.section("t");
+                            format!("{tail}{e}[t]{e}")
+                        }
+                        6 => {
+                            editor.section("t").set("n", "1");
+                            format!("{tail}{e}[t]{e}n = 1{e}")
+                        }
+                        _ => {
+                            editor.section("s").remove_lines(1..2);
+                            editor.section("s").insert_entry_at_line(1, "n", "1");
+                            let tail = if terminated { rest } else { e };
+                            format!("[s]{first}k=v{tail}n = 1{e}")
+                        }
+                    };
+                    assert_eq!(editor.finish(), expected, "{source:?} #{operation}");
+                    assert_reopens_identically_with(&editor, &options);
+                    assert_eq!(snapshot.syntax().text().to_string(), source);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn documents_without_a_line_ending_receive_lf_lines() {
+        let options = ParseOptions::default();
+        for (source, expected) in [
+            ("", "[t]\nk = v\n"),
+            ("\u{FEFF}", "\u{FEFF}[t]\nk = v\n"),
+            ("[s]", "[s]\n\n[t]\nk = v\n"),
+            ("k=v", "k=v\n\n[t]\nk = v\n"),
+        ] {
+            let editor = Editor::new(source);
+            editor.section("t").set("k", "v");
+            assert_eq!(editor.finish(), expected);
+            assert_reopens_identically_with(&editor, &options);
+        }
+    }
+
+    #[test]
+    fn a_continued_values_line_break_is_the_documents_first_line_ending() {
+        let options = ParseOptions::default();
+        for (source, expected) in [
+            // The first physical line break is inside the continued value.
+            ("[s]k=a \\\rb\nz=1\n", "\r"),
+            ("[s]k=a \\\r\nb\nz=1\n", "\r\n"),
+            ("[s]k=a \\\nb\r\nz=1\r\n", "\n"),
+        ] {
+            let source = source.replacen("[s]", "", 1);
+            let editor = Editor::new(&source);
+            let _ = editor.section("t");
+            assert_eq!(editor.finish(), format!("{source}{expected}[t]{expected}"));
+            assert_reopens_identically_with(&editor, &options);
+        }
+    }
+
+    #[test]
+    fn the_line_ending_is_read_as_the_lexer_reads_it() {
+        // Opaque raw text can start with LF right after a CR line: the text
+        // then begins with CRLF, so a reopened copy terminates lines alike.
+        let editor = Editor::new("[s]\r");
+        editor.section("s").append_raw_lines(&["\n; raw\n"]);
+        let reopened = Editor::new(&editor.finish());
+        for editor in [&editor, &reopened] {
+            editor.section("s").append_entry("n", "1");
+        }
+        assert_eq!(editor.finish(), "[s]\r\n; raw\nn = 1\r\n");
+        assert_eq!(editor.finish(), reopened.finish());
+
+        // Empty raw content between a CR and the next line break is skipped.
+        // (Raw lines stay opaque, so this one is content rather than blank.)
+        let editor = Editor::new("[s]\r");
+        editor.section("s").append_raw_lines(&[""]);
+        editor.section("s").append_entry("n", "1");
+        assert_eq!(editor.finish(), "[s]\r\rn = 1\r");
+    }
+
+    #[test]
+    fn the_line_ending_follows_the_current_first_line() {
+        let options = ParseOptions::default();
+        // Removing the CRLF lines leaves an LF document. The live editor and a
+        // reopened copy must keep terminating new lines identically.
+        let editor = Editor::new("[a]\r\nx=1\r\n[b]\nk=v\n");
+        editor.section("a").remove();
+        let reopened = Editor::new(&editor.finish());
+        for editor in [&editor, &reopened] {
+            editor.section("b").append_entry("n", "1");
+            let _ = editor.section("c");
+        }
+        assert_eq!(editor.finish(), "[b]\nk=v\nn = 1\n\n[c]\n");
+        assert_eq!(editor.finish(), reopened.finish());
+        assert_reopens_identically_with(&editor, &options);
+
+        // A detached section is terminated like its own text.
+        let editor = Editor::new("[a]\nx=1\n[b]\r\ny=2");
+        let detached = editor.section("b");
+        editor.section("b").remove();
+        detached.append_entry("n", "1");
+        assert_eq!(detached.node.text().to_string(), "[b]\r\ny=2\r\nn = 1\r\n");
+        assert_eq!(editor.finish(), "[a]\nx=1\n");
+    }
+
+    #[test]
+    fn a_moved_inline_comment_uses_the_documents_line_ending() {
+        let options = ParseOptions {
+            inline_comments: true,
+            ..Default::default()
+        };
+        for ending in ["\n", "\r\n", "\r"] {
+            for operation in 0..2 {
+                let source = format!("[s]{ending}k = v ; note");
+                let editor = Editor::with_parse_options(&source, &options);
+                if operation == 0 {
+                    editor.section("s").set("k", "");
+                } else {
+                    editor.section("s").entries_mut()[0].set_value("");
+                }
+                assert_eq!(
+                    editor.finish(),
+                    format!("[s]{ending} ; note{ending}k = "),
+                    "{source:?}"
+                );
+                assert_reopens_identically_with(&editor, &options);
+            }
+        }
     }
 
     #[test]

@@ -30,19 +30,28 @@ pub fn value_node(text: &str) -> GreenNode {
     builder.finish()
 }
 
-/// Keep a trailing CR in the content separate from the appended line ending.
+/// The terminator for a line whose content ends with `text`, in a document
+/// whose lines end with `ending`. A trailing CR in the content must stay
+/// separate from an LF terminator, so LF documents use CRLF there. CR and CRLF
+/// terminators already follow a CR as a separate line break.
 #[must_use]
-pub fn newline_after(text: &str) -> &'static str {
-    if text.ends_with('\r') { "\r\n" } else { "\n" }
+pub fn newline_after(text: &str, ending: &'static str) -> &'static str {
+    if ending == "\n" && text.ends_with('\r') {
+        "\r\n"
+    } else {
+        ending
+    }
 }
 
-/// Build a complete ENTRY node with configurable separator whitespace.
+/// Build a complete ENTRY node with configurable separator whitespace,
+/// terminated with the document's line `ending`.
 #[must_use]
 pub fn entry_node(
     key: &str,
     value: &str,
     before_separator: &str,
     after_separator: &str,
+    ending: &'static str,
 ) -> GreenNode {
     let mut builder = GreenNodeBuilder::new();
     builder.start_node(SyntaxKind::ENTRY.into());
@@ -65,16 +74,16 @@ pub fn entry_node(
     }
     builder.finish_node();
     // newline
-    builder.token(SyntaxKind::NEWLINE.into(), newline_after(value));
+    builder.token(SyntaxKind::NEWLINE.into(), newline_after(value, ending));
     builder.finish_node();
     builder.finish()
 }
 
-/// Build a complete SECTION node: `[name]\n` (empty, no entries).
+/// Build a complete SECTION node: `[name]` and the line `ending` (no entries).
 ///
 /// In the line-node model the `SECTION_HEADER` owns its terminating newline.
 #[must_use]
-pub fn empty_section_node(name: &str) -> GreenNode {
+pub fn empty_section_node(name: &str, ending: &str) -> GreenNode {
     let mut builder = GreenNodeBuilder::new();
     builder.start_node(SyntaxKind::SECTION.into());
     // header (owns its trailing newline)
@@ -82,18 +91,18 @@ pub fn empty_section_node(name: &str) -> GreenNode {
     builder.token(SyntaxKind::L_BRACK.into(), "[");
     builder.token(SyntaxKind::IDENT.into(), name);
     builder.token(SyntaxKind::R_BRACK.into(), "]");
-    builder.token(SyntaxKind::NEWLINE.into(), "\n");
+    builder.token(SyntaxKind::NEWLINE.into(), ending);
     builder.finish_node();
     builder.finish_node();
     builder.finish()
 }
 
-/// Build a `BLANK_LINE` node: a single newline.
+/// Build a `BLANK_LINE` node: a single line `ending`.
 #[must_use]
-pub fn blank_line_node() -> GreenNode {
+pub fn blank_line_node(ending: &str) -> GreenNode {
     let mut builder = GreenNodeBuilder::new();
     builder.start_node(SyntaxKind::BLANK_LINE.into());
-    builder.token(SyntaxKind::NEWLINE.into(), "\n");
+    builder.token(SyntaxKind::NEWLINE.into(), ending);
     builder.finish_node();
     builder.finish()
 }
@@ -113,20 +122,35 @@ mod tests {
 
     #[test]
     fn entry_node_renders_correctly() {
-        let node = entry_node("host", "0.0.0.0", " ", " ");
+        let node = entry_node("host", "0.0.0.0", " ", " ", "\n");
         assert_eq!(text_of(&node), "host = 0.0.0.0\n");
+        let node = entry_node("host", "0.0.0.0", " ", " ", "\r\n");
+        assert_eq!(text_of(&node), "host = 0.0.0.0\r\n");
     }
 
     #[test]
     fn entry_node_empty_value() {
-        let node = entry_node("key", "", " ", " ");
+        let node = entry_node("key", "", " ", " ", "\n");
         assert_eq!(text_of(&node), "key = \n");
     }
 
     #[test]
     fn empty_section_renders() {
-        let node = empty_section_node("server");
+        let node = empty_section_node("server", "\n");
         assert_eq!(text_of(&node), "[server]\n");
+        let node = empty_section_node("server", "\r");
+        assert_eq!(text_of(&node), "[server]\r");
+        assert_eq!(text_of(&blank_line_node("\r\n")), "\r\n");
+    }
+
+    #[test]
+    fn a_trailing_carriage_return_never_joins_an_lf_terminator() {
+        assert_eq!(newline_after("value", "\n"), "\n");
+        assert_eq!(newline_after("head \\\r", "\n"), "\r\n");
+        assert_eq!(newline_after("value", "\r"), "\r");
+        assert_eq!(newline_after("head \\\r", "\r"), "\r");
+        assert_eq!(newline_after("value", "\r\n"), "\r\n");
+        assert_eq!(newline_after("head \\\r", "\r\n"), "\r\n");
     }
 
     #[test]

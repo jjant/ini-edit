@@ -122,7 +122,7 @@ fn configurable_separator_spacing_only_normalizes_touched_entries() {
 
     assert_eq!(
         ed.finish(),
-        "[service]\r\nendpoint=unix:///tmp/service.sock   ; retained\r\nflag=enabled\r\nuntouched : value\r\ntimeout=30\n"
+        "[service]\r\nendpoint=unix:///tmp/service.sock   ; retained\r\nflag=enabled\r\nuntouched : value\r\ntimeout=30\r\n"
     );
 }
 
