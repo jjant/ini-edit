@@ -3,6 +3,9 @@
 use ini_edit::ast::{AstNode, File};
 use ini_edit::{ParseError, ParseOptions, SyntaxKind, lexer, parse_with};
 
+#[path = "support/line_nodes.rs"]
+mod line_nodes;
+
 fn lexer_contract(source: &str) {
     for inline_comments in [false, true] {
         let mut offset = 0;
@@ -114,6 +117,7 @@ fn parser_contract(source: &str) {
         };
         let parsed = parse_with(source, &options);
         assert_eq!(parsed.syntax().text().to_string(), source);
+        line_nodes::check(source, &parsed.syntax());
         let mut previous = 0;
         for error in parsed.errors() {
             assert!(
