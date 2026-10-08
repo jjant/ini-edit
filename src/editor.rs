@@ -350,10 +350,14 @@ impl SectionEditor<'_> {
 
     /// Insert a new entry after the `line`-th logical content line within this
     /// section (1-based). Logical content lines are entries and comments; the
-    /// `[section]` header is not counted, so `line == 0` inserts before the
-    /// first content line (right after the header). A `line` value at or beyond
-    /// the number of content lines appends after the last one, exactly like
-    /// [`append_entry`](Self::append_entry).
+    /// `[section]` header, blank lines, and malformed lines are not counted.
+    ///
+    /// - `line == 0` inserts right after the header, before the first content
+    ///   line. This holds even when the section has no content lines.
+    /// - Any other `line` at or beyond the number of content lines appends
+    ///   exactly like [`append_entry`](Self::append_entry): after every line
+    ///   that is not blank, including malformed lines that follow the last
+    ///   entry or comment, and before any trailing blank lines.
     ///
     /// In contrast to [`insert_raw_lines_at`](Self::insert_raw_lines_at) — which
     /// takes a raw child index (counting the header and blank lines) and inserts
@@ -558,8 +562,13 @@ impl SectionEditor<'_> {
             .expect("wrapper contains one newline token")
     }
 
-    /// Insertion point at the end of the section's logical content: just after
-    /// the last entry/comment/header line, but before any trailing blank lines.
+    /// Insertion point at the end of the section's content: just after the
+    /// last line that is not blank, but before any trailing blank lines.
+    ///
+    /// "Not blank" includes the header, entries, comments, and malformed
+    /// (error) lines. Trailing blank lines usually separate this section from
+    /// the next one, so new content goes above them.
+    ///
     /// Returns `(child_index, needs_newline)`.
     fn content_end(&self) -> (usize, bool) {
         let children: Vec<SyntaxNode> = self.node.children().collect();
@@ -572,9 +581,15 @@ impl SectionEditor<'_> {
     }
 
     /// Insertion point just after the `n`-th logical content line (1-based),
-    /// where content lines are entries and comments (header excluded). `n == 0`
-    /// (or an empty body) inserts right after the header; `n` is clamped to the
-    /// number of content lines. Returns `(child_index, needs_newline)`.
+    /// where content lines are entries and comments (the header, blank lines,
+    /// and malformed lines are not counted).
+    ///
+    /// - `n == 0` inserts right after the header, even with no content lines.
+    /// - Any other `n` at or beyond the number of content lines returns the
+    ///   same point as [`content_end`](Self::content_end), so the entry lands
+    ///   exactly where [`append_entry`](Self::append_entry) would put it.
+    ///
+    /// Returns `(child_index, needs_newline)`.
     fn after_content_line(&self, n: usize) -> (usize, bool) {
         let children: Vec<SyntaxNode> = self.node.children().collect();
         let header = children
@@ -587,10 +602,24 @@ impl SectionEditor<'_> {
             .map(|(i, _)| i)
             .collect();
 
-        if n == 0 || content.is_empty() {
+        if n == 0 {
             return header.map_or((0, false), |k| Self::after_line(&children, k));
         }
-        let n = n.min(content.len());
+        // Past the last content line, `insert_entry_at_line` promises to act
+        // exactly like `append_entry`. Inserting right after the last entry
+        // or comment would break that promise whenever the section continues
+        // with lines that are not counted as content, such as malformed
+        // `=value` lines. `append_entry` keeps those lines above new content
+        // (only trailing blank lines stay below). For `[s]\na=1\n=bad\n`:
+        //
+        //     append_entry                  -> a=1, =bad, n = 1
+        //     stop after the last entry     -> a=1, n = 1, =bad   (wrong)
+        //
+        // Reusing `content_end` keeps both methods in agreement by
+        // construction, including for a section with no content lines.
+        if n >= content.len() {
+            return self.content_end();
+        }
         Self::after_line(&children, content[n - 1])
     }
 
@@ -2532,6 +2561,86 @@ mod tests {
         let ed = Editor::new("[s]\n");
         ed.section("s").insert_entry_at_line(1, "k", "v");
         assert_eq!(ed.finish(), "[s]\nk = v\n");
+    }
+
+    #[test]
+    fn insert_entry_at_line_past_the_end_matches_append_entry() {
+        // `insert_entry_at_line` documents that any `line` at or beyond the
+        // number of content lines behaves exactly like `append_entry`. Only
+        // entries and comments count as content lines, so every body below
+        // ends with lines that do not count: malformed lines, sometimes after
+        // a blank line. Each body is also tried with a following blank line
+        // and section, which both methods must keep below the new entry.
+        let bodies = [
+            "a=1\n=bad\n",
+            "a=1\n  =bad\n",
+            "a=1\n:\n",
+            "; note\n=bad\n",
+            "a=1\n\n=bad\n",
+            "a=1\n=bad\n=worse\n",
+            "=bad\n",
+            "\n=bad\n",
+        ];
+        for body in bodies {
+            for tail in ["", "\n[next]\nz=9\n"] {
+                for ending in ["\n", "\r\n", "\r"] {
+                    let source = format!("[s]\n{body}{tail}").replace('\n', ending);
+                    let appended = Editor::new(&source);
+                    appended.section("s").append_entry("n", "1");
+                    // Count content lines independently of the editor: every
+                    // line except blank lines and malformed lines, which are
+                    // the ones starting with `=` or `:` here.
+                    let content_lines = body
+                        .lines()
+                        .filter(|line| {
+                            !line.trim_start().starts_with(['=', ':']) && !line.is_empty()
+                        })
+                        .count();
+                    // `0` is documented as "right after the header", even in a
+                    // section without content lines, so start at `1`.
+                    let first = content_lines.max(1);
+                    for line in [first, first + 1, usize::MAX] {
+                        let inserted = Editor::new(&source);
+                        inserted.section("s").insert_entry_at_line(line, "n", "1");
+                        assert_eq!(
+                            inserted.finish(),
+                            appended.finish(),
+                            "{source:?}, line {line}"
+                        );
+                        assert_eq!(
+                            inserted.root.green(),
+                            Editor::new(&inserted.finish()).root.green()
+                        );
+                    }
+                }
+            }
+        }
+
+        // The same holds when the last malformed line has no terminator.
+        let appended = Editor::new("[s]\na=1\n=bad");
+        appended.section("s").append_entry("n", "1");
+        let inserted = Editor::new("[s]\na=1\n=bad");
+        inserted
+            .section("s")
+            .insert_entry_at_line(usize::MAX, "n", "1");
+        assert_eq!(inserted.finish(), "[s]\na=1\n=bad\nn = 1\n");
+        assert_eq!(inserted.finish(), appended.finish());
+
+        // Positions before the end still count only entries and comments:
+        // `0` stays right after the header and `1` right after `a=1`, even
+        // though malformed lines follow. In a section whose only lines are
+        // malformed, `0` also stays right after the header.
+        let editor = Editor::new("[s]\n=bad\n");
+        editor.section("s").insert_entry_at_line(0, "x", "0");
+        assert_eq!(editor.finish(), "[s]\nx = 0\n=bad\n");
+
+        let editor = Editor::new("[s]\na=1\n=bad\nb=2\n=worse\n");
+        editor.section("s").insert_entry_at_line(0, "x", "0");
+        editor.section("s").insert_entry_at_line(2, "y", "1");
+        assert_eq!(
+            editor.finish(),
+            "[s]\nx = 0\na=1\ny = 1\n=bad\nb=2\n=worse\n"
+        );
     }
 
     // --- coverage for raw-line and edge paths ---
