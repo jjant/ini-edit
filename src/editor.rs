@@ -610,10 +610,14 @@ impl SectionEditor<'_> {
         // or comment would break that promise whenever the section continues
         // with lines that are not counted as content, such as malformed
         // `=value` lines. `append_entry` keeps those lines above new content
-        // (only trailing blank lines stay below). For `[s]\na=1\n=bad\n`:
+        // (only trailing blank lines stay below). For example, given
         //
-        //     append_entry                  -> a=1, =bad, n = 1
-        //     stop after the last entry     -> a=1, n = 1, =bad   (wrong)
+        //     [s]
+        //     a=1
+        //     =bad
+        //
+        // `append_entry("n", "1")` writes `n = 1` below `=bad`. Stopping after
+        // the last entry would write it between `a=1` and `=bad` instead.
         //
         // Reusing `content_end` keeps both methods in agreement by
         // construction, including for a section with no content lines.
