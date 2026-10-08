@@ -101,7 +101,7 @@ INI has no formal spec. `ini-edit` makes these choices:
 | Separators | `=` and `:` |
 | Spaces in section names | Allowed: `[my section]` |
 | Inline comments | Opt-in via `parse_with(.., &ParseOptions { inline_comments: true, ..Default::default() })`; a `;`/`#` preceded by whitespace starts a trailing comment (`key = value ; comment`, or `flag ; comment` for a bare key). Off by default, so the marker stays part of the value. |
-| Backslash continuation | Supported: `key = long \`<br>`value` |
+| Backslash continuation | Supported: `key = long \`<br>`value`. A line ending in `\` always continues, so a value written by the editor that ends in `\` (e.g. `C:\dir\`) absorbs the next line when the file is reopened; see the `Editor` docs. |
 | Empty values | `key =` is valid, value is `""` |
 | Preamble entries | Keys before first `[section]` accessible via `File::preamble_entries()` |
 | Line endings | `\n`, `\r\n`, `\r` all preserved; lines added by the editor use the document's first line ending (`\n` if it has none) |
