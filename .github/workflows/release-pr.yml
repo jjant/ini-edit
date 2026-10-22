@@ -3,17 +3,36 @@ name: Release PR
 on:
   workflow_dispatch:
 
+# release-plz pushes the release branch and opens the pull request through the
+# GitHub API with the RELEASE_PLZ_TOKEN personal access token (so CI runs on
+# that pull request), so the automatic token only needs to read the repository.
+permissions:
+  contents: read
+
+# A second dispatch waits for the first instead of racing it on the same branch.
+concurrency:
+  group: release-pr
+  cancel-in-progress: false
+
 jobs:
   release-pr:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: MarcoIeni/release-plz-action@v0.5
+          # release-plz does not push with git, so the checkout token need not
+          # stay in .git/config.
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+      # v0.5.140 runs release-plz 0.3.170, which opened the 0.4.0 release PR.
+      # Preparing a crates.io release needs no registry token, so none is
+      # passed to this job.
+      - uses: release-plz/action@18641b6c63063cc5ff8786ebf69cd57e8541bae1 # v0.5.140
         with:
           command: release-pr
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

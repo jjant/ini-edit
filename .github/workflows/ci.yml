@@ -8,81 +8,118 @@ on:
     - cron: "17 3 * * 0"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+# A new push to a pull request cancels that pull request's superseded run.
+# Every other run (main, schedule, dispatch) gets a group of its own, so it is
+# never cancelled or queued behind another run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: -Dwarnings
+  RUSTFLAGS: --deny warnings
 
+# Every action is pinned to a full commit SHA; Dependabot proposes updates.
+# Runner images are pinned to what the -latest labels resolved to on
+# 2026-10-18 (ubuntu-24.04, macos-26, windows-2025).
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
           components: clippy, rustfmt
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
       - name: Format check
         run: cargo fmt --all --check
 
+      - name: Require an up-to-date fuzz lockfile
+        # fuzz/ is a separate workspace, so a release bumps ini-edit in
+        # Cargo.lock but not in fuzz/Cargo.lock. Refresh it with
+        # `cargo update --manifest-path fuzz/Cargo.toml --package ini-edit`.
+        run: cargo metadata --locked --format-version 1 --manifest-path fuzz/Cargo.toml > /dev/null
+
       - name: Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --locked --all-targets --all-features -- --deny warnings
 
       - name: Build all targets
-        run: cargo build --all-targets --all-features
+        run: cargo build --locked --all-targets --all-features
 
       - name: Test debug configuration
-        run: cargo test --all-targets --all-features
+        run: cargo test --locked --all-targets --all-features
 
       - name: Test release configuration
-        run: cargo test --release --all-targets --all-features
+        run: cargo test --locked --release --all-targets --all-features
 
       - name: Test documentation
-        run: cargo test --doc --all-features
+        run: cargo test --locked --doc --all-features
 
       - name: Build documentation
-        run: cargo doc --no-deps --all-features
+        run: cargo doc --locked --no-deps --all-features
         env:
-          RUSTDOCFLAGS: -Dwarnings
+          RUSTDOCFLAGS: --deny warnings
 
   msrv:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.85.0
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo build --all-targets --all-features
-      - run: cargo test --all-targets --all-features
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: 1.85.0
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: cargo build --locked --all-targets --all-features
+      - run: cargo test --locked --all-targets --all-features
 
   platforms:
     name: ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        os: [macos-26, windows-2025]
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo test --all-targets --all-features
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: cargo test --locked --all-targets --all-features
 
   extended-tests:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: Exhaustive inputs and large documents
-        run: cargo test --release --test exhaustive_parser --test stress -- --include-ignored
+        run: cargo test --locked --release --test exhaustive_parser --test stress -- --include-ignored
       - name: Build isolated scaling probe
-        run: cargo build --release --example scaling_probe
+        run: cargo build --locked --release --example scaling_probe
       - name: Check CPU and peak-memory growth
         run: python3 .github/scripts/check_scaling.py
       - name: Preserve scaling measurements
         if: always()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: input-scaling-${{ github.run_id }}-${{ github.run_attempt }}
           path: target/scaling-report.json
@@ -90,65 +127,81 @@ jobs:
           retention-days: 14
 
   miri-strict:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@master
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: nightly-2026-09-17
           components: miri, rust-src
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: Lexer and diagnostics with borrow checking enabled
         run: |
-          cargo miri test --lib lexer::tests::
-          cargo miri test --test exhaustive_parser lexer_and_diagnostic_contracts -- --exact
+          cargo miri test --locked --lib lexer::tests::
+          cargo miri test --locked --test exhaustive_parser lexer_and_diagnostic_contracts -- --exact
 
   miri:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    # The longest run in the last 60 took 40 minutes, and the time is rising.
+    timeout-minutes: 60
     env:
       # rowan 0.16.1 has an open provenance-model failure upstream:
       # https://github.com/rust-analyzer/rowan/issues/192
       # Keep all other Miri checks enabled until rowan ships a fix.
       MIRIFLAGS: -Zmiri-disable-stacked-borrows
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@master
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: nightly-2026-09-17
           components: miri, rust-src
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo miri test --lib
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: cargo miri test --locked --lib
 
   dependencies:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: taiki-e/install-action@v2.87.16
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          tool: cargo-audit@0.22.2,cargo-deny@0.20.2
-      - name: Security advisories, unsoundness, and yanked crates
-        run: cargo audit --deny warnings
-      - name: Licenses, duplicate dependencies, and sources
-        run: cargo deny check advisories bans licenses sources
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+      - uses: taiki-e/install-action@9114bf4d891761788c546334fd37538eae1bf8b3 # v2.87.16
+        with:
+          tool: cargo-deny@0.20.2
+      # deny.toml makes yanked crates and unsound or unmaintained advisories
+      # errors, which covers everything `cargo audit --deny warnings` checked.
+      - name: Advisories, yanked crates, licenses, duplicate dependencies, and sources
+        run: cargo deny --locked check advisories bans licenses sources
 
   mutation:
-    runs-on: ubuntu-latest
-    # The existing suite takes about 18.5 minutes; leave room for new oracles.
-    timeout-minutes: 25
+    runs-on: ubuntu-24.04
+    # Over the last 60 runs the suite took 19.8 minutes at the median and
+    # 24.7 minutes at most, depending on runner load.
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: taiki-e/install-action@v2.87.16
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+      - uses: taiki-e/install-action@9114bf4d891761788c546334fd37538eae1bf8b3 # v2.87.16
         with:
           tool: cargo-mutants@27.1.0,cargo-nextest@0.9.145
       - name: Require no surviving mutation
         shell: bash
         run: |
-          mkdir -p target/mutation-ci
-          set +e
+          mkdir --parents target/mutation-ci
+          set +o errexit
           cargo mutants \
             --all-features \
             --caught \
@@ -156,16 +209,17 @@ jobs:
             --jobs 4 \
             --timeout 30 \
             --cap-lints true \
+            --cargo-arg=--locked \
             --output target/mutation-ci
           status=$?
-          set -e
+          set -o errexit
 
           report=target/mutation-ci/mutants.out/outcomes.json
           jq '{total_mutants, caught, timeout, unviable, missed}' "$report"
           {
             echo "### Mutation testing"
             echo
-            jq -r '
+            jq --raw-output '
               ["Outcome", "Count"],
               ["---", "---:"],
               ["Mutations tested", .total_mutants],
@@ -178,7 +232,7 @@ jobs:
             echo
             echo "Timeouts stop mutated test runs; they do not mean the unmodified tests hung."
           } >> "$GITHUB_STEP_SUMMARY"
-          test "$(jq -r '.missed' "$report")" -eq 0
+          test "$(jq --raw-output '.missed' "$report")" -eq 0
 
           # cargo-mutants exits 3 for both survivors and detected timeouts.
           # Survivors were rejected above; timeouts are mutations that make
@@ -188,29 +242,66 @@ jobs:
           fi
 
   fuzz:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    # Scheduled runs fuzz each of the five targets for 15 minutes; the longest
+    # observed run took 76 minutes including the builds.
+    timeout-minutes: 100
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@nightly
-      - uses: Swatinem/rust-cache@v2
-      - uses: taiki-e/install-action@v2.87.16
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          tool: cargo-fuzz
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: nightly-2026-09-17
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: taiki-e/install-action@9114bf4d891761788c546334fd37538eae1bf8b3 # v2.87.16
+        with:
+          tool: cargo-fuzz@0.13.2
+      - name: Fetch fuzz dependencies exactly as locked
+        # cargo-fuzz has no --locked flag. Once this succeeds the lockfile is
+        # consistent, so the fuzz builds below use it unchanged.
+        run: cargo fetch --locked --manifest-path fuzz/Cargo.toml
       - name: Restore learned fuzz corpus
-        uses: actions/cache/restore@v6.1.0
+        id: restore-corpus
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: fuzz/corpus
-          key: fuzz-corpus-v1-${{ runner.os }}-${{ hashFiles('fuzz/Cargo.lock') }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: |
-            fuzz-corpus-v1-${{ runner.os }}-${{ hashFiles('fuzz/Cargo.lock') }}-
+          # Corpus files are raw inputs that stay valid when dependencies
+          # change, so the key depends on no file: the save step below reuses
+          # this exact key, and the prefix restores the newest saved corpus.
+          # Change v1 only if the input encoding of a target changes.
+          key: fuzz-corpus-v1-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: fuzz-corpus-v1-${{ runner.os }}-
       - name: Add reproducible starting cases
         run: python3 .github/scripts/seed_fuzz_corpus.py
+      - name: Replay committed fuzz regressions
+        # Each file under tests/fuzz_regressions/<target>/ runs once, whole,
+        # and then also seeds that target's campaign below.
+        shell: bash
+        run: |
+          shopt -s nullglob
+          for target in round_trip editor editor_reparse editor_stateful generated_edits; do
+            inputs=()
+            for path in "tests/fuzz_regressions/$target"/*; do
+              if [ -f "$path" ]; then
+                inputs+=("$path")
+              fi
+            done
+            if [ "${#inputs[@]}" -eq 0 ]; then
+              continue
+            fi
+            mkdir --parents "fuzz/corpus/$target"
+            cp --target-directory="fuzz/corpus/$target" -- "${inputs[@]}"
+            cargo fuzz run \
+              --target x86_64-unknown-linux-gnu "$target" "${inputs[@]}" -- \
+              -runs=0 -timeout=10 -rss_limit_mb=1024
+          done
       - name: Fuzz parser and editor
         run: |
           seconds=10
-          if [ "${{ github.event_name }}" = "push" ]; then
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
             seconds=60
-          elif [ "${{ github.event_name }}" = "schedule" ]; then
+          elif [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
             seconds=900
           fi
           status=0
@@ -221,7 +312,7 @@ jobs:
             elif [ "$target" = generated_edits ]; then
               max_len=4096
             fi
-            cargo +nightly fuzz run \
+            cargo fuzz run \
               --target x86_64-unknown-linux-gnu "$target" -- \
               -max_len="$max_len" -max_total_time="$seconds" \
               -timeout=10 -rss_limit_mb=1024 || status=1
@@ -229,15 +320,19 @@ jobs:
           exit "$status"
       - name: Preserve crashes and timeout reproducers
         if: always()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: fuzz-failures-${{ github.run_id }}-${{ github.run_attempt }}
           path: fuzz/artifacts
           if-no-files-found: ignore
-          retention-days: 14
+          retention-days: 90
       - name: Save learned corpus from main
-        if: always() && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-        uses: actions/cache/save@v6.1.0
+        if: >-
+          always()
+          && github.ref == 'refs/heads/main'
+          && github.event_name != 'pull_request'
+          && steps.restore-corpus.outputs.cache-primary-key != ''
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: fuzz/corpus
-          key: fuzz-corpus-v1-${{ runner.os }}-${{ hashFiles('fuzz/Cargo.lock') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: ${{ steps.restore-corpus.outputs.cache-primary-key }}

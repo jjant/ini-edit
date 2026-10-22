@@ -3,6 +3,11 @@ all-features = true
 
 [advisories]
 ignore = []
+# Vulnerability, notice and unmaintained advisories are errors by default.
+# These two settings make this check cover everything that
+# `cargo audit --deny warnings` reported, so CI runs only cargo-deny.
+yanked = "deny"
+unsound = "all"
 
 [licenses]
 allow = [
@@ -12,7 +17,10 @@ allow = [
 confidence-threshold = 0.8
 
 [bans]
-multiple-versions = "warn"
+# Duplicate versions among normal dependencies fail. Dev-dependencies are
+# exempt (multiple-versions-include-dev defaults to false); they currently
+# resolve two versions each of getrandom and wit-bindgen.
+multiple-versions = "deny"
 wildcards = "deny"
 highlight = "all"
 

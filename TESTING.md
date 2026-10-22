@@ -134,8 +134,10 @@ CI restores the learned corpus, then adds deterministic boundary cases,
 real-world fixtures, and generated model seeds without deleting existing
 inputs. Successful and failing campaigns on `main` save their corpus for
 future runs; pull requests consume that cache but do not update the main
-corpus. GitHub may evict caches, so the reproducible seeds remain useful.
-Crash and timeout inputs are uploaded separately and retained for 14 days.
+corpus. The cache key depends on no file, so dependency and lockfile updates
+keep the learned corpus. GitHub may evict caches, so the reproducible seeds
+remain useful.
+Crash and timeout inputs are uploaded separately and retained for 90 days.
 
 Each fuzz input has a 10-second timeout and each target has a 1 GiB RSS limit.
 Input lengths are bounded independently: 16,384 bytes for the original three
@@ -144,10 +146,10 @@ generated-document model. Local reproduction:
 
 ```sh
 python3 .github/scripts/seed_fuzz_corpus.py
-cargo +nightly fuzz run generated_edits -- \
+cargo +nightly-2026-09-17 fuzz run generated_edits -- \
   -max_len=4096 -max_total_time=120 -timeout=10 -rss_limit_mb=1024
 # Replay a downloaded crash/timeout artifact:
-cargo +nightly fuzz run generated_edits path/to/reproducer
+cargo +nightly-2026-09-17 fuzz run generated_edits path/to/reproducer
 ```
 
 ## As-delivered and dynamic checks
@@ -177,8 +179,8 @@ cargo +nightly-2026-09-17 miri test --test exhaustive_parser \
   lexer_and_diagnostic_contracts -- --exact
 ```
 
-Clippy, rustdoc, `cargo audit`, and
-`cargo deny` cover static analysis, advisories, yanked packages, licenses,
+Clippy, rustdoc, and `cargo deny` cover static analysis, advisories
+(including unsound and unmaintained crates), yanked packages, licenses,
 duplicate dependencies, and unexpected dependency sources.
 
 The full matrix also runs every Sunday. Scheduled fuzzing gives each target 15
