@@ -9,8 +9,8 @@
 //! ```
 //! use ini_edit::editor::Editor;
 //!
-//! let src = "[server]\nhost = 0.0.0.0\nport = 8080\n";
-//! let mut editor = Editor::new(src);
+//! let source = "[server]\nhost = 0.0.0.0\nport = 8080\n";
+//! let editor = Editor::new(source);
 //!
 //! editor.section("server").set("port", "9090");
 //! editor.section("server").append_entry("timeout", "30");
@@ -21,10 +21,23 @@
 //! assert!(output.contains("host = 0.0.0.0")); // untouched
 //! ```
 
+use rowan::NodeOrToken;
+
 use crate::ast::{AstNode, Entry, File, Section};
-use crate::green_builders;
-use crate::syntax_kind::{SyntaxKind, SyntaxNode};
+use crate::green_builders::{self, SeparatorGap};
+use crate::syntax_kind::{SyntaxElement, SyntaxKind, SyntaxNode, SyntaxToken};
 use crate::{ParseOptions, parse_with};
+
+/// How many nodes deep a tree can be, counting its root: `ROOT > SECTION >
+/// line > KEY/VALUE`, where a line is an entry, a header, or a comment, blank,
+/// or malformed line. Neither the parser nor the editor nests nodes deeper.
+///
+/// Depths count from the root of a node's own tree, whatever node a walk
+/// starts from. [`depth_of`] asserts the bound for the node where a token
+/// search or a climb to the root starts, and the searches assert it again for
+/// each node they enter. So none of these walks goes deeper than this, or
+/// climbs more levels than this.
+const MAX_TREE_DEPTH: usize = 4;
 
 /// Formatting options applied when an [`Editor`] creates an entry or assigns
 /// its value.
@@ -66,6 +79,23 @@ impl SeparatorSpacing {
             after: after.into(),
         }
     }
+
+    /// The whitespace the editor writes around a separator it creates or
+    /// rewrites. `Preserve` rewrites no existing separator, so its gap is used
+    /// only for new entries and for bare keys that gain a separator.
+    fn gap(&self) -> SeparatorGap<'_> {
+        match self {
+            Self::Preserve => SeparatorGap {
+                before: " ",
+                after: " ",
+            },
+            Self::Compact => SeparatorGap {
+                before: "",
+                after: "",
+            },
+            Self::Exact { before, after } => SeparatorGap { before, after },
+        }
+    }
 }
 
 /// A format-preserving editor for INI files.
@@ -80,10 +110,20 @@ impl SeparatorSpacing {
 /// ```
 /// use ini_edit::editor::Editor;
 ///
-/// let ed = Editor::new("[server]\r\nhost = 0.0.0.0\r\n");
-/// ed.section("server").append_entry("port", "8080");
-/// assert_eq!(ed.finish(), "[server]\r\nhost = 0.0.0.0\r\nport = 8080\r\n");
+/// let editor = Editor::new("[server]\r\nhost = 0.0.0.0\r\n");
+/// editor.section("server").append_entry("port", "8080");
+/// assert_eq!(editor.finish(), "[server]\r\nhost = 0.0.0.0\r\nport = 8080\r\n");
 /// ```
+///
+/// # Cost of an edit
+///
+/// An edit rebuilds the node of the section it changes and the document's
+/// root node, copying their lists of children, and finding a key or a section
+/// by name scans those lists. So an edit takes time proportional to the number
+/// of lines in its section plus the number of sections and of lines before the
+/// first section, and `n` edits to one section take time proportional to `n²`.
+/// To create a large document, build its text and open it with
+/// [`Editor::new`] instead of appending one entry at a time.
 ///
 /// # Values that end in a backslash
 ///
@@ -157,8 +197,8 @@ pub struct Editor {
 impl Editor {
     /// Create an editor from source text.
     #[must_use]
-    pub fn new(src: &str) -> Self {
-        Self::with_options(src, &ParseOptions::default(), &EditOptions::default())
+    pub fn new(source: &str) -> Self {
+        Self::with_options(source, &ParseOptions::default(), &EditOptions::default())
     }
 
     /// Create an editor from source text using custom [`ParseOptions`].
@@ -168,8 +208,8 @@ impl Editor {
     /// same options the file was authored with ensures inline comments are
     /// preserved across edits rather than absorbed into values.
     #[must_use]
-    pub fn with_parse_options(src: &str, options: &ParseOptions) -> Self {
-        Self::with_options(src, options, &EditOptions::default())
+    pub fn with_parse_options(source: &str, options: &ParseOptions) -> Self {
+        Self::with_options(source, options, &EditOptions::default())
     }
 
     /// Create an editor from source text using custom [`EditOptions`].
@@ -178,8 +218,8 @@ impl Editor {
     /// reformatted only when their value is assigned; untouched entries retain
     /// their original bytes.
     #[must_use]
-    pub fn with_edit_options(src: &str, options: &EditOptions) -> Self {
-        Self::with_options(src, &ParseOptions::default(), options)
+    pub fn with_edit_options(source: &str, options: &EditOptions) -> Self {
+        Self::with_options(source, &ParseOptions::default(), options)
     }
 
     /// Create an editor using custom parsing and editing options.
@@ -188,12 +228,12 @@ impl Editor {
     /// and [`with_edit_options`](Self::with_edit_options).
     #[must_use]
     pub fn with_options(
-        src: &str,
+        source: &str,
         parse_options: &ParseOptions,
         edit_options: &EditOptions,
     ) -> Self {
-        let p = parse_with(src, parse_options);
-        let root = p.syntax().clone_for_update();
+        let parse = parse_with(source, parse_options);
+        let root = parse.syntax().clone_for_update();
         Self {
             root,
             options: edit_options.clone(),
@@ -214,8 +254,8 @@ impl Editor {
         // Create the section at the end of the file. It always starts on its
         // own line, separated from existing content by one blank line.
         let ending = document_line_ending(&self.root);
-        let new_section_green = green_builders::empty_section_node(name, ending);
-        let new_section = SyntaxNode::new_root(new_section_green).clone_for_update();
+        let new_section =
+            SyntaxNode::new_root_mut(green_builders::empty_section_node(name, ending));
 
         // Separators belong to the preceding section, just as they do when
         // parsing the same text again. A missing terminator belongs to its line.
@@ -224,18 +264,28 @@ impl Editor {
             .last_child()
             .filter(|node| node.kind() == SyntaxKind::SECTION)
             .unwrap_or_else(|| self.root.clone());
-        let needs_newline =
-            last_token(&self.root).is_some_and(|token| token.kind() != SyntaxKind::NEWLINE);
+        let needs_newline = last_descendant_token(&self.root)
+            .is_some_and(|token| token.kind() != SyntaxKind::NEWLINE);
         let index = separator_parent.children_with_tokens().count();
         let mut blank_lines = self.separator_blank_lines();
         if needs_newline && blank_lines != 0 {
-            terminate_line(&separator_parent, index, ending);
+            #[expect(
+                clippy::missing_panics_doc,
+                reason = "the unterminated last token belongs to a line node"
+            )]
+            let last_line = separator_parent
+                .last_child_or_token()
+                .and_then(NodeOrToken::into_node)
+                .expect("a missing terminator always belongs to a preceding line node");
+            terminate_line(&last_line, ending);
             blank_lines -= 1;
         }
         for _ in 0..blank_lines {
-            let blank =
-                SyntaxNode::new_root(green_builders::blank_line_node(ending)).clone_for_update();
-            separate_line_breaks(last_token(&self.root), blank.first_token());
+            let blank = SyntaxNode::new_root_mut(green_builders::blank_line_node(ending));
+            separate_line_breaks(
+                last_descendant_token(&self.root),
+                first_nonempty_token(&blank),
+            );
             separator_parent.splice_children(index..index, vec![blank.into()]);
         }
 
@@ -261,7 +311,7 @@ impl Editor {
     /// - `2` when a content line has no terminating newline (terminates it, then
     ///   adds the blank), preventing the new `[section]` from joining that line.
     fn separator_blank_lines(&self) -> usize {
-        let Some(last_token) = last_token(&self.root) else {
+        let Some(last_token) = last_descendant_token(&self.root) else {
             return 0; // empty file
         };
         if last_token.kind() == SyntaxKind::WHITESPACE && last_token.text() == "\u{FEFF}" {
@@ -279,7 +329,7 @@ impl Editor {
             Some(node) if node.kind() == SyntaxKind::SECTION => node.last_child(),
             other => other,
         };
-        last_line.is_some_and(|n| n.kind() == SyntaxKind::BLANK_LINE)
+        last_line.is_some_and(|line| line.kind() == SyntaxKind::BLANK_LINE)
     }
 
     /// Render the final output.
@@ -297,15 +347,19 @@ impl Editor {
     /// ```
     /// use ini_edit::editor::Editor;
     ///
-    /// let ed = Editor::new("[server]\nhost = 0.0.0.0\nport = 8080\n");
+    /// let editor = Editor::new("[server]\nhost = 0.0.0.0\nport = 8080\n");
     ///
     /// // Read using the same parse that backs the editor — no second parse.
-    /// let names: Vec<_> = ed.file().sections().filter_map(|s| s.name()).collect();
+    /// let names: Vec<_> = editor
+    ///     .file()
+    ///     .sections()
+    ///     .filter_map(|section| section.name())
+    ///     .collect();
     /// assert_eq!(names, ["server"]);
     ///
     /// // Then mutate the same tree.
-    /// ed.section("server").set("port", "9090");
-    /// assert!(ed.finish().contains("port = 9090"));
+    /// editor.section("server").set("port", "9090");
+    /// assert!(editor.finish().contains("port = 9090"));
     /// ```
     #[must_use]
     pub fn file(&self) -> File {
@@ -318,27 +372,109 @@ impl Editor {
         file
     }
 
+    /// The first section whose header names `name`, compared without
+    /// allocating a copy of each name.
     fn find_section(&self, name: &str) -> Option<Section> {
         let file = File::cast(self.root.clone()).expect("an Editor always stores a ROOT node");
-        file.sections().find(|s| s.name().as_deref() == Some(name))
+        file.sections()
+            .find(|section| child_ident_is(section.syntax(), SyntaxKind::SECTION_HEADER, name))
     }
 }
 
-/// Rowan's `last_token` stops at an empty VALUE node. Walk backwards past empty
-/// nodes so an unterminated `key=` is still recognized as a content line.
-fn last_token(node: &SyntaxNode) -> Option<crate::SyntaxToken> {
-    let mut child = node.last_child_or_token();
-    while let Some(element) = child {
-        let token = match &element {
-            rowan::NodeOrToken::Node(node) => last_token(node),
-            rowan::NodeOrToken::Token(token) => Some(token.clone()),
-        };
-        if token.is_some() {
-            return token;
-        }
-        child = element.prev_sibling_or_token();
-    }
-    None
+/// Whether the IDENT token of `node`'s first `child_kind` child reads `text`:
+/// the name in a section's header, or an entry's key. A lookup by name checks
+/// every section or entry, so this reads the green tree directly: a check
+/// creates no cursor and copies no text.
+fn child_ident_is(node: &SyntaxNode, child_kind: SyntaxKind, text: &str) -> bool {
+    let child_kind = rowan::SyntaxKind::from(child_kind);
+    let ident = rowan::SyntaxKind::from(SyntaxKind::IDENT);
+    node.green()
+        .children()
+        .filter_map(NodeOrToken::into_node)
+        .find(|child| child.kind() == child_kind)
+        .and_then(|child| {
+            child
+                .children()
+                .filter_map(NodeOrToken::into_token)
+                .find(|token| token.kind() == ident)
+        })
+        .is_some_and(|token| token.text() == text)
+}
+
+/// The depth of `node` in its tree: 1 for the root, 2 for the root's children,
+/// and so on. The walk up stops one level past [`MAX_TREE_DEPTH`].
+fn depth_of(node: &SyntaxNode) -> usize {
+    let depth = node.ancestors().take(MAX_TREE_DEPTH + 1).count();
+    assert!(
+        depth <= MAX_TREE_DEPTH,
+        "a syntax tree is deeper than MAX_TREE_DEPTH"
+    );
+    depth
+}
+
+/// `node`, then each of its ancestors up to the root, with the depth of each.
+fn ancestors_with_depth(node: &SyntaxNode) -> impl Iterator<Item = (SyntaxNode, usize)> {
+    node.ancestors().zip((1..=depth_of(node)).rev())
+}
+
+/// The last token in `node`'s subtree. Rowan's `last_token` stops at an empty
+/// VALUE node; this walks back past empty nodes, so an unterminated `key=` is
+/// still recognized as a content line. The token itself can be empty: an
+/// empty key's IDENT.
+fn last_descendant_token(node: &SyntaxNode) -> Option<SyntaxToken> {
+    last_token_within(node, depth_of(node))
+}
+
+/// [`last_descendant_token`] of `node`, which is `depth` nodes deep in its
+/// tree.
+fn last_token_within(node: &SyntaxNode, depth: usize) -> Option<SyntaxToken> {
+    assert!(
+        depth <= MAX_TREE_DEPTH,
+        "a syntax tree is deeper than MAX_TREE_DEPTH"
+    );
+    last_token_from(node.last_child_or_token(), depth + 1)
+}
+
+/// The last token of `element` or of an earlier sibling, past empty nodes.
+/// These siblings are `depth` nodes deep in their tree.
+fn last_token_from(element: Option<SyntaxElement>, depth: usize) -> Option<SyntaxToken> {
+    let mut elements = std::iter::successors(element, SyntaxElement::prev_sibling_or_token);
+    elements.find_map(|element| match element {
+        NodeOrToken::Node(node) => last_token_within(&node, depth),
+        NodeOrToken::Token(token) => Some(token),
+    })
+}
+
+/// The first nonempty token of `node`. Inserted blank lines can have empty
+/// content tokens before their newline.
+fn first_nonempty_token(node: &SyntaxNode) -> Option<SyntaxToken> {
+    first_token_within(node, depth_of(node))
+}
+
+/// [`first_nonempty_token`] of `node`, which is `depth` nodes deep in its
+/// tree.
+fn first_token_within(node: &SyntaxNode, depth: usize) -> Option<SyntaxToken> {
+    assert!(
+        depth <= MAX_TREE_DEPTH,
+        "a syntax tree is deeper than MAX_TREE_DEPTH"
+    );
+    node.children_with_tokens()
+        .find_map(|element| match element {
+            NodeOrToken::Node(child) => first_token_within(&child, depth + 1),
+            NodeOrToken::Token(token) => (!token.text().is_empty()).then_some(token),
+        })
+}
+
+/// The first nonempty token of `line` or of a later sibling. These lines are
+/// `depth` nodes deep in their tree.
+fn first_token_from(line: Option<SyntaxNode>, depth: usize) -> Option<SyntaxToken> {
+    std::iter::successors(line, SyntaxNode::next_sibling)
+        .find_map(|line| first_token_within(&line, depth))
+}
+
+/// Whether `line` ends with its terminating `NEWLINE` token.
+fn ends_with_line_break(line: &SyntaxNode) -> bool {
+    last_descendant_token(line).is_some_and(|token| token.kind() == SyntaxKind::NEWLINE)
 }
 
 /// The first line terminator in the text of `node`'s tree, read as the lexer
@@ -348,11 +484,13 @@ fn last_token(node: &SyntaxNode) -> Option<crate::SyntaxToken> {
 /// single style. It depends only on the current text: reopening the output
 /// never changes how later lines are terminated.
 fn document_line_ending(node: &SyntaxNode) -> &'static str {
-    let root = node.ancestors().last().expect("a node is its own ancestor");
+    let (root, _) = ancestors_with_depth(node)
+        .last()
+        .expect("a node is its own ancestor");
     let mut after_cr = false;
     for token in root
         .descendants_with_tokens()
-        .filter_map(rowan::NodeOrToken::into_token)
+        .filter_map(NodeOrToken::into_token)
     {
         let text = token.text();
         // A token ending in CR is followed by the next nonempty token.
@@ -414,19 +552,19 @@ impl SectionEditor<'_> {
     /// parsed again; see [values that end in a
     /// backslash](Editor#values-that-end-in-a-backslash).
     pub fn append_entry(&self, key: &str, value: &str) {
-        let (index, needs_newline) = self.content_end();
-        self.insert_elements(index, needs_newline, |ending| {
-            vec![self.entry_element(key, value, ending)]
+        self.insert_lines(self.content_end(), |ending| {
+            vec![self.entry_line(key, value, ending)]
         });
     }
 
-    /// Insert a new entry after the `line`-th logical content line within this
-    /// section (1-based). Logical content lines are entries and comments; the
-    /// `[section]` header, blank lines, and malformed lines are not counted.
+    /// Insert a new entry after the first `content_lines_before` logical
+    /// content lines of this section. Logical content lines are entries and
+    /// comments; the `[section]` header, blank lines, and malformed lines are
+    /// not counted.
     ///
-    /// - `line == 0` inserts right after the header, before the first content
-    ///   line. This holds even when the section has no content lines.
-    /// - Any other `line` at or beyond the number of content lines appends
+    /// - `0` inserts right after the header, before the first content line.
+    ///   This holds even when the section has no content lines.
+    /// - Any other count at or beyond the number of content lines appends
     ///   exactly like [`append_entry`](Self::append_entry): after every line
     ///   that is not blank, including malformed lines that follow the last
     ///   entry or comment, and before any trailing blank lines.
@@ -440,18 +578,15 @@ impl SectionEditor<'_> {
     /// A `value` ending in `\` continues on the next line when the text is
     /// parsed again; see [values that end in a
     /// backslash](Editor#values-that-end-in-a-backslash).
-    pub fn insert_entry_at_line(&self, line: usize, key: &str, value: &str) {
-        let (index, needs_newline) = self.after_content_line(line);
-        self.insert_elements(index, needs_newline, |ending| {
-            vec![self.entry_element(key, value, ending)]
-        });
+    pub fn insert_entry_at_line(&self, content_lines_before: usize, key: &str, value: &str) {
+        let index = self.after_content_lines(content_lines_before);
+        self.insert_lines(index, |ending| vec![self.entry_line(key, value, ending)]);
     }
 
-    /// A new entry using the configured separator spacing.
-    fn entry_element(&self, key: &str, value: &str, ending: &'static str) -> SyntaxNode {
-        let (before, after) = spacing_for_new_entry(&self.editor.options.separator_spacing);
-        let entry = green_builders::entry_node(key, value, before, after, ending);
-        SyntaxNode::new_root(entry).clone_for_update()
+    /// A new entry line using the configured separator spacing.
+    fn entry_line(&self, key: &str, value: &str, ending: &'static str) -> SyntaxNode {
+        let gap = self.editor.options.separator_spacing.gap();
+        SyntaxNode::new_root_mut(green_builders::entry_node(key, value, gap, ending))
     }
 
     /// Remove an entry by key name. Returns true if found and removed.
@@ -528,10 +663,7 @@ impl SectionEditor<'_> {
         if lines.is_empty() {
             return;
         }
-        let (index, needs_newline) = self.content_end();
-        self.insert_elements(index, needs_newline, |ending| {
-            Self::raw_line_elements(lines, ending)
-        });
+        self.insert_lines(self.content_end(), |ending| raw_lines(lines, ending));
     }
 
     /// Insert raw text lines at a specific child index within this section.
@@ -546,140 +678,79 @@ impl SectionEditor<'_> {
         if lines.is_empty() {
             return;
         }
-        let children: Vec<_> = self.node.children().collect();
-        let index = index.min(children.len());
-        let (index, needs_newline) = if index == 0 {
-            (0, false)
-        } else {
-            Self::after_line(&children, index - 1)
-        };
-        self.insert_elements(index, needs_newline, |ending| {
-            Self::raw_line_elements(lines, ending)
-        });
+        // The green node counts every child that `splice_children` indexes.
+        let index = index.min(self.node.green().children().len());
+        self.insert_lines(index, |ending| raw_lines(lines, ending));
     }
 
-    /// Preserve physical-line indices when completing an unterminated line.
-    /// `lines` builds the new lines with the document's line ending, which is
-    /// read before any terminator is added.
-    fn insert_elements(
+    /// Insert the lines that `build_lines` creates at child `index`. They use
+    /// the document's line ending, read before any terminator is added.
+    ///
+    /// A line before them with no terminator (at the end of the file) is
+    /// completed with that ending. It keeps ownership of its terminator, so
+    /// physical-line indices stay the same.
+    fn insert_lines(
         &self,
         index: usize,
-        needs_newline: bool,
-        lines: impl FnOnce(&'static str) -> Vec<SyntaxNode>,
+        build_lines: impl FnOnce(&'static str) -> Vec<SyntaxNode>,
     ) {
         let ending = document_line_ending(&self.node);
-        let lines = lines(ending);
-        if needs_newline {
-            terminate_line(&self.node, index, ending);
-        }
+        let new_lines = build_lines(ending);
         // Repair internal boundaries while the new lines are still detached,
         // so each newline edit only rebuilds that line, not the document.
-        for pair in lines.windows(2) {
-            separate_line_breaks(last_token(&pair[0]), first_token(&pair[1]));
+        for pair in new_lines.windows(2) {
+            separate_line_breaks(
+                last_descendant_token(&pair[0]),
+                first_nonempty_token(&pair[1]),
+            );
         }
-        let end = index + lines.len();
+        let first = new_lines
+            .first()
+            .cloned()
+            .expect("an insertion adds a line");
+        let last = new_lines.last().cloned().expect("an insertion adds a line");
         self.node
-            .splice_children(index..index, lines.iter().cloned().map(Into::into));
-        // Repair the two boundaries that depend on the surrounding document.
-        repair_line_boundary(&self.node, index);
-        repair_line_boundary(&self.node, end);
-    }
-
-    /// Build the verbatim child elements for a set of raw lines. Each line
-    /// becomes a `COMMENT_LINE` node: its content is an opaque `COMMENT` token
-    /// followed by its newline, keeping the line-node invariant intact.
-    /// Unterminated lines receive the document's line `ending`.
-    fn raw_line_elements(lines: &[&str], ending: &str) -> Vec<SyntaxNode> {
-        let mut elements = Vec::new();
-        for line in lines {
-            let text = if line.ends_with('\n') || line.ends_with('\r') {
-                (*line).to_string()
-            } else {
-                format!("{line}{ending}")
-            };
-            // Emit the line content (without newline) as a COMMENT token
-            // and the newline separately, wrapped in a COMMENT_LINE node.
-            // COMMENT is used as a generic "opaque text" kind — it preserves
-            // the content verbatim.
-            let (content, nl) = if let Some(content) = text.strip_suffix("\r\n") {
-                (content, "\r\n")
-            } else if let Some(content) = text.strip_suffix('\n') {
-                (content, "\n")
-            } else {
-                let content = text
-                    .strip_suffix('\r')
-                    .expect("raw lines always have a terminator");
-                (content, "\r")
-            };
-
-            let green = {
-                let mut b = rowan::GreenNodeBuilder::new();
-                b.start_node(SyntaxKind::COMMENT_LINE.into());
-                b.token(SyntaxKind::COMMENT.into(), content);
-                b.token(SyntaxKind::NEWLINE.into(), nl);
-                b.finish_node();
-                b.finish()
-            };
-            elements.push(SyntaxNode::new_root(green).clone_for_update());
+            .splice_children(index..index, new_lines.into_iter().map(Into::into));
+        if let Some(previous) = first
+            .prev_sibling()
+            .filter(|line| !ends_with_line_break(line))
+        {
+            terminate_line(&previous, ending);
         }
-        elements
+        // Repair the two boundaries that depend on the surrounding document.
+        repair_line_boundary(&self.node, first.prev_sibling_or_token(), Some(first));
+        repair_line_boundary(&self.node, Some(last.clone().into()), last.next_sibling());
     }
 
-    /// A standalone `NEWLINE` token element with the given terminator text.
-    fn newline_element(text: &str) -> crate::SyntaxElement {
-        let mut b = rowan::GreenNodeBuilder::new();
-        b.start_node(SyntaxKind::ROOT.into());
-        b.token(SyntaxKind::NEWLINE.into(), text);
-        b.finish_node();
-        let wrapper = SyntaxNode::new_root(b.finish()).clone_for_update();
-        wrapper
-            .children_with_tokens()
-            .next()
-            .expect("wrapper contains one newline token")
-    }
-
-    /// Insertion point at the end of the section's content: just after the
-    /// last line that is not blank, but before any trailing blank lines.
+    /// Child index at the end of the section's content: just after the last
+    /// line that is not blank, but before any trailing blank lines.
     ///
     /// "Not blank" includes the header, entries, comments, and malformed
     /// (error) lines. Trailing blank lines usually separate this section from
     /// the next one, so new content goes above them.
-    ///
-    /// Returns `(child_index, needs_newline)`.
-    fn content_end(&self) -> (usize, bool) {
-        let children: Vec<SyntaxNode> = self.node.children().collect();
+    fn content_end(&self) -> usize {
         // remove_lines can remove even the header. Error lines still count as
         // content; only blank-line nodes belong after an append.
-        children
-            .iter()
-            .rposition(|line| line.kind() != SyntaxKind::BLANK_LINE)
-            .map_or((0, false), |k| Self::after_line(&children, k))
+        std::iter::successors(self.node.last_child(), SyntaxNode::prev_sibling)
+            .find(|line| line.kind() != SyntaxKind::BLANK_LINE)
+            .map_or(0, |line| line.index() + 1)
     }
 
-    /// Insertion point just after the `n`-th logical content line (1-based),
-    /// where content lines are entries and comments (the header, blank lines,
-    /// and malformed lines are not counted).
+    /// Child index just after the first `content_lines_before` logical content
+    /// lines, where content lines are entries and comments (the header, blank
+    /// lines, and malformed lines are not counted).
     ///
-    /// - `n == 0` inserts right after the header, even with no content lines.
-    /// - Any other `n` at or beyond the number of content lines returns the
-    ///   same point as [`content_end`](Self::content_end), so the entry lands
+    /// - `0` is right after the header, even with no content lines.
+    /// - Any other count at or beyond the number of content lines returns the
+    ///   same index as [`content_end`](Self::content_end), so the entry lands
     ///   exactly where [`append_entry`](Self::append_entry) would put it.
-    ///
-    /// Returns `(child_index, needs_newline)`.
-    fn after_content_line(&self, n: usize) -> (usize, bool) {
-        let children: Vec<SyntaxNode> = self.node.children().collect();
-        let header = children
-            .iter()
-            .position(|line| line.kind() == SyntaxKind::SECTION_HEADER);
-        let content: Vec<usize> = children
-            .iter()
-            .enumerate()
-            .filter(|(_, line)| matches!(line.kind(), SyntaxKind::ENTRY | SyntaxKind::COMMENT_LINE))
-            .map(|(i, _)| i)
-            .collect();
-
-        if n == 0 {
-            return header.map_or((0, false), |k| Self::after_line(&children, k));
+    fn after_content_lines(&self, content_lines_before: usize) -> usize {
+        if content_lines_before == 0 {
+            return self
+                .node
+                .children()
+                .find(|line| line.kind() == SyntaxKind::SECTION_HEADER)
+                .map_or(0, |header| header.index() + 1);
         }
         // Past the last content line, `insert_entry_at_line` promises to act
         // exactly like `append_entry`. Inserting right after the last entry
@@ -697,22 +768,17 @@ impl SectionEditor<'_> {
         //
         // Reusing `content_end` keeps both methods in agreement by
         // construction, including for a section with no content lines.
-        if n >= content.len() {
-            return self.content_end();
+        let mut content_lines = self
+            .node
+            .children()
+            .filter(|line| matches!(line.kind(), SyntaxKind::ENTRY | SyntaxKind::COMMENT_LINE));
+        match (
+            content_lines.nth(content_lines_before - 1),
+            content_lines.next(),
+        ) {
+            (Some(last_counted), Some(_)) => last_counted.index() + 1,
+            _ => self.content_end(),
         }
-        Self::after_line(&children, content[n - 1])
-    }
-
-    /// Compute the insertion point immediately after the line node at
-    /// `children[k]`. In the line-node model every child of a section is a
-    /// line node that owns its terminating newline, so this is simply the next
-    /// index — with `needs_newline` set when the line has no terminator (end
-    /// of file).
-    fn after_line(children: &[SyntaxNode], k: usize) -> (usize, bool) {
-        let ends_with_newline = children[k]
-            .last_token()
-            .is_some_and(|token| token.kind() == SyntaxKind::NEWLINE);
-        (k + 1, !ends_with_newline)
     }
 
     /// Remove a range of child line nodes (0-indexed within this section).
@@ -727,28 +793,49 @@ impl SectionEditor<'_> {
         }
         // Collect then detach — splice_children has issues with large ranges
         // in rowan's mutable tree (indices shift during removal).
-        let to_remove: Vec<_> = self
+        let removed_lines: Vec<SyntaxNode> = self
             .node
             .children()
             .skip(range.start)
             .take(range.end - range.start)
             .collect();
-        for line in to_remove {
+        // Removing the lines joins what precedes the first of them to what
+        // follows the last. With no line in range, that is the section's end.
+        let previous = removed_lines.first().map_or_else(
+            || self.node.last_child_or_token(),
+            SyntaxNode::prev_sibling_or_token,
+        );
+        let next = removed_lines.last().and_then(SyntaxNode::next_sibling);
+        for line in removed_lines {
             line.detach();
         }
-        repair_line_boundary(&self.node, range.start);
+        repair_line_boundary(&self.node, previous, next);
     }
 
+    /// The first entry named `key`, compared without allocating a copy of
+    /// each key.
     fn find_entry(&self, key: &str) -> Option<Entry> {
         let section =
             Section::cast(self.node.clone()).expect("a SectionEditor always stores a SECTION node");
-        section.entries().find(|e| e.key().as_deref() == Some(key))
+        section
+            .entries()
+            .find(|entry| child_ident_is(entry.syntax(), SyntaxKind::KEY, key))
     }
+}
+
+/// Lines holding each of `lines` verbatim, outside any document (see
+/// [`green_builders::raw_line_node`]). Unterminated lines receive the
+/// document's line `ending`.
+fn raw_lines(lines: &[&str], ending: &'static str) -> Vec<SyntaxNode> {
+    lines
+        .iter()
+        .map(|text| SyntaxNode::new_root_mut(green_builders::raw_line_node(text, ending)))
+        .collect()
 }
 
 /// A CR terminator followed by an LF blank line must stay two line breaks.
 /// Otherwise serialization joins them into CRLF and shifts later line indices.
-fn separate_line_breaks(before: Option<crate::SyntaxToken>, after: Option<crate::SyntaxToken>) {
+fn separate_line_breaks(before: Option<SyntaxToken>, after: Option<SyntaxToken>) {
     if !before.is_some_and(|token| token.text().ends_with('\r')) {
         return;
     }
@@ -760,76 +847,68 @@ fn separate_line_breaks(before: Option<crate::SyntaxToken>, after: Option<crate:
     };
     let parent = after.parent().expect("a newline token has a parent");
     let index = after.index();
-    parent.splice_children(index..index + 1, [SectionEditor::newline_element("\r\n")]);
+    parent.splice_children(index..index + 1, [green_builders::newline_token("\r\n")]);
 }
 
-/// Repair the boundary before `parent`'s child at `index`. The neighboring
-/// text can belong to another section, e.g. at a section's first line.
-fn repair_line_boundary(parent: &SyntaxNode, index: usize) {
-    separate_line_breaks(token_before(parent, index), token_after(parent, index));
+/// Repair the boundary between `previous` and `next`, adjacent children of
+/// `parent`; either is `None` at an edge of `parent`. The text on either side
+/// can belong to another section, e.g. at a section's first line.
+fn repair_line_boundary(
+    parent: &SyntaxNode,
+    previous: Option<SyntaxElement>,
+    next: Option<SyntaxNode>,
+) {
+    separate_line_breaks(token_before(parent, previous), token_after(parent, next));
 }
 
-/// The last token serialized before `parent`'s child at `index`.
-fn token_before(parent: &SyntaxNode, index: usize) -> Option<crate::SyntaxToken> {
-    let preceding: Vec<_> = parent.children_with_tokens().take(index).collect();
-    preceding
-        .into_iter()
-        .rev()
-        .find_map(|element| match element {
-            rowan::NodeOrToken::Node(node) => last_token(&node),
-            rowan::NodeOrToken::Token(token) => Some(token),
-        })
-        .or_else(|| {
-            let grandparent = parent.parent()?;
-            token_before(&grandparent, parent.index())
-        })
+/// The last token serialized at or before `previous`, a child of `parent`;
+/// `None` stands for the start of `parent`. Each round searches the children
+/// of one ancestor, starting with `parent`, then continues before that
+/// ancestor, one level up. The rounds end at the root.
+fn token_before(parent: &SyntaxNode, mut previous: Option<SyntaxElement>) -> Option<SyntaxToken> {
+    for (ancestor, depth) in ancestors_with_depth(parent) {
+        if let Some(token) = last_token_from(previous, depth + 1) {
+            return Some(token);
+        }
+        previous = ancestor.prev_sibling_or_token();
+    }
+    None
 }
 
-/// The first nonempty token serialized from `parent`'s child at `index`.
-/// Only a document's leading BOM is a loose token, and it never follows a
-/// line, so only line nodes are searched.
-fn token_after(parent: &SyntaxNode, index: usize) -> Option<crate::SyntaxToken> {
-    parent
-        .children()
-        .skip_while(|line| line.index() < index)
-        .find_map(|line| first_token(&line))
-        .or_else(|| {
-            let grandparent = parent.parent()?;
-            token_after(&grandparent, parent.index() + 1)
-        })
-}
-
-/// The first nonempty token of `node`. Inserted blank lines can have empty
-/// content tokens before their newline.
-fn first_token(node: &SyntaxNode) -> Option<crate::SyntaxToken> {
-    node.descendants_with_tokens()
-        .filter_map(rowan::NodeOrToken::into_token)
-        .find(|token| !token.text().is_empty())
+/// The first nonempty token serialized at or after `next`, a child of
+/// `parent`; `None` stands for the end of `parent`. Each round searches the
+/// children of one ancestor, starting with `parent`, then continues after that
+/// ancestor, one level up. The rounds end at the root. Only a document's
+/// leading BOM is a loose token, and it never follows a line, so only line
+/// nodes are searched.
+fn token_after(parent: &SyntaxNode, mut next: Option<SyntaxNode>) -> Option<SyntaxToken> {
+    for (ancestor, depth) in ancestors_with_depth(parent) {
+        if let Some(token) = first_token_from(next, depth + 1) {
+            return Some(token);
+        }
+        next = ancestor.next_sibling();
+    }
+    None
 }
 
 fn detach_preserving_line_breaks(node: &SyntaxNode) {
-    let parent = node.parent();
-    let index = node.index();
+    let Some(parent) = node.parent() else {
+        return; // a handle may outlive its removal from the document
+    };
+    let previous = node.prev_sibling_or_token();
+    let next = node.next_sibling();
     node.detach();
-    if let Some(parent) = parent {
-        repair_line_boundary(&parent, index);
-    }
+    repair_line_boundary(&parent, previous, next);
 }
 
-/// Complete the line before an insertion point with the document's line
+/// Complete `line`, which has no terminator, with the document's line
 /// `ending`. The line keeps ownership of its terminator so `remove_lines`
 /// still addresses the same physical lines.
-fn terminate_line(parent: &SyntaxNode, index: usize, ending: &'static str) {
-    let line = parent
-        .children_with_tokens()
-        .nth(index - 1)
-        .and_then(rowan::NodeOrToken::into_node)
-        .expect("a missing terminator always belongs to a preceding line node");
-    let previous_token = last_token(&line).expect("a line needing a terminator has content");
-    let newline = SectionEditor::newline_element(green_builders::newline_after(
-        previous_token.text(),
-        ending,
-    ));
+fn terminate_line(line: &SyntaxNode, ending: &'static str) {
+    let previous_token =
+        last_descendant_token(line).expect("a line needing a terminator has content");
+    let newline =
+        green_builders::newline_token(green_builders::newline_after(previous_token.text(), ending));
     let end = line.children_with_tokens().count();
     line.splice_children(end..end, vec![newline]);
 }
@@ -908,102 +987,109 @@ impl EntryEditor {
 /// Replace the key identifier of an `ENTRY` node in place.
 fn replace_key(entry: &SyntaxNode, new_key: &str) {
     let key_node = Entry::cast(entry.clone())
-        .and_then(|e| e.key_node())
-        .expect("an ENTRY always has a KEY node");
-    let key_syntax = key_node.syntax().clone();
-    let old_count = key_syntax.children_with_tokens().count();
-    let fresh = SyntaxNode::new_root(green_builders::key_node(new_key)).clone_for_update();
-    let new_children: Vec<crate::SyntaxElement> = fresh.children_with_tokens().collect();
-    key_syntax.splice_children(0..old_count, new_children);
+        .and_then(|entry_ast| entry_ast.key_node())
+        .expect("an ENTRY always has a KEY node")
+        .syntax()
+        .clone();
+    let old_count = key_node.children_with_tokens().count();
+    key_node.splice_children(
+        0..old_count,
+        green_builders::detached_children(green_builders::key_node(new_key)),
+    );
 }
 
-/// Replace the value of an `ENTRY` node in place. An empty string clears it.
-fn replace_value(entry: &SyntaxNode, value: &str, spacing: &SeparatorSpacing) {
-    let entry = Entry::cast(entry.clone()).expect("an ENTRY node can be cast to Entry");
+/// Replace the value of an `ENTRY` node in place. An empty `value_text` clears
+/// it. This function decides when each follow-up repair is attempted; a repair
+/// returns early when it finds nothing to repair.
+fn replace_value(entry: &SyntaxNode, value_text: &str, spacing: &SeparatorSpacing) {
+    let entry_ast = Entry::cast(entry.clone()).expect("an ENTRY node can be cast to Entry");
     let separator_kind = entry
-        .syntax()
         .children_with_tokens()
-        .filter_map(rowan::NodeOrToken::into_token)
+        .filter_map(NodeOrToken::into_token)
         .find_map(|token| {
             matches!(token.kind(), SyntaxKind::EQ | SyntaxKind::COLON).then_some(token.kind())
         });
-
     if separator_kind.is_none() || !matches!(spacing, SeparatorSpacing::Preserve) {
-        let children: Vec<_> = entry.syntax().children_with_tokens().collect();
-        let key_index = children
-            .iter()
-            .position(|element| {
-                element
-                    .as_node()
-                    .is_some_and(|node| node.kind() == SyntaxKind::KEY)
-            })
-            .expect("an ENTRY always has a KEY node");
-        let value_index = children
-            .iter()
-            .position(|element| {
-                element
-                    .as_node()
-                    .is_some_and(|node| node.kind() == SyntaxKind::VALUE)
-            })
-            .expect("an ENTRY always has a VALUE node");
-        let (before, after) = spacing_for_new_entry(spacing);
-        let separator_index = key_index + 1;
-        for element in &children[separator_index..value_index] {
-            element
-                .as_token()
-                .expect("only separator tokens occur between KEY and VALUE nodes")
-                .detach();
-        }
-        entry.syntax().splice_children(
-            separator_index..separator_index,
-            separator_elements(separator_kind.unwrap_or(SyntaxKind::EQ), before, after),
+        replace_separator(
+            entry,
+            separator_kind.unwrap_or(SyntaxKind::EQ),
+            spacing.gap(),
         );
     }
 
-    let value_node = entry
+    let value_node = entry_ast
         .value_node()
-        .expect("an ENTRY always has a VALUE node");
-    let value_syntax = value_node.syntax().clone();
-    let old_count = value_syntax.children_with_tokens().count();
-    let new_children: Vec<crate::SyntaxElement> = if value.is_empty() {
-        vec![]
-    } else {
-        SyntaxNode::new_root(green_builders::value_node(value))
-            .clone_for_update()
-            .children_with_tokens()
-            .collect()
-    };
-    value_syntax.splice_children(0..old_count, new_children);
-    if value
+        .expect("an ENTRY always has a VALUE node")
+        .syntax()
+        .clone();
+    let old_count = value_node.children_with_tokens().count();
+    value_node.splice_children(
+        0..old_count,
+        green_builders::detached_children(green_builders::value_node(value_text)),
+    );
+    if value_text
         .rsplit(['\n', '\r'])
         .next()
-        .is_some_and(|line| line.trim_matches([' ', '\t']).is_empty())
+        .is_some_and(|final_line_text| final_line_text.trim_matches([' ', '\t']).is_empty())
     {
-        move_inline_comment_before(entry.syntax());
+        move_inline_comment_before(entry);
     }
-    if value.is_empty() && entry.inline_comment().is_none() {
-        normalize_empty_value_whitespace(entry.syntax(), &value_syntax, spacing);
+    if value_text.is_empty() && entry_ast.inline_comment().is_none() {
+        normalize_empty_value_whitespace(entry, &value_node, spacing);
     }
-    preserve_value_carriage_return(entry.syntax(), &value_syntax, value);
+    if value_text.ends_with('\r') {
+        preserve_value_carriage_return(entry, &value_node);
+    }
+}
+
+/// Replace every token between the KEY and VALUE nodes of `entry` (a
+/// separator and its whitespace, or the junk after a bare key) with
+/// `separator` and the whitespace of `gap`.
+fn replace_separator(entry: &SyntaxNode, separator: SyntaxKind, gap: SeparatorGap<'_>) {
+    let children: Vec<SyntaxElement> = entry.children_with_tokens().collect();
+    let key_index = children
+        .iter()
+        .position(|element| {
+            element
+                .as_node()
+                .is_some_and(|node| node.kind() == SyntaxKind::KEY)
+        })
+        .expect("an ENTRY always has a KEY node");
+    let value_index = children
+        .iter()
+        .position(|element| {
+            element
+                .as_node()
+                .is_some_and(|node| node.kind() == SyntaxKind::VALUE)
+        })
+        .expect("an ENTRY always has a VALUE node");
+    let separator_index = key_index + 1;
+    for element in &children[separator_index..value_index] {
+        element
+            .as_token()
+            .expect("only separator tokens occur between KEY and VALUE nodes")
+            .detach();
+    }
+    entry.splice_children(
+        separator_index..separator_index,
+        green_builders::separator_tokens(separator, gap),
+    );
 }
 
 /// A raw continued value can end in CR. An immediately following LF would
 /// become part of that CRLF continuation, changing the value and potentially
 /// consuming the next entry. Use a separate CRLF terminator in that case.
-fn preserve_value_carriage_return(entry: &SyntaxNode, value_node: &SyntaxNode, value: &str) {
-    if !value.ends_with('\r') {
-        return;
-    }
+fn preserve_value_carriage_return(entry: &SyntaxNode, value_node: &SyntaxNode) {
     let Some(newline) = value_node
         .next_sibling_or_token()
-        .and_then(rowan::NodeOrToken::into_token)
+        .and_then(NodeOrToken::into_token)
         .filter(|token| token.kind() == SyntaxKind::NEWLINE)
         .filter(|token| token.text() == "\n")
     else {
         return;
     };
     let index = newline.index();
-    entry.splice_children(index..index + 1, [SectionEditor::newline_element("\r\n")]);
+    entry.splice_children(index..index + 1, [green_builders::newline_token("\r\n")]);
 }
 
 /// With no value text, all whitespace after the separator belongs to its gap.
@@ -1011,12 +1097,12 @@ fn preserve_value_carriage_return(entry: &SyntaxNode, value_node: &SyntaxNode, v
 /// already set their gap above and must discard the old value's trailing space.
 fn normalize_empty_value_whitespace(
     entry: &SyntaxNode,
-    value: &SyntaxNode,
+    value_node: &SyntaxNode,
     spacing: &SeparatorSpacing,
 ) {
-    let Some(trailing) = value
+    let Some(trailing) = value_node
         .next_sibling_or_token()
-        .and_then(rowan::NodeOrToken::into_token)
+        .and_then(NodeOrToken::into_token)
         .filter(|token| token.kind() == SyntaxKind::WHITESPACE)
     else {
         return;
@@ -1027,23 +1113,19 @@ fn normalize_empty_value_whitespace(
         return;
     }
 
-    let mut gap = String::new();
-    if let Some(leading) = value
+    let mut whitespace_after_separator = String::new();
+    if let Some(leading) = value_node
         .prev_sibling_or_token()
-        .and_then(rowan::NodeOrToken::into_token)
+        .and_then(NodeOrToken::into_token)
         .filter(|token| token.kind() == SyntaxKind::WHITESPACE)
     {
-        gap.push_str(leading.text());
+        whitespace_after_separator.push_str(leading.text());
         leading.detach();
     }
-    gap.push_str(&trailing_text);
-    let mut builder = rowan::GreenNodeBuilder::new();
-    builder.start_node(SyntaxKind::ROOT.into());
-    builder.token(SyntaxKind::WHITESPACE.into(), &gap);
-    builder.finish_node();
-    let wrapper = SyntaxNode::new_root(builder.finish()).clone_for_update();
-    let index = value.index();
-    entry.splice_children(index..index, wrapper.children_with_tokens());
+    whitespace_after_separator.push_str(&trailing_text);
+    let whitespace = green_builders::whitespace_token(&whitespace_after_separator);
+    let index = value_node.index();
+    entry.splice_children(index..index, [whitespace]);
 }
 
 /// A marker at the start of a value or its final continued line is literal.
@@ -1053,7 +1135,7 @@ fn move_inline_comment_before(entry: &SyntaxNode) {
     let Some(parent) = entry.parent() else {
         return; // an entry handle may outlive removal from the document
     };
-    let children: Vec<_> = entry.children_with_tokens().collect();
+    let children: Vec<SyntaxElement> = entry.children_with_tokens().collect();
     let Some(comment_index) = children
         .iter()
         .position(|element| element.kind() == SyntaxKind::COMMENT)
@@ -1061,71 +1143,137 @@ fn move_inline_comment_before(entry: &SyntaxNode) {
         return;
     };
     // Inline comments always follow the VALUE and a whitespace token.
-    let first = comment_index - 1;
-    let mut builder = rowan::GreenNodeBuilder::new();
-    builder.start_node(SyntaxKind::COMMENT_LINE.into());
-    for element in &children[first..=comment_index] {
-        let token = element
-            .as_token()
-            .expect("inline comment trivia is tokenized");
-        builder.token(token.kind().into(), token.text());
-    }
-    let newline = entry.last_token().expect("an inline comment is nonempty");
-    if newline.kind() == SyntaxKind::NEWLINE {
-        builder.token(SyntaxKind::NEWLINE.into(), newline.text());
+    let comment_tokens: Vec<SyntaxToken> = children[comment_index - 1..=comment_index]
+        .iter()
+        .map(|element| {
+            element
+                .as_token()
+                .expect("inline comment trivia is tokenized")
+                .clone()
+        })
+        .collect();
+    let last_token = last_descendant_token(entry).expect("an inline comment is nonempty");
+    let newline = if last_token.kind() == SyntaxKind::NEWLINE {
+        last_token.text()
     } else {
-        builder.token(SyntaxKind::NEWLINE.into(), document_line_ending(&parent));
-    }
-    builder.finish_node();
-    let comment = SyntaxNode::new_root(builder.finish()).clone_for_update();
-    for element in &children[first..=comment_index] {
-        element
-            .as_token()
-            .expect("inline comment trivia is tokenized")
-            .detach();
+        document_line_ending(&parent)
+    };
+    let comment_line =
+        SyntaxNode::new_root_mut(green_builders::comment_line_node(&comment_tokens, newline));
+    for token in &comment_tokens {
+        token.detach();
     }
     let index = entry.index();
-    parent.splice_children(index..index, vec![comment.into()]);
-}
-
-fn spacing_for_new_entry(spacing: &SeparatorSpacing) -> (&str, &str) {
-    match spacing {
-        SeparatorSpacing::Preserve => (" ", " "),
-        SeparatorSpacing::Compact => ("", ""),
-        SeparatorSpacing::Exact { before, after } => (before, after),
-    }
-}
-
-fn separator_elements(
-    separator: SyntaxKind,
-    before: &str,
-    after: &str,
-) -> Vec<crate::SyntaxElement> {
-    let mut builder = rowan::GreenNodeBuilder::new();
-    builder.start_node(SyntaxKind::ROOT.into());
-    if !before.is_empty() {
-        builder.token(SyntaxKind::WHITESPACE.into(), before);
-    }
-    let separator_text = if separator == SyntaxKind::COLON {
-        ":"
-    } else {
-        "="
-    };
-    builder.token(separator.into(), separator_text);
-    if !after.is_empty() {
-        builder.token(SyntaxKind::WHITESPACE.into(), after);
-    }
-    builder.finish_node();
-    SyntaxNode::new_root(builder.finish())
-        .clone_for_update()
-        .children_with_tokens()
-        .collect()
+    parent.splice_children(index..index, vec![comment_line.into()]);
 }
 
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
+
+    /// The node at `depth` in `ROOT > SECTION > ENTRY > VALUE > KEY > IDENT`,
+    /// a tree with five levels of nodes, one more than the grammar allows.
+    fn node_in_too_deep_tree(depth: usize) -> SyntaxNode {
+        let mut builder = rowan::GreenNodeBuilder::new();
+        let kinds = [
+            SyntaxKind::ROOT,
+            SyntaxKind::SECTION,
+            SyntaxKind::ENTRY,
+            SyntaxKind::VALUE,
+            SyntaxKind::KEY,
+        ];
+        for kind in kinds {
+            builder.start_node(kind.into());
+        }
+        builder.token(SyntaxKind::IDENT.into(), "k");
+        for _ in kinds {
+            builder.finish_node();
+        }
+        let root = SyntaxNode::new_root(builder.finish());
+        root.descendants().nth(depth - 1).unwrap()
+    }
+
+    #[test]
+    #[should_panic(expected = "deeper than MAX_TREE_DEPTH")]
+    fn a_search_from_below_max_tree_depth_asserts_the_depth_of_its_start() {
+        // Nothing is before the KEY at any level, so only the depth of the
+        // start can fail.
+        let _ = token_before(&node_in_too_deep_tree(5), None);
+    }
+
+    // The next searches start within MAX_TREE_DEPTH, at a line or at its
+    // section, and fail when they reach the KEY, five levels deep in its tree.
+
+    #[test]
+    #[should_panic(expected = "deeper than MAX_TREE_DEPTH")]
+    fn searching_down_from_a_line_asserts_the_depth_of_its_tree() {
+        let _ = last_descendant_token(&node_in_too_deep_tree(3));
+    }
+
+    #[test]
+    #[should_panic(expected = "deeper than MAX_TREE_DEPTH")]
+    fn searching_forward_down_from_a_line_asserts_the_depth_of_its_tree() {
+        let _ = first_nonempty_token(&node_in_too_deep_tree(3));
+    }
+
+    #[test]
+    #[should_panic(expected = "deeper than MAX_TREE_DEPTH")]
+    fn repairing_after_a_line_asserts_the_depth_of_that_line() {
+        let section = node_in_too_deep_tree(2);
+        let entry = section.first_child().unwrap();
+        repair_line_boundary(&section, Some(entry.into()), None);
+    }
+
+    #[test]
+    #[should_panic(expected = "deeper than MAX_TREE_DEPTH")]
+    fn repairing_before_a_line_asserts_the_depth_of_that_line() {
+        let section = node_in_too_deep_tree(2);
+        let entry = section.first_child();
+        repair_line_boundary(&section, None, entry);
+    }
+
+    #[test]
+    fn the_deepest_parsed_trees_fit_within_max_tree_depth() {
+        // ROOT > SECTION > ENTRY > KEY/VALUE, with nothing after the empty value.
+        let root = crate::parse("[s]\nk=").syntax();
+        let section = root.first_child().unwrap();
+        let entry = section.last_child().unwrap();
+        let value = entry.last_child().unwrap();
+        assert_eq!(value.kind(), SyntaxKind::VALUE);
+        assert_eq!(value.ancestors().count(), MAX_TREE_DEPTH);
+        // Each search enters the KEY or the empty VALUE.
+        let key = first_nonempty_token(&entry).unwrap();
+        assert_eq!(key.text(), "k");
+        let equals = last_descendant_token(&root).unwrap();
+        assert_eq!(equals.kind(), SyntaxKind::EQ);
+        let entry_element = Some(entry.clone().into());
+        assert_eq!(token_before(&section, entry_element), Some(equals.clone()));
+        assert_eq!(token_after(&section, Some(entry)), Some(key));
+        // From the VALUE, the token before is the `=`, one level up, and the
+        // search after it climbs every level and finds nothing.
+        assert_eq!(token_before(&value, None), Some(equals));
+        assert_eq!(token_after(&value, None), None);
+    }
+
+    #[test]
+    fn searches_from_the_deepest_level_climb_to_the_root() {
+        // Without its header, `[s]` starts with the key. The document marker
+        // before the key and the `[t]` section after the entry are children
+        // of the root, so both searches climb all four levels to reach them.
+        let editor = Editor::new("\u{FEFF}[s]\nk=v\n[t]\n");
+        editor.section("s").remove_lines(0..1);
+        assert_eq!(editor.finish(), "\u{FEFF}k=v\n[t]\n");
+        let key = editor
+            .root
+            .descendants()
+            .find(|node| node.kind() == SyntaxKind::KEY)
+            .unwrap();
+        let value = key.next_sibling().unwrap();
+        assert_eq!(key.ancestors().count(), MAX_TREE_DEPTH);
+        assert_eq!(token_before(&key, None).unwrap().text(), "\u{FEFF}");
+        assert_eq!(token_after(&value, None).unwrap().text(), "[");
+    }
 
     #[test]
     fn deleting_lines_keeps_carriage_returns_separate_from_blank_lines() {
@@ -1656,50 +1804,50 @@ mod tests {
             ("\r", "\r\n", "\r"),
             ("\n", "\r\n", "\n"),
         ];
-        for (first, rest, e) in endings {
+        for (first, rest, ending) in endings {
             for terminated in [true, false] {
                 let last = if terminated { rest } else { "" };
                 let source = format!("[s]{first}a=1{rest}k=v{last}");
                 let body = format!("[s]{first}a=1{rest}");
                 // An unterminated final line is completed with the same ending.
-                let tail = format!("{body}k=v{}", if terminated { rest } else { e });
+                let tail = format!("{body}k=v{}", if terminated { rest } else { ending });
                 for operation in 0..8 {
                     let editor = Editor::new(&source);
                     let snapshot = editor.file();
                     let expected = match operation {
                         0 => {
                             editor.section("s").set("n", "1");
-                            format!("{tail}n = 1{e}")
+                            format!("{tail}n = 1{ending}")
                         }
                         1 => {
                             editor.section("s").append_entry("n", "1");
-                            format!("{tail}n = 1{e}")
+                            format!("{tail}n = 1{ending}")
                         }
                         2 => {
                             editor.section("s").insert_entry_at_line(0, "n", "1");
-                            format!("[s]{first}n = 1{e}a=1{rest}k=v{last}")
+                            format!("[s]{first}n = 1{ending}a=1{rest}k=v{last}")
                         }
                         3 => {
                             editor.section("s").append_raw_lines(&["; raw", "# x"]);
-                            format!("{tail}; raw{e}# x{e}")
+                            format!("{tail}; raw{ending}# x{ending}")
                         }
                         4 => {
                             editor.section("s").insert_raw_lines_at(2, &["; raw"]);
-                            format!("{body}; raw{e}k=v{last}")
+                            format!("{body}; raw{ending}k=v{last}")
                         }
                         5 => {
                             let _ = editor.section("t");
-                            format!("{tail}{e}[t]{e}")
+                            format!("{tail}{ending}[t]{ending}")
                         }
                         6 => {
                             editor.section("t").set("n", "1");
-                            format!("{tail}{e}[t]{e}n = 1{e}")
+                            format!("{tail}{ending}[t]{ending}n = 1{ending}")
                         }
                         _ => {
                             editor.section("s").remove_lines(1..2);
                             editor.section("s").insert_entry_at_line(1, "n", "1");
-                            let tail = if terminated { rest } else { e };
-                            format!("[s]{first}k=v{tail}n = 1{e}")
+                            let tail = if terminated { rest } else { ending };
+                            format!("[s]{first}k=v{tail}n = 1{ending}")
                         }
                     };
                     assert_eq!(editor.finish(), expected, "{source:?} #{operation}");
@@ -1825,35 +1973,35 @@ mod tests {
             (SeparatorSpacing::Compact, "="),
             (SeparatorSpacing::exact("\t", "  "), "\t=  "),
         ];
-        for (gap, comment) in [(" ", "; note"), ("\t", "#"), (" \t ", "; λ")] {
+        for inline_comment in [" ; note", "\t#", " \t ; λ"] {
             for ending in ["\n", "\r\n", "\r", ""] {
                 for (spacing, separator) in &spacings {
                     for operation in 0..4 {
                         let edit_options = EditOptions {
                             separator_spacing: spacing.clone(),
                         };
-                        let source = format!("[s]\nflag{gap}{comment}{ending}");
+                        let source = format!("[s]\nflag{inline_comment}{ending}");
                         let editor = Editor::with_options(&source, &parse_options, &edit_options);
                         let snapshot = editor.file();
                         let expected = match operation {
                             0 => {
                                 editor.section("s").set("flag", "1");
-                                format!("[s]\nflag{separator}1{gap}{comment}{ending}")
+                                format!("[s]\nflag{separator}1{inline_comment}{ending}")
                             }
                             1 => {
                                 editor.section("s").entries_mut()[0].set_value("1");
-                                format!("[s]\nflag{separator}1{gap}{comment}{ending}")
+                                format!("[s]\nflag{separator}1{inline_comment}{ending}")
                             }
                             2 => {
                                 // An empty value cannot precede a marker, so
                                 // the comment moves to its own line.
                                 editor.section("s").set("flag", "");
                                 let terminator = if ending.is_empty() { "\n" } else { ending };
-                                format!("[s]\n{gap}{comment}{terminator}flag{separator}{ending}")
+                                format!("[s]\n{inline_comment}{terminator}flag{separator}{ending}")
                             }
                             _ => {
                                 assert!(editor.section("s").rename_key("flag", "other"));
-                                format!("[s]\nother{gap}{comment}{ending}")
+                                format!("[s]\nother{inline_comment}{ending}")
                             }
                         };
                         assert_eq!(editor.finish(), expected, "{source:?}");
@@ -2058,8 +2206,11 @@ mod tests {
         for source in ["[s]\n=bad", "[s]\n=bad\n", "[s]\n=bad\n\n"] {
             let editor = Editor::new(source);
             editor.section("s").append_entry("b", "2");
-            let gap = if source.ends_with("\n\n") { "\n" } else { "" };
-            assert_eq!(editor.finish(), format!("[s]\n=bad\nb = 2\n{gap}"));
+            let trailing_blank_line = if source.ends_with("\n\n") { "\n" } else { "" };
+            assert_eq!(
+                editor.finish(),
+                format!("[s]\n=bad\nb = 2\n{trailing_blank_line}")
+            );
         }
     }
 
@@ -2268,7 +2419,7 @@ mod tests {
                             let saved = reopened.section("s").entries_mut().pop().unwrap();
                             assert_eq!(saved.value().as_deref(), Some(""), "{output:?}");
                             assert_eq!(handle.value().as_deref(), Some(""));
-                            let (before, after) = spacing_for_new_entry(&spacing);
+                            let SeparatorGap { before, after } = spacing.gap();
                             let comment_ending = if ending.is_empty() { "\n" } else { ending };
                             assert_eq!(
                                 output,
@@ -2862,7 +3013,7 @@ mod tests {
         assert_eq!(
             reopened
                 .sections()
-                .filter_map(|s| s.name())
+                .filter_map(|section| section.name())
                 .collect::<Vec<_>>(),
             ["s", "t"]
         );
@@ -3053,8 +3204,8 @@ mod tests {
     fn entries_mut_positional_rename() {
         let ed = Editor::new("[paths]\na = 1\nb = 2\nc = 3\n");
         for entry in ed.section("paths").entries_mut() {
-            let i = entry.index();
-            entry.set_key(&format!("k{i}"));
+            let index = entry.index();
+            entry.set_key(&format!("k{index}"));
         }
         assert_eq!(ed.finish(), "[paths]\nk0 = 1\nk1 = 2\nk2 = 3\n");
     }
