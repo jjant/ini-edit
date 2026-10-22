@@ -10,10 +10,11 @@ pub const SOURCES: [&str; 7] = [
     "\u{FEFF}[a]\r\nx=0\r\n",
     "[a]\rx=0\r",
 ];
-pub const OPERATIONS: u8 = 9;
+/// Number of distinct operations; an operation byte selects one modulo this.
+pub const OPERATION_KINDS: u8 = 9;
 
 fn apply(editor: &Editor, operation: u8) {
-    match operation % OPERATIONS {
+    match operation % OPERATION_KINDS {
         0 => editor.section("a").append_entry("x", "1"),
         1 => editor.section("a").insert_entry_at_line(0, "y", "2"),
         2 => editor.section("a").remove_lines(1..2),
@@ -23,14 +24,27 @@ fn apply(editor: &Editor, operation: u8) {
         6 => editor.section("a").set("x", ""),
         7 => editor.section("a").append_raw_lines(&["; tail"]),
         // Lands before a blank separator, which must not join its CR.
-        _ => editor.section("a").append_raw_lines(&["; tail\r"]),
+        8 => editor.section("a").append_raw_lines(&["; tail\r"]),
+        _ => unreachable!("operation is reduced modulo OPERATION_KINDS"),
     }
+}
+
+/// Later operations are ignored, which bounds the work per input.
+const OPERATIONS_MAX: usize = 64;
+
+/// The first byte selects one of [`SOURCES`]; each later byte is an operation.
+pub fn check(data: &[u8]) {
+    let Some((&source, operations)) = data.split_first() else {
+        return;
+    };
+    let source = SOURCES[usize::from(source) % SOURCES.len()];
+    check_sequence(source, &operations[..operations.len().min(OPERATIONS_MAX)]);
 }
 
 // Saving and reopening valid input should not affect the next edit. Comparing
 // complete syntax trees also checks line ownership, which determines the
 // meaning of public child-index operations such as remove_lines.
-pub fn check(source: &str, operations: &[u8]) {
+fn check_sequence(source: &str, operations: &[u8]) {
     let live = Editor::new(source);
     let mut saved = source.to_owned();
     for (step, &operation) in operations.iter().enumerate() {
