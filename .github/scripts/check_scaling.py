@@ -32,6 +32,7 @@ import time
 WORKLOADS = (
     "entries",
     "errors",
+    "bare-key-errors",
     "error-lines",
     "header-errors",
     "continuations",

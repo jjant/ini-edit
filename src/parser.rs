@@ -2,7 +2,7 @@
 //!
 //! Any input of at most [`MAX_INPUT_LEN`] bytes produces a valid tree —
 //! errors go to a side channel. The central invariant is:
-//! `parse(s).syntax().text() == s` for every such input. A longer input
+//! `parse(text).syntax().text() == text` for every such input. A longer input
 //! panics; see [`parse_with`].
 
 use rowan::GreenNodeBuilder;
@@ -232,9 +232,9 @@ impl ParseError {
     /// the line number, and the padding before the caret repeats each tab of
     /// the source line, which a terminal expands to the same tab stop in both
     /// rows, and turns every other character into a space. Columns count
-    /// characters, not terminal cells, so each wide (East Asian) character
-    /// before the column moves the caret one cell to the left of it, and each
-    /// combining character one cell to the right.
+    /// characters, not terminal cells, so characters that are not one cell
+    /// wide (wide East Asian, zero-width or combining) shift the caret by the
+    /// difference, unless a tab between them and the column realigns both rows.
     #[must_use]
     #[expect(
         clippy::missing_panics_doc,

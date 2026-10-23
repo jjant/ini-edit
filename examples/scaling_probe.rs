@@ -27,9 +27,12 @@ fn source(kind: &str, units: usize) -> Result<String, Box<dyn std::error::Error>
                 writeln!(source, "key{index}=value{index}")?;
             }
         }
-        // A key followed by text instead of a separator: the missing-separator
-        // error of `parse_entry`.
-        "errors" => source.push_str(&"broken key\n".repeat(units)),
+        // A key followed by text instead of a separator. With the default
+        // options (`errors`) that is the missing-separator error of
+        // `parse_entry`; with `allow_no_value` (`bare-key-errors`, see
+        // `options`) a bare key is valid, so the text after it is the error,
+        // through `parse_entry`'s unexpected-text branch.
+        "errors" | "bare-key-errors" => source.push_str(&"broken key\n".repeat(units)),
         // A line that starts with `=` is an error line (`parse_error_line`):
         // one error, with its own message string, every two bytes.
         "error-lines" => source.push_str(&"=\n".repeat(units * ERROR_LINES_PER_UNIT)),
@@ -53,11 +56,19 @@ fn source(kind: &str, units: usize) -> Result<String, Box<dyn std::error::Error>
     Ok(source)
 }
 
+/// The parse options of a workload: only `bare-key-errors` accepts bare keys.
+fn options(kind: &str) -> ini_edit::ParseOptions {
+    ini_edit::ParseOptions {
+        allow_no_value: kind == "bare-key-errors",
+        inline_comments: false,
+    }
+}
+
 /// The diagnostics that `source(kind, units)` must produce, so that every
 /// line of an error workload takes its error path.
 fn expected_errors(kind: &str, units: usize) -> usize {
     match kind {
-        "errors" => units,
+        "errors" | "bare-key-errors" => units,
         "error-lines" => units * ERROR_LINES_PER_UNIT,
         "header-errors" => 2 * units * HEADER_LINES_PER_UNIT,
         _ => 0,
@@ -79,8 +90,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let source = source(&kind, units)?;
     let expected_errors = expected_errors(&kind, units);
+    let options = options(&kind);
     for _ in 0..parse_count {
-        let parsed = ini_edit::parse(black_box(&source));
+        let parsed = ini_edit::parse_with(black_box(&source), &options);
         assert_eq!(parsed.errors().len(), expected_errors);
         assert_eq!(parsed.syntax().text().to_string(), source);
         black_box(parsed.green());
