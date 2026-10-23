@@ -322,14 +322,19 @@
 //! - Values ending in `\`: refused; drop the trailing backslash.
 //! - Raw text with a header: `editor.section_or_insert(name)?`, which appends the section at the
 //!   end of the document.
-//! - The tree types, [`SyntaxNode`](crate::SyntaxNode), [`SyntaxToken`](crate::SyntaxToken),
-//!   [`SyntaxElement`](crate::SyntaxElement) and the `rowan::GreenNode` of
-//!   [`Parse::green`](crate::Parse::green), are rowan 0.17's; code that names rowan's types
-//!   depends on `rowan = "0.17"`. `node.green()` returns `&GreenNodeData`:
-//!   `.green().to_owned()` instead of `.green().into_owned()`. rowan 0.17 has no mutable trees
-//!   (`clone_for_update`, `detach`, `splice_children`): edit through the editor, or build a new
-//!   tree with `GreenNodeData::replace_child`, `insert_child`, `remove_child` or
-//!   `splice_children` and `SyntaxNode::replace_with`.
+//! - rowan's types are rowan 0.17's: the tree types [`SyntaxNode`](crate::SyntaxNode),
+//!   [`SyntaxToken`](crate::SyntaxToken) and [`SyntaxElement`](crate::SyntaxElement), the
+//!   `rowan::GreenNode` of [`Parse::green`](crate::Parse::green), the `rowan::Language` that
+//!   [`IniLang`](crate::IniLang) implements and the `rowan::SyntaxKind` that
+//!   [`SyntaxKind`](crate::SyntaxKind) converts into. Code that names rowan's types depends on
+//!   `rowan = "0.17"`; with rowan 0.16, `rowan::SyntaxNode<IniLang>` fails to compile because
+//!   `IniLang` does not implement 0.16's `Language`. `node.green()` returns `&GreenNodeData`
+//!   instead of a `Cow`, and the `From<Cow<GreenNodeData>>` conversions into `GreenNode` and
+//!   `GreenElement` are gone: `.green().to_owned()` instead of `.green().into_owned()` or
+//!   `GreenNode::from(node.green())`. rowan 0.17 has no mutable trees (`clone_for_update`,
+//!   `detach`, `SyntaxNode::splice_children`): edit through the editor, or build a new tree with
+//!   `GreenNodeData::replace_child`, `insert_child`, `remove_child` or `splice_children` and
+//!   `SyntaxNode::replace_with`.
 //!
 //! Behavior changes: every mutator and the constructor return `Result`, and refused edits change
 //! nothing; lookups have no side effects; positions count body lines; raw lines are parsed into
