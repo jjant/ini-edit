@@ -165,7 +165,8 @@ impl Parse {
         &self.green
     }
 
-    /// Recoverable errors. Even when non-empty the tree still round-trips.
+    /// Recoverable errors, in source order and at most one per offset. Even
+    /// when non-empty the tree still round-trips.
     #[must_use]
     pub fn errors(&self) -> &[ParseError] {
         &self.errors
@@ -226,24 +227,43 @@ impl ParseError {
     }
 
     /// Format the error with source context, showing line/column and a caret.
+    ///
+    /// The caret sits under the reported column. Every gutter is as wide as
+    /// the line number, and the padding before the caret repeats each tab of
+    /// the source line, which a terminal expands to the same tab stop in both
+    /// rows, and turns every other character into a space. Columns count
+    /// characters, not terminal cells, so each wide (East Asian) character
+    /// before the column moves the caret one cell to the left of it, and each
+    /// combining character one cell to the right.
     #[must_use]
     #[expect(
         clippy::missing_panics_doc,
-        reason = "line_col counts columns from 1 for every source and offset"
+        reason = "line_col counts from 1, and the line holds every character before the column"
     )]
     pub fn display(&self, source: &str) -> String {
-        use std::fmt::Write;
         let (line, column) = self.line_col(source);
-        // The caret padding below is `column - 1`.
+        // The padding below is the `column - 1` characters before the column.
         assert!(column >= 1);
         let source_line = source_line(source, line);
-        let mut out = String::new();
-        let _ = writeln!(out, "INI parse error at line {line}, column {column}");
-        let _ = writeln!(out, "  |");
-        let _ = writeln!(out, "{line:>3} | {source_line}");
-        let _ = writeln!(out, "  | {}^", " ".repeat(column - 1));
-        let _ = write!(out, "  = {}", self.message);
-        out
+        let padding: String = source_line
+            .chars()
+            .take(column - 1)
+            .map(|character| if character == '\t' { '\t' } else { ' ' })
+            .collect();
+        // Paired with `line_col`: the line holds every character before the
+        // column, so the caret does not fall short of it. The padding is
+        // ASCII, so its length counts characters.
+        assert_eq!(padding.len(), column - 1);
+        let number = line.to_string();
+        let gutter = " ".repeat(number.len());
+        format!(
+            "INI parse error at line {line}, column {column}\n\
+             {gutter} |\n\
+             {number} | {source_line}\n\
+             {gutter} | {padding}^\n\
+             {gutter} = {message}",
+            message = self.message,
+        )
     }
 }
 
@@ -362,21 +382,28 @@ impl Parser<'_> {
         self.skip(SyntaxKind::WHITESPACE);
         self.expect_token(SyntaxKind::L_BRACK);
         self.skip(SyntaxKind::WHITESPACE);
-        if self.peek() == Some(SyntaxKind::IDENT) {
-            self.bump();
-        } else {
-            self.error("expected section name");
-        }
+        let named = self.peek() == Some(SyntaxKind::IDENT);
+        self.skip(SyntaxKind::IDENT);
         self.skip(SyntaxKind::WHITESPACE);
-        if self.peek() == Some(SyntaxKind::R_BRACK) {
+        let closed = self.peek() == Some(SyntaxKind::R_BRACK);
+        // One diagnostic per position. The lexer emits whitespace after the
+        // `[` as one token, so without a name the `]` or the line break comes
+        // next: a header missing both lacks them at one offset.
+        let missing = match (named, closed) {
+            (true, true) => None,
+            (false, true) => Some("expected section name"),
+            (true, false) => Some("expected ']'"),
+            (false, false) => Some("expected section name and ']'"),
+        };
+        if let Some(message) = missing {
+            self.error(message);
+        }
+        if closed {
             self.bump();
-        } else {
-            self.error("expected ']'");
+        } else if !self.at_end() {
             // Negative space: without a `]`, the lexer runs the name to the
             // line break, so nothing else is on the line.
-            if !self.at_end() {
-                assert_eq!(self.peek(), Some(SyntaxKind::NEWLINE));
-            }
+            assert_eq!(self.peek(), Some(SyntaxKind::NEWLINE));
         }
         // Retain malformed trailing text, but report it at its own offset.
         self.skip(SyntaxKind::WHITESPACE);
@@ -413,16 +440,18 @@ impl Parser<'_> {
             // Negative space: the lexer starts a value only after a
             // separator, so a bare key's value node stays empty.
             assert_ne!(self.peek(), Some(SyntaxKind::VALUE_TEXT));
+            // One diagnostic per position. A missing separator is reported
+            // where any text after the key (`key junk`) starts, so that text
+            // gets its own message only where bare keys are allowed.
             if !self.options.allow_no_value {
                 self.error("expected '=' or ':'");
+            } else if self.peek() == Some(SyntaxKind::LEX_ERROR) {
+                self.error("unexpected text after key");
             }
-        }
-        // Text after a key without a separator (`key junk`) is lexed as one
-        // error token. Keep it on the entry's line, before its empty value, so
-        // assigning a value replaces it.
-        if self.peek() == Some(SyntaxKind::LEX_ERROR) {
-            self.error(format!("unexpected token: {:?}", SyntaxKind::LEX_ERROR));
-            self.bump();
+            // Text after a key without a separator is lexed as one error
+            // token. Keep it on the entry's line, before its empty value, so
+            // assigning a value replaces it.
+            self.skip(SyntaxKind::LEX_ERROR);
         }
 
         self.builder.start_node(SyntaxKind::VALUE.into());
@@ -467,7 +496,16 @@ impl Parser<'_> {
         // `line_kind` dispatches here only on a token that starts no other
         // kind of line, and the lexer lexes such a line as one `LEX_ERROR`.
         assert_eq!(self.peek(), Some(SyntaxKind::LEX_ERROR));
-        self.error(format!("unexpected token: {:?}", SyntaxKind::LEX_ERROR));
+        // Any other first character starts a key, a comment or a header, so
+        // the line starts with a separator that no key comes before.
+        let text = self.tokens[self.cursor].text;
+        let message = if text.starts_with('=') {
+            "expected a key before '='"
+        } else {
+            assert!(text.starts_with(':'));
+            "expected a key before ':'"
+        };
+        self.error(message);
         self.bump_rest_of_line();
         self.builder.finish_node();
     }
@@ -494,18 +532,24 @@ impl Parser<'_> {
         }
     }
 
-    fn error(&mut self, message: impl Into<String>) {
+    /// Report `message` at the current offset. Messages are fixed text: none
+    /// is formatted from internal values such as a token kind's name, and
+    /// each allocates only its own length.
+    fn error(&mut self, message: &'static str) {
         // Re-scanning the consumed prefix for each diagnostic makes a file
         // with one error per line quadratic in its input size.
         let error = ParseError {
-            message: message.into(),
+            message: message.to_owned(),
             offset: self.offset,
         };
-        // The offset only grows, so diagnostics are in source order.
+        // At most one diagnostic per position, in source order. The offset
+        // only grows, and where two problems meet at one offset (a header
+        // without its name and `]`, text after a bare key) the caller reports
+        // them as one.
         assert!(
             self.errors
                 .last()
-                .is_none_or(|previous| previous.offset <= error.offset)
+                .is_none_or(|previous| previous.offset < error.offset)
         );
         self.errors.push(error);
     }
@@ -616,99 +660,88 @@ mod tests {
         );
     }
 
-    #[test]
-    fn malformed_lines_are_single_line_nodes_with_unchanged_diagnostics() {
+    /// Malformed lines, each with its node kind, its one diagnostic with
+    /// `allow_no_value` off and then on, and the diagnostic's byte offset in
+    /// the line. These lines used to report `unexpected token: LEX_ERROR`,
+    /// after `expected '=' or ':'` at the same offset for text after a key.
+    const MALFORMED_LINES: [(&str, SyntaxKind, &str, &str, usize); 6] = {
+        const EQUALS: &str = "expected a key before '='";
+        const COLON: &str = "expected a key before ':'";
         const SEPARATOR: &str = "expected '=' or ':'";
-        const TOKEN: &str = "unexpected token: LEX_ERROR";
-        // Each case is a line, its node kind, its diagnostics with
-        // allow_no_value off and then on, and the column of its errors.
-        let cases = [
-            (
-                "=bad",
-                SyntaxKind::ERROR_LINE,
-                &[TOKEN][..],
-                &[TOKEN][..],
-                0,
-            ),
-            (":", SyntaxKind::ERROR_LINE, &[TOKEN], &[TOKEN], 0),
-            (
-                "key junk",
-                SyntaxKind::ENTRY,
-                &[SEPARATOR, TOKEN],
-                &[TOKEN],
-                4,
-            ),
-            (
-                "key\t\tjunk",
-                SyntaxKind::ENTRY,
-                &[SEPARATOR, TOKEN],
-                &[TOKEN],
-                5,
-            ),
-            (
-                "my key = value",
-                SyntaxKind::ENTRY,
-                &[SEPARATOR, TOKEN],
-                &[TOKEN],
-                3,
-            ),
-            (
-                "!include /etc/λ",
-                SyntaxKind::ENTRY,
-                &[SEPARATOR, TOKEN],
-                &[TOKEN],
-                9,
-            ),
-        ];
-        for (line, kind, strict, lenient, column) in cases {
+        const TEXT: &str = "unexpected text after key";
+        [
+            ("=bad", SyntaxKind::ERROR_LINE, EQUALS, EQUALS, 0),
+            (":", SyntaxKind::ERROR_LINE, COLON, COLON, 0),
+            ("key junk", SyntaxKind::ENTRY, SEPARATOR, TEXT, 4),
+            ("key\t\tjunk", SyntaxKind::ENTRY, SEPARATOR, TEXT, 5),
+            ("my key = value", SyntaxKind::ENTRY, SEPARATOR, TEXT, 3),
+            ("!include /etc/λ", SyntaxKind::ENTRY, SEPARATOR, TEXT, 9),
+        ]
+    };
+
+    #[test]
+    fn malformed_lines_are_single_line_nodes_with_one_diagnostic() {
+        for malformed_line in MALFORMED_LINES {
             for header in ["", "[s]\n", "[s]\r"] {
                 for indent in ["", " \t"] {
                     for ending in ["\n", "\r\n", "\r", ""] {
-                        for (allow_no_value, inline_comments) in
-                            [(false, false), (false, true), (true, false), (true, true)]
-                        {
-                            let options = ParseOptions {
-                                allow_no_value,
-                                inline_comments,
-                            };
-                            let next = if ending.is_empty() { "" } else { "next=1\n" };
-                            let source = format!("{header}{indent}{line}{ending}{next}");
-                            let parsed = parse_with(&source, &options);
-                            assert_eq!(parsed.syntax().text().to_string(), source);
-
-                            let parent = if header.is_empty() {
-                                parsed.syntax()
-                            } else {
-                                parsed.syntax().first_child().unwrap()
-                            };
-                            assert!(
-                                parent
-                                    .children_with_tokens()
-                                    .all(|element| element.as_node().is_some()),
-                                "{source:?}: every physical line must be one node"
-                            );
-                            let lines: Vec<_> = parent.children().collect();
-                            let offset = usize::from(!header.is_empty());
-                            assert_eq!(lines.len(), offset + 1 + usize::from(!next.is_empty()));
-                            assert_eq!(lines[offset].kind(), kind, "{source:?}");
-                            assert_eq!(
-                                lines[offset].text().to_string(),
-                                format!("{indent}{line}{ending}")
-                            );
-
-                            let expected = if allow_no_value { lenient } else { strict };
-                            let messages: Vec<_> = parsed
-                                .errors()
-                                .iter()
-                                .map(|error| error.message.as_str())
-                                .collect();
-                            assert_eq!(messages, expected, "{source:?}");
-                            for error in parsed.errors() {
-                                assert_eq!(error.offset, header.len() + indent.len() + column);
-                            }
-                        }
+                        check_malformed_line(malformed_line, header, indent, ending);
                     }
                 }
+            }
+        }
+    }
+
+    /// Parse a line of [`MALFORMED_LINES`] after `header` and `indent`, ended
+    /// by `ending` and, when that is a line break, followed by an entry, under
+    /// every parser-option combination. Check that the line is one node of
+    /// its kind, with its one diagnostic.
+    fn check_malformed_line(
+        (line, kind, strict, lenient, offset_in_line): (&str, SyntaxKind, &str, &str, usize),
+        header: &str,
+        indent: &str,
+        ending: &str,
+    ) {
+        let next = if ending.is_empty() { "" } else { "next=1\n" };
+        let source = format!("{header}{indent}{line}{ending}{next}");
+        // A header is the first line of its section.
+        let index = usize::from(!header.is_empty());
+        let offset = header.len() + indent.len() + offset_in_line;
+        for allow_no_value in [false, true] {
+            for inline_comments in [false, true] {
+                let options = ParseOptions {
+                    allow_no_value,
+                    inline_comments,
+                };
+                let parsed = parse_with(&source, &options);
+                assert_eq!(parsed.syntax().text().to_string(), source);
+
+                let parent = if header.is_empty() {
+                    parsed.syntax()
+                } else {
+                    parsed.syntax().first_child().unwrap()
+                };
+                assert!(
+                    parent
+                        .children_with_tokens()
+                        .all(|element| element.as_node().is_some()),
+                    "{source:?}: every physical line must be one node"
+                );
+                let lines: Vec<_> = parent.children().collect();
+                assert_eq!(lines.len(), index + 1 + usize::from(!next.is_empty()));
+                assert_eq!(lines[index].kind(), kind, "{source:?}");
+                assert_eq!(
+                    lines[index].text().to_string(),
+                    format!("{indent}{line}{ending}")
+                );
+
+                let message = if allow_no_value { lenient } else { strict };
+                let errors: Vec<_> = parsed
+                    .errors()
+                    .iter()
+                    .map(|error| (error.message.as_str(), error.offset))
+                    .collect();
+                assert_eq!(errors, [(message, offset)], "{source:?}, {options:?}");
             }
         }
     }
@@ -855,7 +888,12 @@ mod tests {
                 .collect()
         };
         assert_eq!(diagnostics(&implicit), diagnostics(&explicit));
-        assert_eq!(implicit.errors().len(), 2);
+        // Without inline comments, `; note` is text after a bare key, which
+        // is reported once, as the missing separator.
+        assert_eq!(
+            diagnostics(&implicit),
+            [("expected '=' or ':'".to_string(), 5)]
+        );
     }
 
     fn assert_round_trip(input: &str) {
@@ -960,31 +998,40 @@ mod tests {
             let parsed = parse(source);
             let error = &parsed.errors()[0];
             assert_eq!(error.line_col(source), (3, 10), "source: {source:?}");
-            let rendered = error.display(source);
-            assert!(rendered.contains("line 3, column 10"), "{rendered}");
-            assert!(rendered.contains("  3 | [unclosed"), "{rendered}");
+            assert_eq!(
+                error.display(source),
+                "INI parse error at line 3, column 10\n\
+                 \x20 |\n\
+                 3 | [unclosed\n\
+                 \x20 |          ^\n\
+                 \x20 = expected ']'",
+                "source: {source:?}"
+            );
         }
     }
 
     #[test]
     fn a_bom_is_not_an_error_column() {
         // Each expected column is the number of characters before the error
-        // plus one. A BOM is zero-width, so neither the reported column nor
-        // the caret may count it.
-        let lines = [("=bad", 1), (" \t=bad", 3), ("[λ] junk", 5), ("\t[日本", 5)];
+        // plus one, and the caret's padding keeps the tabs among them. A BOM
+        // is zero-width, so neither the reported column nor the caret may
+        // count it.
+        let lines = [
+            ("=bad", 1, ""),
+            (" \t=bad", 3, " \t"),
+            ("[λ] junk", 5, "    "),
+            ("\t[日本", 5, "\t   "),
+        ];
         for bom in ["", "\u{FEFF}"] {
-            for (line, column) in lines {
+            for (line, column, padding) in lines {
                 for newline in ["\n", "\r\n", "\r", ""] {
-                    let caret = format!("\n  | {}^\n", " ".repeat(column - 1));
+                    let caret = format!("\n  | {padding}^\n");
 
                     let source = format!("{bom}{line}{newline}");
                     let error = parse(&source).errors()[0].clone();
                     assert_eq!(error.line_col(&source), (1, column), "{source:?}");
                     let rendered = error.display(&source);
-                    assert!(
-                        rendered.contains(&format!("\n  1 | {line}\n")),
-                        "{rendered}"
-                    );
+                    assert!(rendered.contains(&format!("\n1 | {line}\n")), "{rendered}");
                     assert!(rendered.contains(&caret), "{rendered}");
 
                     // The document marker never affected later lines.
@@ -992,10 +1039,7 @@ mod tests {
                     let error = parse(&source).errors()[0].clone();
                     assert_eq!(error.line_col(&source), (2, column), "{source:?}");
                     let rendered = error.display(&source);
-                    assert!(
-                        rendered.contains(&format!("\n  2 | {line}\n")),
-                        "{rendered}"
-                    );
+                    assert!(rendered.contains(&format!("\n2 | {line}\n")), "{rendered}");
                     assert!(rendered.contains(&caret), "{rendered}");
                 }
             }
@@ -1011,14 +1055,14 @@ mod tests {
                 offset: source.len() - 1,
             };
             assert_eq!(error.line_col(source), (1, 3), "{source:?}");
-            assert!(error.display(source).contains("\n  1 | k\u{FEFF}\n"));
+            assert!(error.display(source).contains("\n1 | k\u{FEFF}\n  |   ^\n"));
         }
         let error = ParseError {
             message: "problem".to_string(),
             offset: 3,
         };
         assert_eq!(error.line_col("\u{FEFF}"), (1, 1));
-        assert!(error.display("\u{FEFF}").contains("\n  1 | \n  | ^\n"));
+        assert!(error.display("\u{FEFF}").contains("\n1 | \n  | ^\n"));
     }
 
     #[test]
@@ -1049,7 +1093,8 @@ mod tests {
     #[test]
     fn error_offsets_follow_consumed_bytes_including_unicode_and_continuations() {
         // Expected offsets come from the source, independently of the token
-        // cursor. This also checks errors at EOF and two errors at one offset.
+        // cursor. This also checks errors at EOF, and a header that lacks
+        // both its name and its `]` at one offset.
         for newline in ["\n", "\r\n", "\r"] {
             let prefix = format!(
                 "\u{FEFF}; café{newline}[valid]{newline}key = 日本 \\{newline}continued{newline}"
@@ -1059,10 +1104,40 @@ mod tests {
             assert_eq!(parsed.syntax().text().to_string(), source);
             let offsets: Vec<_> = parsed.errors().iter().map(|error| error.offset).collect();
             let missing_name = source.rfind('[').unwrap() + 1;
-            assert_eq!(
-                offsets,
-                [prefix.len() + 2, missing_name, missing_name, source.len()]
-            );
+            assert_eq!(offsets, [prefix.len() + 2, missing_name, source.len()]);
+        }
+    }
+
+    #[test]
+    fn a_header_reports_what_it_lacks_in_one_diagnostic() {
+        // A header without a name has nothing between its `[` and the `]` or
+        // the line break, so a missing name and a missing `]` are at one
+        // offset. It used to report "expected section name" and "expected
+        // ']'" there, two diagnostics for one position.
+        let cases = [
+            ("[s]", None),
+            ("[ s \t]", None),
+            ("[]", Some(("expected section name", 1))),
+            ("[ \t]", Some(("expected section name", 3))),
+            ("[s", Some(("expected ']'", 2))),
+            ("[s \t", Some(("expected ']'", 4))),
+            ("[", Some(("expected section name and ']'", 1))),
+            ("[ \t", Some(("expected section name and ']'", 3))),
+        ];
+        for (header, expected) in cases {
+            for indent in ["", " \t"] {
+                for ending in ["\n", "\r\n", "\r", ""] {
+                    let source = format!("{indent}{header}{ending}");
+                    let parsed = parse(&source);
+                    assert_eq!(parsed.syntax().text().to_string(), source);
+                    let errors: Vec<_> = parsed
+                        .errors()
+                        .iter()
+                        .map(|error| (error.message.as_str(), error.offset - indent.len()))
+                        .collect();
+                    assert_eq!(errors, expected.as_slice(), "{source:?}");
+                }
+            }
         }
     }
 
@@ -1075,7 +1150,7 @@ mod tests {
         assert_eq!(parsed.errors().len(), 1024);
         for (index, error) in parsed.errors().iter().enumerate() {
             assert_eq!(error.offset, index * line.len() + 2);
-            assert_eq!(error.message, "unexpected token: LEX_ERROR");
+            assert_eq!(error.message, "expected a key before '='");
         }
     }
 
@@ -1086,14 +1161,14 @@ mod tests {
             offset: 4,
         };
         let rendered = final_line.display("one\nlast");
-        assert!(rendered.contains("  2 | last"), "{rendered}");
+        assert!(rendered.contains("\n2 | last\n  | ^\n"), "{rendered}");
 
         let past_end = ParseError {
             message: "problem".to_string(),
             offset: usize::MAX,
         };
         let rendered = past_end.display("one\n");
-        assert!(rendered.contains("  2 | "), "{rendered}");
+        assert!(rendered.contains("\n2 | \n  | ^\n"), "{rendered}");
     }
 
     #[test]
@@ -1101,11 +1176,56 @@ mod tests {
         let source = "[s]\nk=v\n[unclosed\n";
         let parsed = parse(source);
         let error = &parsed.errors()[0];
-        let rendered = error.display(source);
-        assert!(rendered.contains("line 3, column 10"));
-        assert!(rendered.contains("[unclosed"));
-        assert!(rendered.contains('^'));
-        assert!(rendered.contains("expected ']'"));
+        // The caret is under the column, just past "[unclosed", and every
+        // gutter bar lines up. It used to be two columns to the left, under
+        // the 'e', with the source row's bar two columns to the right.
+        assert_eq!(
+            error.display(source),
+            "INI parse error at line 3, column 10\n\
+             \x20 |\n\
+             3 | [unclosed\n\
+             \x20 |          ^\n\
+             \x20 = expected ']'"
+        );
+    }
+
+    /// Check the rendering of `\tkey junk` on `line`: the gutter is as wide
+    /// as the line number, so the caret row starts its text where the source
+    /// row does, and the caret is under column 6, the missing separator.
+    fn assert_caret_under_the_column_on_line(line: usize) {
+        let source = format!("{}\tkey junk\n", "\n".repeat(line - 1));
+        let parsed = parse(&source);
+        assert_eq!(parsed.errors().len(), 1);
+        let gutter = " ".repeat(line.to_string().len());
+        // The tab before the key stays a tab in the padding, so it expands
+        // to the same tab stop in both rows.
+        assert_eq!(
+            parsed.errors()[0].display(&source),
+            format!(
+                "INI parse error at line {line}, column 6\n\
+                 {gutter} |\n\
+                 {line} | \tkey junk\n\
+                 {gutter} | \t    ^\n\
+                 {gutter} = expected '=' or ':'"
+            )
+        );
+    }
+
+    #[test]
+    fn the_caret_is_under_the_column_for_line_numbers_of_one_to_four_digits() {
+        // A fixed three-digit gutter put the caret two columns left of the
+        // column below line 1000, and three from line 1000 to 9999.
+        for line in [1, 9, 10, 99, 100, 999, 1000] {
+            assert_caret_under_the_column_on_line(line);
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "parses ten thousand lines")]
+    fn the_caret_is_under_the_column_for_a_five_digit_line_number() {
+        // A fixed three-digit gutter put the caret one column further left
+        // for each digit after the third, so four columns left here.
+        assert_caret_under_the_column_on_line(10_000);
     }
 
     fn inline() -> ParseOptions {
@@ -1240,15 +1360,25 @@ mod tests {
     #[test]
     #[should_panic(expected = "left: Some(R_BRACK)\n right: Some(LEX_ERROR)")]
     fn an_error_line_starts_with_unexpected_text() {
-        // Without the assertion: an error line and "unexpected token: R_BRACK".
+        // Without the assertion: an error line for a token that the lexer
+        // never starts one with, which the separator check below it rejects
+        // without naming the token.
         parse_tokens(&[(SyntaxKind::R_BRACK, "]")]);
+    }
+
+    #[test]
+    #[should_panic(expected = "assertion failed: text.starts_with(':')")]
+    fn an_error_line_starts_with_a_separator() {
+        // Without the assertion: "expected a key before ':'" on a line
+        // without one.
+        parse_tokens(&[(SyntaxKind::LEX_ERROR, "junk")]);
     }
 
     #[test]
     #[should_panic(expected = "left: Some(WHITESPACE)\n right: Some(WHITESPACE)")]
     fn indentation_is_one_token() {
-        // Without the assertion: an error line and "unexpected token:
-        // WHITESPACE".
+        // Without the assertion: an error line that starts with whitespace,
+        // which `parse_error_line` rejects without naming the cause.
         parse_tokens(&[
             (SyntaxKind::WHITESPACE, " "),
             (SyntaxKind::WHITESPACE, "\t"),
@@ -1286,8 +1416,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "left: Some(LEX_ERROR)\n right: Some(LEX_ERROR)")]
     fn no_unexpected_text_follows_a_separator() {
-        // Without the assertion: "unexpected token: LEX_ERROR" on an entry
-        // with a separator, and its text outside the value.
+        // Without the assertion: text after a separator outside the value,
+        // which the entry leaves to a second node on its line.
         parse_tokens(&[
             (SyntaxKind::IDENT, "key"),
             (SyntaxKind::EQ, "="),
@@ -1299,7 +1429,8 @@ mod tests {
     #[should_panic(expected = "left: Some(LEX_ERROR)\n right: Some(NEWLINE)")]
     fn a_header_without_its_bracket_ends_at_its_name() {
         // Without the assertion: both "expected ']'" and "unexpected text
-        // after section header" for the same position.
+        // after section header" for the same position, which `error` rejects
+        // without naming the cause.
         parse_tokens(&[
             (SyntaxKind::L_BRACK, "["),
             (SyntaxKind::IDENT, "name"),
@@ -1307,23 +1438,43 @@ mod tests {
         ]);
     }
 
-    #[test]
-    #[should_panic(expected = "assertion failed: self.errors")]
-    fn error_rejects_a_diagnostic_before_the_previous_one() {
+    /// Report a diagnostic at byte `offset` after one at byte 5, and return
+    /// the offsets of the diagnostics.
+    fn error_after_one_at_byte_5(offset: usize) -> Vec<usize> {
         let options = ParseOptions::default();
         let mut parser = Parser {
             tokens: Vec::new(),
             cursor: 0,
-            offset: 0,
+            offset,
             builder: GreenNodeBuilder::new(),
             errors: vec![ParseError {
-                message: "later".to_string(),
+                message: "first".to_string(),
                 offset: 5,
             }],
             options: &options,
         };
+        parser.error("second");
+        parser.errors.iter().map(|error| error.offset).collect()
+    }
+
+    #[test]
+    #[should_panic(expected = "assertion failed: self.errors")]
+    fn error_rejects_a_diagnostic_before_the_previous_one() {
         // Without the assertion: diagnostics out of source order.
-        parser.error("earlier");
+        error_after_one_at_byte_5(0);
+    }
+
+    #[test]
+    #[should_panic(expected = "assertion failed: self.errors")]
+    fn error_rejects_a_second_diagnostic_at_the_same_offset() {
+        // Without the assertion: two diagnostics for one position, as `key
+        // junk` and a lone `[` used to report.
+        error_after_one_at_byte_5(5);
+    }
+
+    #[test]
+    fn error_accepts_a_diagnostic_after_the_previous_one() {
+        assert_eq!(error_after_one_at_byte_5(6), [5, 6]);
     }
 
     // The tests below check both sides of the input size limit. The first
@@ -1379,6 +1530,6 @@ mod tests {
         assert!(!fits_text_size(input.len()));
         // Without the assertion in parse_with: the 4 GiB input is lexed in
         // full, and rowan then panics inside text-size.
-        let _ = parse(&input);
+        drop(parse(&input));
     }
 }

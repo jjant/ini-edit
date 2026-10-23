@@ -4,12 +4,12 @@ expression: "errors(\"[unclosed\\nbare_key\\n\")"
 ---
 INI parse error at line 1, column 10
   |
-  1 | [unclosed
+1 | [unclosed
   |          ^
   = expected ']'
 
 INI parse error at line 2, column 9
   |
-  2 | bare_key
+2 | bare_key
   |         ^
   = expected '=' or ':'

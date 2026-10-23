@@ -157,19 +157,31 @@ fn diagnostics_cover_final_empty_and_missing_lines() {
         message: "problem".to_string(),
         offset: 4,
     };
-    assert!(final_line.display("one\nlast").contains("  2 | last"));
+    assert!(
+        final_line
+            .display("one\nlast")
+            .contains("\n2 | last\n  | ^\n")
+    );
 
     let final_empty_line = ParseError {
         message: "problem".to_string(),
         offset: usize::MAX,
     };
-    assert!(final_empty_line.display("one\n").contains("  2 | "));
+    assert!(
+        final_empty_line
+            .display("one\n")
+            .contains("\n2 | \n  | ^\n")
+    );
 
     let missing_line = ParseError {
         message: "problem".to_string(),
         offset: usize::MAX,
     };
-    assert!(missing_line.display("one").contains("  1 | one"));
+    assert!(
+        missing_line
+            .display("one")
+            .contains("\n1 | one\n  |    ^\n")
+    );
 }
 
 #[test]

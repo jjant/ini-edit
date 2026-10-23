@@ -70,11 +70,11 @@ fn many_errors_have_correct_offsets_without_losing_text() {
     let source = "bad key\n".repeat(65_536);
     let parsed = parse(&source);
     assert_eq!(parsed.syntax().text().to_string(), source);
-    // Each line is missing a separator and contains unexpected trailing text.
-    assert_eq!(parsed.errors().len(), 2 * 65_536);
-    for (line, errors) in parsed.errors().chunks_exact(2).enumerate() {
-        for error in errors {
-            assert_eq!(error.offset, line * "bad key\n".len() + "bad ".len());
-        }
+    // Each line is missing a separator where unexpected text follows the
+    // key, which is one diagnostic.
+    assert_eq!(parsed.errors().len(), 65_536);
+    for (line, error) in parsed.errors().iter().enumerate() {
+        assert_eq!(error.offset, line * "bad key\n".len() + "bad ".len());
+        assert_eq!(error.message, "expected '=' or ':'");
     }
 }
