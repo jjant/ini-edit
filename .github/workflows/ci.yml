@@ -108,6 +108,83 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: cargo test --locked --all-targets --all-features
 
+  # The other jobs test the repository; this one tests the crate that
+  # `cargo publish` uploads, the sources that users, distribution packagers,
+  # and crater runs test. It fails if a test stops shipping or ships without
+  # a file it reads.
+  package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+      - name: Ship every tracked file except the repository-only ones
+        # repository_only names the files that package.exclude in Cargo.toml
+        # leaves out, one extended regular expression per line, each matched
+        # against whole paths. The step keeps its own copy on purpose: to stop
+        # shipping a test or its data, a pull request has to change both
+        # lists, so the test step below cannot turn green because failing
+        # tests left the crate.
+        shell: bash
+        run: |
+          repository_only='\.github/.+
+          fuzz/.+
+          tests/fuzz_regressions/.+
+          tests/fuzz_regressions\.rs
+          tests/support/(editor_ops|editor_reparse|editor_stateful|generated_edits)\.rs
+          \.release-plz\.toml
+          \.secretsignore
+          codecov\.yml
+          deny\.toml'
+          packaged=$(cargo package --locked --list)
+          if grep --line-regexp --extended-regexp "$repository_only" <<< "$packaged"; then
+            echo "::error file=Cargo.toml::Only this repository uses the files above;" \
+              "add them to package.exclude."
+            exit 1
+          fi
+          # Every other tracked file ships, and so do the two files cargo
+          # generates. core.quotePath=false prints non-ASCII names as cargo does.
+          tracked=$(git -c core.quotePath=false ls-files \
+            | grep --invert-match --line-regexp --extended-regexp "$repository_only")
+          shipped=$(grep --invert-match --line-regexp --extended-regexp \
+            'Cargo\.toml\.orig|\.cargo_vcs_info\.json' <<< "$packaged")
+          if ! diff --unchanged-line-format= \
+            --old-line-format='Left out: %L' \
+            --new-line-format='Ships but git does not track it: %L' \
+            <(sort <<< "$tracked") <(sort <<< "$shipped"); then
+            echo "::error file=Cargo.toml::Ship the files left out above or, if only this" \
+              "repository uses them, add them to package.exclude and to repository_only" \
+              "in ci.yml."
+            exit 1
+          fi
+      - name: Build the crate as crates.io will receive it
+        # Like `cargo publish`, this also builds the library from the packaged
+        # sources.
+        run: cargo package --locked
+      - name: Test the packaged crate outside the repository
+        # Extracted outside the checkout, the crate builds as it does for
+        # anyone who downloads it: no repository file or Cargo configuration
+        # applies. --no-fail-fast names every failing target in one run.
+        shell: bash
+        env:
+          # Never cache this directory. Cargo dates every file in a .crate
+          # 2006-07-24, so it would treat an earlier build of the same version
+          # as up to date and rerun its old test binaries on changed sources.
+          CARGO_TARGET_DIR: ${{ runner.temp }}/package-target
+        run: |
+          crate=$(cargo metadata --locked --no-deps --format-version 1 \
+            | jq --raw-output \
+              '.packages[] | select(.name == "ini-edit") | "\(.name)-\(.version)"')
+          tar --extract --gzip --directory "$RUNNER_TEMP" \
+            --file "target/package/$crate.crate"
+          cd "$RUNNER_TEMP/$crate"
+          cargo test --locked --all-targets --all-features --no-fail-fast
+          cargo test --locked --doc --all-features
+
   extended-tests:
     runs-on: ubuntu-24.04
     timeout-minutes: 15

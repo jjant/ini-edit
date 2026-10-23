@@ -269,6 +269,29 @@ Coverage is a meta-test of the test suite, not a substitute for testing the
 shipping configuration. CI separately runs the complete suite on stable Rust
 in debug and release modes and on the minimum supported Rust version.
 
+The `package` job tests the crate that `cargo publish` uploads rather than the
+repository. First it compares the crate's file list with the repository: the
+crate must contain every tracked file except the ones that only this
+repository uses, and none of those. `package.exclude` in `Cargo.toml` leaves
+them out, and the job keeps its own list of them, so a test or the data it
+reads can leave the crate only through a change to both lists. Then the job
+builds the `.crate` file with `cargo package`, extracts it outside the
+checkout, and runs the shipped tests and doctests there, so a test fails if it
+reads a file the crate leaves out, as the snapshot tests of 0.4.0 did. The
+tests must build in an empty target directory: cargo dates every file in a
+`.crate` 2006-07-24, so it treats an earlier build of the same version as up
+to date and reruns its old test binaries. To build and test the packaged crate
+locally:
+
+```sh
+dir=$(mktemp -d)
+cargo package --locked --target-dir "$dir/target"
+tar -xzf "$dir/target/package/ini-edit-<version>.crate" -C "$dir"
+cd "$dir/ini-edit-<version>"
+cargo test --locked --target-dir target --all-targets --all-features
+cargo test --locked --target-dir target --doc --all-features
+```
+
 Miri runs all lexer unit tests and independent lexer/diagnostic contracts with
 borrow checking enabled. These tests do not construct `rowan` trees.
 
@@ -323,3 +346,6 @@ Before release, all required GitHub checks must be green:
    `cargo update --manifest-path fuzz/Cargo.toml --package ini-edit` to the
    release pull request every time it opens or rewrites it. If that step
    fails, run the command and commit `fuzz/Cargo.lock` by hand.
+10. The package check: the crate ships every tracked file except the
+    repository-only ones, and its tests and doctests pass when run from the
+    extracted `.crate` file.
