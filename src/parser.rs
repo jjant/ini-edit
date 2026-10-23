@@ -11,6 +11,10 @@ use crate::syntax_kind::{SyntaxKind, SyntaxNode};
 /// Parse an INI source string.
 ///
 /// Every [`ParseOptions`] flag is off, as in `ParseOptions::default()`.
+///
+/// # Panics
+///
+/// Panics if `input` is longer than `u32::MAX` bytes, like [`parse_with`].
 #[must_use]
 pub fn parse(input: &str) -> Parse {
     // Spelled out so that a change to the derived defaults cannot silently
@@ -23,6 +27,11 @@ pub fn parse(input: &str) -> Parse {
 }
 
 /// Parse an INI source string with custom options.
+///
+/// # Panics
+///
+/// Panics if `input` is longer than `u32::MAX` bytes, the most text a
+/// `rowan` tree can measure.
 #[must_use]
 pub fn parse_with(input: &str, options: &ParseOptions) -> Parse {
     let tokens = lex_with(input, options.inline_comments);
@@ -35,8 +44,36 @@ pub fn parse_with(input: &str, options: &ParseOptions) -> Parse {
         options,
     };
     parser.parse_root();
+    // Paired with the lexer's checks: every token was consumed once, in
+    // order, and the offsets cover the input.
+    assert_eq!(parser.cursor, parser.tokens.len());
+    assert_eq!(parser.offset, input.len());
+    // Diagnostics are in source order (see `Parser::error`), so the last one
+    // bounds them all.
+    assert!(
+        parser
+            .errors
+            .last()
+            .is_none_or(|error| error.offset <= input.len())
+    );
+    let green = parser.builder.finish();
+    // The tree covers the input. rowan measures text in u32, so this also
+    // stops an input that it cannot measure, instead of returning a tree with
+    // a wrapped length.
+    assert_eq!(usize::from(green.text_len()), input.len());
+    // O(n) checks, so debug builds only.
+    #[cfg(all(debug_assertions, not(miri)))]
+    {
+        let root = SyntaxNode::new_root(green.clone());
+        // The central invariant: the tree reproduces the input.
+        assert_eq!(root.text(), input);
+        // Every physical line is one node that owns only its own line break,
+        // as editor line indices require. The editor checks it again when
+        // it hands out its tree.
+        crate::editor::debug_assert_line_nodes(&root);
+    }
     Parse {
-        green: parser.builder.finish(),
+        green,
         errors: parser.errors,
     }
 }
@@ -122,6 +159,10 @@ impl ParseError {
     ///
     /// Columns count characters. A leading UTF-8 BOM is not a column.
     #[must_use]
+    #[expect(
+        clippy::missing_panics_doc,
+        reason = "line and column start at 1 and only grow or return to 1"
+    )]
     pub fn line_col(&self, source: &str) -> (usize, usize) {
         let mut line = 1;
         let mut column = 1;
@@ -150,14 +191,24 @@ impl ParseError {
                 }
             }
         }
+        // Both count from 1. Paired with `source_line` and `display`, which
+        // rely on it.
+        assert!(line >= 1);
+        assert!(column >= 1);
         (line, column)
     }
 
     /// Format the error with source context, showing line/column and a caret.
     #[must_use]
+    #[expect(
+        clippy::missing_panics_doc,
+        reason = "line_col counts columns from 1 for every source and offset"
+    )]
     pub fn display(&self, source: &str) -> String {
         use std::fmt::Write;
         let (line, column) = self.line_col(source);
+        // The caret padding below is `column - 1`.
+        assert!(column >= 1);
         let source_line = source_line(source, line);
         let mut out = String::new();
         let _ = writeln!(out, "INI parse error at line {line}, column {column}");
@@ -182,13 +233,18 @@ fn bom_len(source: &str) -> usize {
 /// The text of the 1-based line `target_line` of `source`, without its line
 /// break. A leading BOM is not part of the first line.
 fn source_line(source: &str, target_line: usize) -> &str {
-    // display() obtains target_line from line_col() over this same source, so
-    // the requested line always exists, including the empty line after a final
-    // newline.
+    // Lines count from 1, as `line_col` reports them. Line 0 would silently
+    // name the first line.
+    assert!(target_line >= 1);
     let mut rest = &source[bom_len(source)..];
     for _ in 1..target_line {
         let line_break_start = line_len(rest);
-        rest = &rest[line_break_start + line_break_len(&rest[line_break_start..])..];
+        let newline_len = line_break_len(&rest[line_break_start..]);
+        // display() obtains target_line from line_col() over this same
+        // source, so the requested line always exists, including the empty
+        // line after a final newline: every earlier line has a line break.
+        assert!(newline_len > 0);
+        rest = &rest[line_break_start + newline_len..];
     }
     &rest[..line_len(rest)]
 }
@@ -232,7 +288,11 @@ impl Parser<'_> {
         // only at a header or at the end, so each iteration starts a section.
         self.parse_lines_until_header();
         while !self.at_end() {
+            let section_start = self.cursor;
             self.parse_section();
+            // A section owns at least its header's `[`, so the loop runs at
+            // most once per token.
+            assert!(self.cursor > section_start);
         }
         self.builder.finish_node();
     }
@@ -249,12 +309,21 @@ impl Parser<'_> {
     /// the input. The root and every section share this one line dispatch.
     fn parse_lines_until_header(&mut self) {
         while !self.at_end() {
+            let line_start = self.cursor;
             match self.line_kind() {
                 LineKind::Section => break,
                 LineKind::Blank => self.parse_blank_line(),
                 LineKind::Comment => self.parse_comment_line(),
                 LineKind::Entry => self.parse_entry(),
                 LineKind::Error => self.parse_error_line(),
+            }
+            // Every line consumes a token, so the loop runs at most once per
+            // token.
+            assert!(self.cursor > line_start);
+            // Paired with the lexer's check: every line node but the last
+            // ends with its own line break.
+            if !self.at_end() {
+                assert_eq!(self.tokens[self.cursor - 1].kind, SyntaxKind::NEWLINE);
             }
         }
     }
@@ -276,6 +345,11 @@ impl Parser<'_> {
             self.bump();
         } else {
             self.error("expected ']'");
+            // Negative space: without a `]`, the lexer runs the name to the
+            // line break, so nothing else is on the line.
+            if !self.at_end() {
+                assert_eq!(self.peek(), Some(SyntaxKind::NEWLINE));
+            }
         }
         // Retain malformed trailing text, but report it at its own offset.
         self.skip(SyntaxKind::WHITESPACE);
@@ -302,15 +376,18 @@ impl Parser<'_> {
         if self.tokens.get(self.cursor + 1).map(|token| token.kind) != Some(SyntaxKind::COMMENT) {
             self.skip(SyntaxKind::WHITESPACE);
         }
-        match self.peek() {
-            Some(SyntaxKind::EQ | SyntaxKind::COLON) => {
-                self.bump();
-                self.skip(SyntaxKind::WHITESPACE);
-            }
-            _ => {
-                if !self.options.allow_no_value {
-                    self.error("expected '=' or ':'");
-                }
+        if let Some(SyntaxKind::EQ | SyntaxKind::COLON) = self.peek() {
+            self.bump();
+            self.skip(SyntaxKind::WHITESPACE);
+            // Negative space: the lexer lexes all text after a separator as
+            // the value, so unexpected text follows only a bare key.
+            assert_ne!(self.peek(), Some(SyntaxKind::LEX_ERROR));
+        } else {
+            // Negative space: the lexer starts a value only after a
+            // separator, so a bare key's value node stays empty.
+            assert_ne!(self.peek(), Some(SyntaxKind::VALUE_TEXT));
+            if !self.options.allow_no_value {
+                self.error("expected '=' or ':'");
             }
         }
         // Text after a key without a separator (`key junk`) is lexed as one
@@ -347,7 +424,10 @@ impl Parser<'_> {
     fn parse_blank_line(&mut self) {
         self.builder.start_node(SyntaxKind::BLANK_LINE.into());
         self.skip(SyntaxKind::WHITESPACE);
-        self.skip(SyntaxKind::NEWLINE);
+        // Only the last line of the input may end without a line break.
+        if !self.at_end() {
+            self.expect_token(SyntaxKind::NEWLINE);
+        }
         self.builder.finish_node();
     }
 
@@ -357,8 +437,10 @@ impl Parser<'_> {
     fn parse_error_line(&mut self) {
         self.builder.start_node(SyntaxKind::ERROR_LINE.into());
         self.skip(SyntaxKind::WHITESPACE);
-        let kind = self.peek().unwrap_or(SyntaxKind::LEX_ERROR);
-        self.error(format!("unexpected token: {kind:?}"));
+        // `line_kind` dispatches here only on a token that starts no other
+        // kind of line, and the lexer lexes such a line as one `LEX_ERROR`.
+        assert_eq!(self.peek(), Some(SyntaxKind::LEX_ERROR));
+        self.error(format!("unexpected token: {:?}", SyntaxKind::LEX_ERROR));
         self.bump_rest_of_line();
         self.builder.finish_node();
     }
@@ -370,6 +452,12 @@ impl Parser<'_> {
         if self.tokens.get(index).map(|token| token.kind) == Some(SyntaxKind::WHITESPACE) {
             index += 1;
         }
+        // Negative space: the lexer emits indentation as one token, and
+        // `parse_root` consumed the BOM, so whitespace never follows it.
+        assert_ne!(
+            self.tokens.get(index).map(|token| token.kind),
+            Some(SyntaxKind::WHITESPACE)
+        );
         match self.tokens.get(index).map(|token| token.kind) {
             None | Some(SyntaxKind::NEWLINE) => LineKind::Blank,
             Some(SyntaxKind::COMMENT) => LineKind::Comment,
@@ -386,6 +474,12 @@ impl Parser<'_> {
             message: message.into(),
             offset: self.offset,
         };
+        // The offset only grows, so diagnostics are in source order.
+        assert!(
+            self.errors
+                .last()
+                .is_none_or(|previous| previous.offset <= error.offset)
+        );
         self.errors.push(error);
     }
 
@@ -399,6 +493,11 @@ impl Parser<'_> {
 
     fn bump(&mut self) {
         let token = self.tokens[self.cursor];
+        // Paired with the lexer's check: every token holds at least one byte,
+        // so every bump advances the offset. The lexer asserts it in every
+        // build, and as `assert!` this copy costs 2-9% of parse time, so
+        // debug builds only.
+        debug_assert_ne!(token.text, "");
         self.builder.token(token.kind.into(), token.text);
         self.cursor += 1;
         self.offset += token.text.len();
@@ -423,7 +522,11 @@ impl Parser<'_> {
 
     /// Bump tokens up to and including the next newline (or end of input).
     fn bump_rest_of_line(&mut self) {
-        while let Some(kind) = self.peek() {
+        // Fixed upper bound: at most every remaining token is on this line,
+        // so a `bump` that stopped advancing ends the loop instead of hanging
+        // it, and the caller's progress assertion reports it.
+        for _ in self.cursor..self.tokens.len() {
+            let kind = self.tokens[self.cursor].kind;
             self.bump();
             if kind == SyntaxKind::NEWLINE {
                 break;
@@ -899,6 +1002,20 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "assertion failed: newline_len > 0")]
+    fn source_line_rejects_a_line_past_the_end() {
+        // line_col never reports this line for this source.
+        let _ = source_line("only line", 2);
+    }
+
+    #[test]
+    #[should_panic(expected = "assertion failed: target_line >= 1")]
+    fn source_line_rejects_line_zero() {
+        // Without the assertion: the first line.
+        let _ = source_line("only line", 0);
+    }
+
+    #[test]
     fn parse_error_records_offset_after_leading_whitespace() {
         let parsed = parse("  =bad\n");
         assert_eq!(parsed.errors()[0].offset, 2);
@@ -1073,5 +1190,114 @@ mod tests {
         let parsed = parse(input);
         assert_eq!(parsed.syntax().text().to_string(), input);
         assert!(!parsed.errors().is_empty());
+    }
+
+    // The tests below parse token streams that the lexer never produces. The
+    // parser panics instead of building a tree that breaks a guarantee of
+    // the lexer.
+
+    fn parse_tokens(tokens: &[(SyntaxKind, &str)]) {
+        let options = ParseOptions::default();
+        let mut parser = Parser {
+            tokens: tokens
+                .iter()
+                .map(|&(kind, text)| Token { kind, text })
+                .collect(),
+            cursor: 0,
+            offset: 0,
+            builder: GreenNodeBuilder::new(),
+            errors: Vec::new(),
+            options: &options,
+        };
+        parser.parse_root();
+    }
+
+    #[test]
+    #[should_panic(expected = "left: Some(R_BRACK)\n right: Some(LEX_ERROR)")]
+    fn an_error_line_starts_with_unexpected_text() {
+        // Without the assertion: an error line and "unexpected token: R_BRACK".
+        parse_tokens(&[(SyntaxKind::R_BRACK, "]")]);
+    }
+
+    #[test]
+    #[should_panic(expected = "left: Some(WHITESPACE)\n right: Some(WHITESPACE)")]
+    fn indentation_is_one_token() {
+        // Without the assertion: an error line and "unexpected token:
+        // WHITESPACE".
+        parse_tokens(&[
+            (SyntaxKind::WHITESPACE, " "),
+            (SyntaxKind::WHITESPACE, "\t"),
+            (SyntaxKind::IDENT, "key"),
+        ]);
+    }
+
+    #[test]
+    #[should_panic(expected = "left: Some(VALUE_TEXT)\n right: Some(VALUE_TEXT)")]
+    fn a_value_follows_a_separator() {
+        // Without the assertion: a bare key whose value node holds text,
+        // which `Entry::value` reports as `None`.
+        parse_tokens(&[
+            (SyntaxKind::IDENT, "key"),
+            (SyntaxKind::VALUE_TEXT, "value"),
+        ]);
+    }
+
+    #[test]
+    #[should_panic(expected = "left: IDENT\n right: NEWLINE")]
+    fn a_line_node_ends_at_its_line_break() {
+        // Without the assertion: two entry nodes on one physical line, which
+        // editor line indices cannot address.
+        parse_tokens(&[(SyntaxKind::IDENT, "first"), (SyntaxKind::IDENT, "second")]);
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "left: \"\"\n right: \"\"")]
+    fn every_token_holds_text() {
+        // Without the assertion: an entry line node that holds no text.
+        parse_tokens(&[(SyntaxKind::IDENT, "")]);
+    }
+
+    #[test]
+    #[should_panic(expected = "left: Some(LEX_ERROR)\n right: Some(LEX_ERROR)")]
+    fn no_unexpected_text_follows_a_separator() {
+        // Without the assertion: "unexpected token: LEX_ERROR" on an entry
+        // with a separator, and its text outside the value.
+        parse_tokens(&[
+            (SyntaxKind::IDENT, "key"),
+            (SyntaxKind::EQ, "="),
+            (SyntaxKind::LEX_ERROR, "junk"),
+        ]);
+    }
+
+    #[test]
+    #[should_panic(expected = "left: Some(LEX_ERROR)\n right: Some(NEWLINE)")]
+    fn a_header_without_its_bracket_ends_at_its_name() {
+        // Without the assertion: both "expected ']'" and "unexpected text
+        // after section header" for the same position.
+        parse_tokens(&[
+            (SyntaxKind::L_BRACK, "["),
+            (SyntaxKind::IDENT, "name"),
+            (SyntaxKind::LEX_ERROR, "junk"),
+        ]);
+    }
+
+    #[test]
+    #[should_panic(expected = "assertion failed: self.errors")]
+    fn error_rejects_a_diagnostic_before_the_previous_one() {
+        let options = ParseOptions::default();
+        let mut parser = Parser {
+            tokens: Vec::new(),
+            cursor: 0,
+            offset: 0,
+            builder: GreenNodeBuilder::new(),
+            errors: vec![ParseError {
+                message: "later".to_string(),
+                offset: 5,
+            }],
+            options: &options,
+        };
+        // Without the assertion: diagnostics out of source order.
+        parser.error("earlier");
     }
 }

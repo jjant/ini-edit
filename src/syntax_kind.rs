@@ -58,6 +58,62 @@ impl SyntaxKind {
     }
 }
 
+/// Defines `SyntaxKind::ALL` from one list of every variant. The generated
+/// match has no wildcard arm, so a variant missing from the list fails to
+/// compile (E0004).
+macro_rules! every_kind {
+    ($($kind:ident),+ $(,)?) => {
+        impl SyntaxKind {
+            /// Every kind in discriminant order, so `ALL[kind as usize] == kind`.
+            const ALL: [Self; [$(Self::$kind),+].len()] = [$(Self::$kind),+];
+        }
+
+        const _: () = assert!(match SyntaxKind::WHITESPACE {
+            $(SyntaxKind::$kind)|+ => true,
+        });
+    };
+}
+
+every_kind!(
+    WHITESPACE,
+    NEWLINE,
+    COMMENT,
+    L_BRACK,
+    R_BRACK,
+    EQ,
+    COLON,
+    IDENT,
+    VALUE_TEXT,
+    LEX_ERROR,
+    ROOT,
+    SECTION,
+    SECTION_HEADER,
+    ENTRY,
+    KEY,
+    VALUE,
+    COMMENT_LINE,
+    BLANK_LINE,
+    ERROR_LINE,
+);
+
+// `kind_from_raw` indexes `ALL` by discriminant, so the list must follow the
+// declaration order. The scan stays inside `assert!` so that cargo-mutants
+// leaves it alone: a mutated loop could make the proof vacuous and still
+// compile.
+const _: () = assert!(
+    {
+        let mut index = 0;
+        while index < SyntaxKind::ALL.len() {
+            if SyntaxKind::ALL[index] as usize != index {
+                break;
+            }
+            index += 1;
+        }
+        index == SyntaxKind::ALL.len()
+    },
+    "SyntaxKind::ALL must list the kinds in discriminant order"
+);
+
 impl From<SyntaxKind> for rowan::SyntaxKind {
     fn from(kind: SyntaxKind) -> Self {
         rowan::SyntaxKind(kind as u16)
@@ -72,28 +128,13 @@ impl Language for IniLang {
     type Kind = SyntaxKind;
 
     fn kind_from_raw(raw: rowan::SyntaxKind) -> Self::Kind {
-        match raw.0 {
-            0 => SyntaxKind::WHITESPACE,
-            1 => SyntaxKind::NEWLINE,
-            2 => SyntaxKind::COMMENT,
-            3 => SyntaxKind::L_BRACK,
-            4 => SyntaxKind::R_BRACK,
-            5 => SyntaxKind::EQ,
-            6 => SyntaxKind::COLON,
-            7 => SyntaxKind::IDENT,
-            8 => SyntaxKind::VALUE_TEXT,
-            9 => SyntaxKind::LEX_ERROR,
-            10 => SyntaxKind::ROOT,
-            11 => SyntaxKind::SECTION,
-            12 => SyntaxKind::SECTION_HEADER,
-            13 => SyntaxKind::ENTRY,
-            14 => SyntaxKind::KEY,
-            15 => SyntaxKind::VALUE,
-            16 => SyntaxKind::COMMENT_LINE,
-            17 => SyntaxKind::BLANK_LINE,
-            18 => SyntaxKind::ERROR_LINE,
-            _ => panic!("kind out of range: {}", raw.0),
-        }
+        let index = usize::from(raw.0);
+        assert!(
+            index < SyntaxKind::ALL.len(),
+            "kind out of range: {}",
+            raw.0
+        );
+        SyntaxKind::ALL[index]
     }
 
     fn kind_to_raw(kind: Self::Kind) -> rowan::SyntaxKind {
@@ -155,5 +196,12 @@ mod tests {
     #[should_panic(expected = "kind out of range")]
     fn kind_from_raw_out_of_range_panics() {
         let _ = IniLang::kind_from_raw(rowan::SyntaxKind(999));
+    }
+
+    #[test]
+    #[should_panic(expected = "kind out of range")]
+    fn kind_from_raw_rejects_the_first_raw_kind_past_the_last_variant() {
+        let past_the_end = u16::try_from(SyntaxKind::ALL.len()).unwrap();
+        let _ = IniLang::kind_from_raw(rowan::SyntaxKind(past_the_end));
     }
 }
