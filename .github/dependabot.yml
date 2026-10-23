@@ -1,0 +1,32 @@
+version: 2
+
+# Each entry waits 7 days after a release before proposing it, so a
+# compromised release that is yanked quickly never reaches a pull request.
+updates:
+  # Workflows pin every action to a commit SHA with a version comment;
+  # Dependabot moves both together, in one grouped pull request per week.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: ci
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # fuzz/ is a separate workspace with its own lockfile. The msrv job rejects
+  # / updates that need a newer compiler than rust-version; /fuzz updates only
+  # have to build on the fuzz job's pinned nightly. A / update that raises a
+  # normal dependency's requirement in Cargo.toml can leave fuzz/Cargo.lock
+  # stale; CI then says how to refresh it.
+  - package-ecosystem: cargo
+    directories: ["/", "/fuzz"]
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: chore
