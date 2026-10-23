@@ -171,6 +171,35 @@ CPU/RSS measurements, and terminates an individual probe after 45 seconds.
 It uses per-child resource accounting so time waiting for another process to
 use the CPU is excluded.
 
+A growth ratio cannot see a parser that needs twice the memory at every size,
+so three dense workloads also have an absolute bound on one parse of their
+largest input: 4 MiB of blank lines, and 2 MiB each of lines holding only `=`
+(an error with its own message every two bytes) and only `[` (two errors every
+two bytes). The check uses one parse in a fresh process because parsing again
+in the same process reuses a fragmented heap: at some sizes, eight parses of
+`=` lines peak 50% higher than one.
+
+Measured that way on Linux x86-64, with the input string included, one parse
+peaks at 66 bytes of RSS per input byte for blank lines, 85 for `=` lines, and
+110 for `[` lines. No line of up to three characters drawn from `[]=:;#\`, a
+letter, space, tab, and CR needs more, with any parse options. Short valid
+lines such as `a=` or `[a]` need about 70, `k=v` lines 59, and entries such as
+`key1=value1` 25. The bounds are 128 bytes per input byte for `=` and `[`
+lines, the sizing rule below, and 96 for blank lines, each plus 4 MiB, twice
+what the probe needs for a one-unit input. A regression that doubles the
+memory of a line takes the three workloads to 130, 169, and 218, at least 30%
+above their bounds, so the check fails.
+
+`parse` frees the lexer's tokens and the tree builder's buffers before it
+returns, but the returned `Parse` keeps the tree and every diagnostic, each
+with its own message string. A `Parse` that stays alive holds 16 bytes per
+input byte for blank lines (a quarter of the peak), 28 for `k=v` lines, 48 for
+`=` lines, and 72 for `[` lines (two thirds of the peak). To parse untrusted
+input, allow about 128 bytes of memory per input byte while `parse` runs, and
+up to 1.5 times that in a process that parses many documents. A `Parse` that
+the caller keeps holds up to 76 bytes per input byte, the most found (for
+lines such as `[]x`), for as long as it lives.
+
 Distinct-entry measurements use 65,536, 131,072, and 262,144 entries. Smaller
 16K–64K windows showed steep growth in the unchanged parser that varied across
 CI runners and produced a false alarm on the same source tree. The larger
