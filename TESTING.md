@@ -74,6 +74,10 @@ RUSTFLAGS='--cfg no_zerocopy_simd_x86_avx12_1_89_0' \
   trees. Its shared oracle also exhausts 5,103 short sequences in normal tests,
   including a CR-only document and a raw line ending in CR that is inserted
   before a blank separator line.
+  Every target is a thin wrapper around a `check(&[u8])` oracle in
+  `tests/support/`, so ordinary tests compile, lint, and run the same code,
+  and every committed fuzz input is replayed in each `cargo test` (see
+  [Fuzz corpus and reproducibility](#fuzz-corpus-and-reproducibility)).
 - An independent identity-based model checks up to 128 edits per fuzz input.
   It tracks duplicate keys, continued values, bare keys, retained entry and
   section handles, detached objects, and immutable file snapshots across
@@ -130,6 +134,74 @@ families use 16,384, 32,768, and 65,536 units.
 
 ## Fuzz corpus and reproducibility
 
+`tests/fuzz_regressions/<target>/` holds committed fuzz inputs: the
+`cargo fuzz cmin` minimization of the learned corpus plus every crash and
+timeout reproducer. Like SQLite's fuzzcheck, `tests/fuzz_regressions.rs` runs
+each file through its target's oracle in every `cargo test`, so past findings
+are checked on every platform and on the MSRV without nightly or libFuzzer.
+An input fails if it panics or runs for more than 10 seconds, the timeout CI
+fuzzes with, and the failure names the input file. The current 3,732 inputs
+(155 KiB) replay in a few seconds in a debug build. The test also fails if a
+fuzz target lacks committed inputs or a replay test. The same test binary runs
+the fixed sweeps of the shared oracles, because cargo-mutants rebuilds every
+test binary for every mutant. The published package excludes the inputs, this
+test, and the oracles that only it and the fuzz targets use.
+
+A fuzz-found bug is fixed only when its reproducer is committed:
+
+1. Minimize the crash or timeout input with the limits CI fuzzes with.
+   `cargo fuzz tmin` sets no timeout of its own, and libFuzzer's default of
+   1,200 seconds would never count a slow input as a failure:
+
+   ```sh
+   cargo +nightly fuzz tmin <target> fuzz/artifacts/<target>/<file> -- \
+     -timeout=10 -rss_limit_mb=1024
+   ```
+
+2. In the pull request that fixes the bug, commit the minimized file to
+   `tests/fuzz_regressions/<target>/` under a descriptive name such as
+   `crash-empty-section-insert`, and add a named regression test that states
+   the bug through the public API.
+3. Check that the replay fails without the fix and passes with it.
+
+Committed bytes mean whatever the target's decoder makes of them. When a
+change to a target's input layout alters that meaning, refresh the minimized
+inputs and re-create any reproducer that no longer reaches its bug. A libFuzzer
+merge names its output files by their SHA-1, so a refresh replaces only the
+40-hex-digit names and keeps every reproducer. Keep the directory under about
+2 MB. Run this from the repository root; it also merges what local fuzzing
+learned in `fuzz/corpus/<target>`, if anything. `cargo fuzz cmin` exits with
+status 0 even when its merge fails, so the snippet runs the merge itself and
+stops before deleting anything if the merge fails or keeps no input:
+
+```sh
+(
+  set -eu
+  target=editor_stateful max_len=515 # 4096 for generated_edits, else 16384
+  committed=tests/fuzz_regressions/$target learned=fuzz/corpus/$target
+  inputs=$(mktemp -d) merged=$(mktemp -d)
+  trap 'rm -r "$inputs" "$merged"' EXIT
+  # True for a merged input's name: 40 lowercase hex digits.
+  is_hash() { case $1 in *[!0-9a-f]*) return 1 ;; esac; [ ${#1} -eq 40 ]; }
+  for file in "$committed"/*; do
+    if is_hash "${file##*/}"; then cp "$file" "$inputs/"; fi
+  done
+  mkdir -p "$learned"
+  # libFuzzer merges every later directory into the first one.
+  cargo +nightly fuzz run "$target" "$merged" "$inputs" "$learned" -- \
+    -merge=1 -max_len="$max_len" -timeout=10 -rss_limit_mb=1024
+  [ -n "$(ls "$merged")" ] # the merge kept at least one input
+  for file in "$committed"/*; do
+    if is_hash "${file##*/}"; then rm "$file"; fi
+  done
+  cp "$merged"/* "$committed/"
+)
+```
+
+`.gitattributes` marks these files `binary`. Under the repository's
+`text=auto eol=lf` default, Git would rewrite CRLF line endings in 17 of the
+current inputs.
+
 CI restores the learned corpus, then adds deterministic boundary cases,
 real-world fixtures, and generated model seeds without deleting existing
 inputs. Successful and failing campaigns on `main` save their corpus for
@@ -137,16 +209,19 @@ future runs; pull requests consume that cache but do not update the main
 corpus. The cache key depends on no file, so dependency and lockfile updates
 keep the learned corpus. GitHub may evict caches, so the reproducible seeds
 remain useful.
-Crash and timeout inputs are uploaded separately and retained for 90 days.
+Crash and timeout inputs are uploaded separately and retained for 90 days,
+which is still finite: that is why reproducers must be committed.
 
 Each fuzz input has a 10-second timeout and each target has a 1 GiB RSS limit.
 Input lengths are bounded independently: 16,384 bytes for the original three
 targets, 515 bytes for the stateful model, and 4,096 bytes for the
-generated-document model. Local reproduction:
+generated-document model. Local reproduction, also starting from the committed
+inputs (libFuzzer reads every corpus directory but adds inputs to the first):
 
 ```sh
 python3 .github/scripts/seed_fuzz_corpus.py
-cargo +nightly-2026-09-17 fuzz run generated_edits -- \
+cargo +nightly-2026-09-17 fuzz run generated_edits fuzz/corpus/generated_edits \
+  tests/fuzz_regressions/generated_edits -- \
   -max_len=4096 -max_total_time=120 -timeout=10 -rss_limit_mb=1024
 # Replay a downloaded crash/timeout artifact:
 cargo +nightly-2026-09-17 fuzz run generated_edits path/to/reproducer

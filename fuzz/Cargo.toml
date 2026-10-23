@@ -9,8 +9,7 @@ rust-version = "1.85"
 cargo-fuzz = true
 
 [dependencies]
-libfuzzer-sys = { version = "0.4", features = ["arbitrary-derive"] }
-arbitrary = { version = "1", features = ["derive"] }
+libfuzzer-sys = "0.4"
 
 [dependencies.ini-edit]
 path = ".."
