@@ -71,6 +71,11 @@ also check inside the editor, after every edit, that C1 holds and that the edit
 added or removed exactly the body lines it documents, so every debug test,
 coverage run, mutation run, and fuzz build checks them.
 
+The editor's unit tests also check C2 and C3 on the tree itself. A refused
+call leaves the very same tree, not an equal copy. A successful one builds a
+new tree that shares every line and section it does not touch with the old
+one, and the tests list, for each kind of edit, which nodes it keeps.
+
 ## Independent test layers
 
 - Unit tests cover internal lexer, parser, AST, and editor invariants.
@@ -606,14 +611,18 @@ native `i686` job checks 32-bit for the whole suite, and big-endian runs only
 the lexer and its contracts.
 
 The full library suite also runs under Miri, with its Stacked Borrows
-provenance model temporarily disabled because `rowan 0.16.1` triggers the
-known upstream [rowan issue #192](https://github.com/rust-analyzer/rowan/issues/192).
-Other default Miri checks remain enabled. A compatibility investigation on
-2026-10-02 reproduced failures with both Stacked Borrows and Tree Borrows using
-`nightly-2026-09-17`. `rowan 0.17.0` is not a drop-in fix: it removes
-`clone_for_update`, `detach`, and `splice_children`, and upgrading would change
-the `rowan` types exposed by this crate's public API. Full borrow checking
-therefore remains an explicit limitation, not a passing guarantee.
+aliasing model disabled because `rowan` triggers the known upstream
+[rowan issue #192](https://github.com/rust-analyzer/rowan/issues/192). Other
+default Miri checks remain enabled, the data-race detector included.
+`rowan 0.17.0` does not fix it. Measured on 2026-10-23 with
+`nightly-2026-09-17` and with the nightly of 2026-10-22, library tests as
+small as `parser::tests::empty` fail under Stacked Borrows and under Tree
+Borrows, in rowan's `Arc` (`arc.rs`), where rowan turns a reference to a
+green node back into an `Arc`. `rowan 0.16.1` and `0.18.0-alpha.2` fail the
+same way, and the upstream pull requests that addressed it (#210 to #212)
+were closed without merging. With Stacked Borrows disabled, the tests pass.
+Full borrow checking therefore remains an explicit limitation, not a passing
+guarantee.
 
 Recheck the strict paths locally without `MIRIFLAGS` overrides. Miri builds
 each target's standard library itself, so the targets need no `rustup target
@@ -638,8 +647,11 @@ push to `main` whose version is not released yet (see the release checklist).
 Allocation-failure, filesystem I/O-failure, crash-recovery, and concurrency
 tests from SQLite's strategy do not map directly to this crate: `ini-edit`
 performs no persistent I/O, owns no allocator abstraction, and exposes no
-shared mutable state. Fuzzing malformed text and mutation sequences is the
-relevant anomaly-testing layer here.
+shared mutable state. An `Editor` is `Send` and `Sync`, so one unit test
+reads an editor from two threads and edits it in a third while the old tree
+is walked; under Miri, the data-race detector checks rowan's atomic reference
+counts there. Fuzzing malformed text and mutation sequences is the relevant
+anomaly-testing layer here.
 
 ## Release checklist
 

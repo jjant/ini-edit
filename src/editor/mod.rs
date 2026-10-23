@@ -214,23 +214,26 @@
 //!
 //! # Costs
 //!
-//! Rowan rebuilds a node for every child it attaches or detaches, and then every ancestor up to
-//! the root. So each line that an edit inserts, removes or rewrites, and each section it creates
-//! or removes, costs O(n), where n counts the lines of its section, if any, plus the document's
-//! top-level lines and sections: the preamble's lines and every section. A call that inserts or
-//! removes k lines pays that k times, O(k × n):
+//! The editor's tree is immutable and shares its nodes: an edit builds a new tree that reuses
+//! every line and section it does not touch. Each call rebuilds, once, the section whose lines it
+//! changes and then the document's root: O(s + r + k), where s counts that section's lines, r
+//! counts the root's children (the preamble's lines and the sections), and k counts the lines the
+//! call inserts or removes. An edit of the preamble rebuilds only the root, O(r + k). So a call
+//! that inserts or removes k lines pays for the rebuild once, not k times:
 //! [`append_body_lines`](SectionEditor::append_body_lines) and
 //! [`insert_body_lines`](SectionEditor::insert_body_lines) with k elements,
 //! [`remove_body_lines`](SectionEditor::remove_body_lines) of k lines, and
 //! [`remove`](SectionEditor::remove) on a preamble of k lines.
 //!
-//! Each call also walks to its position, O(lines), renders and parses the text it writes,
-//! O(bytes written), reads the line ending, O(first line), and, once per editor, terminates an
-//! unterminated last line, O(last line). Lookups are O(sections) or O(lines).
+//! Each call also finds its handle's section or entry again by binary search, O(log r + log s),
+//! walks to its position, O(lines), renders and parses the text it writes, O(bytes written),
+//! reads the line ending, O(first line), and, once per editor, terminates an unterminated last
+//! line, O(last line). Lookups are O(sections) or O(lines). [`Editor::file`] is O(1), and
+//! [`Editor::finish`] is O(document).
 //!
-//! Filling or clearing a large section through the editor is therefore quadratic in its size,
-//! whether one line per call or all of them in one call, and every edit of a document with many
-//! sections pays for all of them. To load or replace many lines, build the text and parse it with
+//! Filling or clearing a large section one line per call is therefore quadratic in its size, and
+//! every edit of a document with many sections pays for all of them; one call with all the lines
+//! is linear. To load or replace a whole document, build the text and parse it with
 //! [`Editor::new`]. Debug builds also reparse the whole document after every edit, to check the
 //! first guarantee.
 //!
@@ -319,6 +322,14 @@
 //! - Values ending in `\`: refused; drop the trailing backslash.
 //! - Raw text with a header: `editor.section_or_insert(name)?`, which appends the section at the
 //!   end of the document.
+//! - The tree types, [`SyntaxNode`](crate::SyntaxNode), [`SyntaxToken`](crate::SyntaxToken),
+//!   [`SyntaxElement`](crate::SyntaxElement) and the `rowan::GreenNode` of
+//!   [`Parse::green`](crate::Parse::green), are rowan 0.17's; code that names rowan's types
+//!   depends on `rowan = "0.17"`. `node.green()` returns `&GreenNodeData`:
+//!   `.green().to_owned()` instead of `.green().into_owned()`. rowan 0.17 has no mutable trees
+//!   (`clone_for_update`, `detach`, `splice_children`): edit through the editor, or build a new
+//!   tree with `GreenNodeData::replace_child`, `insert_child`, `remove_child` or
+//!   `splice_children` and `SyntaxNode::replace_with`.
 //!
 //! Behavior changes: every mutator and the constructor return `Result`, and refused edits change
 //! nothing; lookups have no side effects; positions count body lines; raw lines are parsed into
@@ -327,7 +338,7 @@
 //! document without a byte order mark; a new line break next to a CR, or before an LF blank line,
 //! is CRLF instead of rewriting the neighbor, and a removal between a CR and an LF blank line
 //! merges them in the tree; documents and edits past the size limit are refused; handles are
-//! exclusive borrows.
+//! exclusive borrows; an [`Editor`] is `Send` and `Sync`.
 
 mod entry;
 mod error;
@@ -353,9 +364,8 @@ pub use section::SectionEditor;
 pub(crate) use line_nodes::debug_assert_line_nodes;
 
 use crate::ast::{AstNode, File};
-use crate::syntax_kind::SyntaxNode;
 use crate::{MAX_INPUT_LEN, ParseOptions, parse_with};
-use plan::Container;
+use plan::Address;
 
 /// The length of the longest `String`, which bounds documents on 32-bit targets.
 const ISIZE_MAX: usize = isize::MAX.unsigned_abs();
@@ -380,23 +390,25 @@ const _: () = assert!(LEN_MAX < ISIZE_MAX);
 
 /// A format-preserving INI editor. Its tree always equals a parse of its text (C1).
 ///
-/// Not `Send` or `Sync`, because rowan's mutable tree is not, and not `Clone`, because a clone
-/// would share the mutable tree: rebuild one from [`finish`](Self::finish) instead.
+/// `Send` and `Sync`: it holds rowan's immutable green tree, whose nodes are shared through atomic
+/// reference counts, and every edit replaces the tree with a new one.
 ///
 /// # Cost of an edit
 ///
-/// Each line an edit inserts, removes or rewrites costs O(lines of its section, plus the
-/// preamble's lines and the sections), because rowan rebuilds the line's parent and every
-/// ancestor; a call that inserts or removes k lines pays that k times. A call also walks to its
-/// position, O(lines), and renders and parses what it writes, O(bytes written). Lookups by name
-/// or key are O(sections) or O(lines). Filling or clearing a large section through the editor is
-/// therefore quadratic in its size, one line per call or many in one call: build the text and
-/// parse it instead. Debug builds also reparse the whole document after every edit to check C1.
-/// The [module documentation](crate::editor#costs) lists every term.
+/// An edit builds a new tree that shares every line and section it does not touch. A call
+/// rebuilds the section whose lines it changes, if any, and the document's root, once: O(lines of
+/// that section, plus the preamble's lines and the sections, plus the lines it inserts or
+/// removes). It also walks to its position, O(lines), and renders and parses what it writes,
+/// O(bytes written). Lookups by name or key are O(sections) or O(lines). Filling or clearing a
+/// large section one line per call is therefore quadratic in its size, while one call with all
+/// the lines is linear; to load a whole document, build the text and parse it instead. Debug
+/// builds also reparse the whole document after every edit to check C1. The
+/// [module documentation](crate::editor#costs) lists every term.
 #[derive(Debug)]
 pub struct Editor {
-    /// The mutable tree.
-    root: SyntaxNode,
+    /// The document's tree. A commit replaces it with a tree that shares every node the edit
+    /// does not touch.
+    green: rowan::GreenNode,
     /// The options every parse uses, the reader's options.
     parse_options: ParseOptions,
     /// The formatting of written entries.
@@ -444,19 +456,16 @@ impl Editor {
                 max: len_max,
             });
         }
-        let root = parse_with(source, parse_options)
-            .syntax()
-            .clone_for_update();
+        let green = parse_with(source, parse_options).green().clone();
         let editor = Self {
-            root,
+            green,
             parse_options: parse_options.clone(),
             edit_options: edit_options.clone(),
             len_max,
         };
-        // Every edit splices this tree, and the parse lost no byte of the source.
-        assert!(editor.root.is_mutable());
+        // The parse lost no byte of the source.
         assert_eq!(editor.len(), source.len());
-        assert_eq!(editor.root.text(), source);
+        assert_eq!(editor.root().text(), source);
         Ok(editor)
     }
 
@@ -467,23 +476,23 @@ impl Editor {
         reason = "asserts internal invariants, never caller input"
     )]
     pub fn finish(&self) -> String {
-        let text = self.root.text().to_string();
+        let text = self.green.to_string();
         // rowan's length bookkeeping, which every commit checks, agrees with the text.
         assert_eq!(text.len(), self.len());
         assert!(text.len() <= self.len_max);
         text
     }
 
-    /// An immutable snapshot of the current tree. Its lines are the editor's body lines:
-    /// [`File::preamble_lines`] and [`Section::body_lines`](crate::ast::Section::body_lines) list
-    /// them in position order.
+    /// A snapshot of the current tree, O(1): later edits replace the editor's tree and leave this
+    /// one as it is. Its lines are the editor's body lines: [`File::preamble_lines`] and
+    /// [`Section::body_lines`](crate::ast::Section::body_lines) list them in position order.
     #[must_use]
     #[expect(
         clippy::missing_panics_doc,
         reason = "asserts internal invariants, never caller input"
     )]
     pub fn file(&self) -> File {
-        let root = SyntaxNode::new_root(self.root.green().into_owned());
+        let root = self.root();
         assert_eq!(usize::from(root.text_range().len()), self.len());
         File::cast(root).expect("the editor's root is a ROOT node")
     }
@@ -510,7 +519,7 @@ impl Editor {
     /// exists, possibly with no lines.
     #[must_use]
     pub fn preamble(&mut self) -> SectionEditor<'_> {
-        SectionEditor::new(self, Container::Preamble)
+        SectionEditor::new(self, Address::Preamble)
     }
 
     /// The first section whose name is exactly `name`. Never changes the document: `None` if
@@ -529,7 +538,8 @@ impl Editor {
                 .take_while(|before| *before != section)
                 .all(|before| !plan::header_name_is(&before, name))
         );
-        Some(SectionEditor::new(self, Container::Section(section)))
+        let start = section.text_range().start();
+        Some(SectionEditor::new(self, Address::Section(start)))
     }
 
     /// Section `index` in document order, duplicate and nameless sections included.
@@ -546,7 +556,8 @@ impl Editor {
             self.sections().position(|other| other == section),
             Some(index)
         );
-        Some(SectionEditor::new(self, Container::Section(section)))
+        let start = section.text_range().start();
+        Some(SectionEditor::new(self, Address::Section(start)))
     }
 
     /// The first section named `name`, or, if there is none, a new `[name]` section appended at
@@ -563,16 +574,19 @@ impl Editor {
     )]
     pub fn section_or_insert(&mut self, name: &str) -> Result<SectionEditor<'_>, EditError> {
         if let Some(section) = self.find_section(name) {
-            return Ok(SectionEditor::new(self, Container::Section(section)));
+            let start = section.text_range().start();
+            return Ok(SectionEditor::new(self, Address::Section(start)));
         }
         let (plan, section) = self.plan_section(name)?;
         self.commit(plan);
-        // The new section is the document's last child, and the lookup now finds it.
-        assert!(self.root.last_child().is_some_and(|last| last == section));
-        assert!(self.find_section(name).is_some());
+        // The new section is the document's last child, the very node the commit inserted, and the
+        // lookup now finds it.
+        let last = self.root().last_child().expect("the new section");
+        assert!(plan::is_node(&last, &section));
+        assert!(self.find_section(name).is_some_and(|found| found == last));
         // A name that reads back is the whole header line, so the section has no body line.
-        let container = Container::Section(section);
-        assert_eq!(self.body_lines(&container).next(), None);
-        Ok(SectionEditor::new(self, container))
+        let address = Address::Section(last.text_range().start());
+        assert_eq!(self.body_lines(&self.container(address)).next(), None);
+        Ok(SectionEditor::new(self, address))
     }
 }

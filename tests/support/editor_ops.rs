@@ -316,7 +316,7 @@ fn same_tree(left: &File, right: &File) -> bool {
 pub(crate) fn assert_agrees_with_reparse(editor: &Editor, context: &dyn std::fmt::Debug) {
     let text = editor.finish();
     let reparse = parse_with(&text, editor.parse_options());
-    let tree = editor.file().syntax().green().into_owned();
+    let tree = editor.file().syntax().green().to_owned();
     assert_eq!(tree, *reparse.green(), "C1: {context:?} {text:?}");
 }
 

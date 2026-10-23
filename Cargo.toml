@@ -60,7 +60,7 @@ redundant_clone = "warn"
 use_self = "warn"
 
 [dependencies]
-rowan = "0.16"
+rowan = "0.17"
 
 # rust-ini and configparser are independent parsers: the differential tests
 # compare ini-edit's values with theirs, and the benchmark times all three.
@@ -82,7 +82,9 @@ harness = false
 # reparses the whole document after every edit to check that its tree equals a
 # parse of its text. Optimizing rowan, the tree library, and its dependencies
 # makes those debug runs about four times faster. This crate stays unoptimized,
-# with debug assertions and overflow checks, so tests still exercise them.
+# with debug assertions and overflow checks, so tests still exercise them. The
+# list is rowan 0.17 and its five dependencies; memoffset only has macros,
+# which expand into rowan's code, so its entry keeps the list complete.
 [profile.dev.package.rowan]
 opt-level = 3
 
@@ -90,6 +92,9 @@ opt-level = 3
 opt-level = 3
 
 [profile.dev.package.hashbrown]
+opt-level = 3
+
+[profile.dev.package.memoffset]
 opt-level = 3
 
 [profile.dev.package.rustc-hash]

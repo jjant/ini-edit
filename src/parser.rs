@@ -821,17 +821,14 @@ mod tests {
 
     #[test]
     fn bom_is_not_removed_with_a_preamble_entry() {
-        let root = parse("\u{FEFF}key=value\n[section]\n")
-            .syntax()
-            .clone_for_update();
-        File::cast(root.clone())
+        let root = parse("\u{FEFF}key=value\n[section]\n").syntax();
+        let entry = File::cast(root.clone())
             .unwrap()
             .preamble_entries()
             .next()
-            .unwrap()
-            .syntax()
-            .detach();
-        assert_eq!(root.text().to_string(), "\u{FEFF}[section]\n");
+            .unwrap();
+        let removed = root.green().remove_child(entry.syntax().index());
+        assert_eq!(removed.to_string(), "\u{FEFF}[section]\n");
     }
 
     #[test]

@@ -532,10 +532,7 @@ fn assert_edited(editor: &Editor, expected: &Document, original: &str, operation
     );
     assert_eq!(read(&editor.file()), expected.meaning());
     let reparsed = assert_parses_to(&output, editor.parse_options(), expected);
-    assert_eq!(
-        editor.file().syntax().green().into_owned(),
-        *reparsed.green()
-    );
+    assert_eq!(editor.file().syntax().green().to_owned(), *reparsed.green());
 }
 
 /// Generate a whole document and compare edits against independent text and

@@ -42,10 +42,9 @@ pub(crate) fn debug_assert_line_nodes(root: &SyntaxNode) {
         root.kind()
     );
     let newline = rowan::SyntaxKind::from(SyntaxKind::NEWLINE);
-    let green = root.green();
     let mut after_carriage_return = false;
     let mut previous_is_unterminated = false;
-    for line in line_nodes(&green) {
+    for line in line_nodes(root.green()) {
         assert!(
             !previous_is_unterminated,
             "only the last line may be unterminated"

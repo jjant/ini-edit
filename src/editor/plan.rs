@@ -7,14 +7,16 @@
 //! - rule B, U+FEFF at the start of a document: [`Editor::check_document_start`];
 //! - rule D, a removal between a CR and an LF blank line: [`Editor::plan_remove`].
 //!
-//! Rowan 0.16 rules that every step follows: a splice deletes at most one element, because
-//! `splice_children(start..end)` with `end - start > 1` detaches while it iterates and drops only
-//! the first child; positions are found by sibling walks rather than by collecting a container's
-//! lines, because every splice visits each live handle of its parent.
+//! The tree is rowan's immutable green tree. A plan is one [`Splice`]: it replaces a contiguous run
+//! of one node's children, the root's or one section's, with the parser's own nodes, so every edit
+//! touches one contiguous region (C3) by construction. A commit rebuilds that node and each of its
+//! ancestors up to the root, and the new tree shares every other node with the one before it.
+//! Nodes are only ever read from the editor's current tree: a handle stores where its lines start
+//! ([`Address`]) and resolves it again on every call.
 
 use std::ops::Range;
 
-use rowan::NodeOrToken;
+use rowan::{GreenNode, Language, NodeOrToken, TextRange, TextSize};
 
 use super::Editor;
 use super::error::EditError;
@@ -22,9 +24,23 @@ use super::fragment::{self, BODY_LINE_KINDS, CRLF, LINE_BREAKS, LINE_KINDS};
 use crate::ParseOptions;
 use crate::ast::{AstNode, Entry, Section};
 use crate::lexer::BOM;
-use crate::syntax_kind::{SyntaxElement, SyntaxKind, SyntaxNode, SyntaxToken};
+use crate::syntax_kind::{IniLang, SyntaxKind, SyntaxNode, SyntaxToken};
 
-/// The preamble or one section: the lines a [`SectionEditor`](super::SectionEditor) addresses.
+/// Where the lines of a handle are: the preamble, or the section that starts at this byte offset.
+///
+/// A handle stores this, never a node: a commit replaces the tree, so a node from before it belongs
+/// to a tree the editor no longer holds. No edit through a handle moves the start of its own
+/// section, because every edit lies after the header's first byte, and the exclusive borrow rules
+/// out every other edit while the handle lives.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Address {
+    /// The lines before the first section header, after a byte order mark.
+    Preamble,
+    /// The `SECTION` node that starts at this offset.
+    Section(TextSize),
+}
+
+/// The preamble or one section of the editor's current tree: an [`Address`], resolved.
 #[derive(Debug, Clone)]
 pub(super) enum Container {
     /// The lines before the first section header, after a byte order mark.
@@ -46,26 +62,65 @@ impl Container {
     }
 }
 
-/// One change to the tree.
-pub(super) enum Step {
-    /// Replace one element (a line node, or a line's `NEWLINE` token) with `new`.
-    Replace {
-        old: SyntaxElement,
-        new: Vec<SyntaxElement>,
-    },
-    /// Insert `nodes` into `parent` before `before`, or at its end.
-    Insert {
-        parent: SyntaxNode,
-        before: Option<SyntaxNode>,
-        nodes: Vec<SyntaxNode>,
-    },
-    /// Detach one node.
-    Remove { node: SyntaxNode },
+/// The kinds of the nodes a splice puts into the root: sections, and the preamble's lines.
+const ROOT_CHILD_KINDS: [SyntaxKind; 5] = [
+    SyntaxKind::SECTION,
+    SyntaxKind::ENTRY,
+    SyntaxKind::COMMENT_LINE,
+    SyntaxKind::BLANK_LINE,
+    SyntaxKind::ERROR_LINE,
+];
+
+/// Children `range` of `parent` replaced with `new`: the one change of an edit.
+pub(super) struct Splice {
+    /// The node whose children change, in the editor's current tree: the root or a section.
+    parent: SyntaxNode,
+    /// Indices into `parent`'s children, tokens included. Empty for an insertion.
+    range: Range<usize>,
+    /// The new children, the parser's own green nodes: lines, or sections at the root.
+    new: Vec<GreenNode>,
 }
 
-/// The steps of one edit, and the document's length after them.
+impl Splice {
+    /// A splice of the children `range` of `parent`, a node of the editor's current tree.
+    pub(super) fn new(parent: SyntaxNode, range: Range<usize>, new: Vec<GreenNode>) -> Self {
+        assert!(range.start <= range.end);
+        assert!(range.end <= parent.green().children().len());
+        // A splice that neither removes nor adds a child would rebuild for nothing.
+        if range.is_empty() {
+            assert_ne!(new.len(), 0);
+        }
+        match parent.kind() {
+            SyntaxKind::ROOT => assert!(
+                new.iter()
+                    .all(|node| ROOT_CHILD_KINDS.contains(&IniLang::kind_from_raw(node.kind())))
+            ),
+            kind => {
+                assert_eq!(kind, SyntaxKind::SECTION);
+                assert!(
+                    new.iter()
+                        .all(|node| LINE_KINDS.contains(&IniLang::kind_from_raw(node.kind())))
+                );
+            }
+        }
+        Self { parent, range, new }
+    }
+
+    /// The root of the tree `root` with this splice applied. Rebuilds `parent` and each ancestor:
+    /// O(children of `parent` + children of the root).
+    fn apply(self, root: &SyntaxNode) -> GreenNode {
+        // A plan applies to the tree it was made from.
+        assert_eq!(self.parent.tree_top(), *root);
+        let new = self.new.into_iter().map(NodeOrToken::Node);
+        let rebuilt = self.parent.green().splice_children(self.range, new);
+        self.parent.replace_with(rebuilt)
+    }
+}
+
+/// One edit: at most one splice, and the document's length after it.
 pub(super) struct Plan {
-    pub(super) steps: Vec<Step>,
+    /// `None` only for an edit that changes nothing, the removal of an empty range.
+    pub(super) splice: Option<Splice>,
     pub(super) len_after: usize,
 }
 
@@ -212,9 +267,14 @@ struct Rendering {
 }
 
 impl Editor {
+    /// The document's tree: a cursor at the root of the editor's green tree. O(1).
+    pub(super) fn root(&self) -> SyntaxNode {
+        SyntaxNode::new_root(self.green.clone())
+    }
+
     /// The document's length in bytes.
     pub(super) fn len(&self) -> usize {
-        let len = usize::from(self.root.text_range().len());
+        let len = usize::from(self.green.text_len());
         // Every edit checks the limit before it changes anything (SQL-1).
         assert!(len <= self.len_max);
         len
@@ -222,9 +282,37 @@ impl Editor {
 
     /// The sections, in document order.
     pub(super) fn sections(&self) -> impl Iterator<Item = SyntaxNode> {
-        self.root
+        self.root()
             .children()
             .filter(|node| node.kind() == SyntaxKind::SECTION)
+    }
+
+    /// The container that `address` names in the current tree. O(log(children of the root)).
+    pub(super) fn container(&self, address: Address) -> Container {
+        match address {
+            Address::Preamble => Container::Preamble,
+            Address::Section(start) => {
+                let section = child_covering(&self.root(), start);
+                // A section's address is where its header starts.
+                assert_eq!(section.kind(), SyntaxKind::SECTION);
+                assert_eq!(section.text_range().start(), start);
+                Container::Section(section)
+            }
+        }
+    }
+
+    /// The line that starts at byte `start`: a line of the preamble, or of the section that holds
+    /// that byte. O(log(children of the root) + log(lines of the section)).
+    pub(super) fn line_starting_at(&self, start: TextSize) -> SyntaxNode {
+        let child = child_covering(&self.root(), start);
+        let line = if child.kind() == SyntaxKind::SECTION {
+            child_covering(&child, start)
+        } else {
+            child
+        };
+        assert!(LINE_KINDS.contains(&line.kind()));
+        assert_eq!(line.text_range().start(), start);
+        line
     }
 
     /// The first section whose header names exactly `name`.
@@ -249,12 +337,12 @@ impl Editor {
         let first = match container {
             // A byte order mark is a token and lines are nodes, so the walk skips it.
             Container::Preamble => self
-                .root
+                .root()
                 .first_child()
                 .filter(|node| node.kind() != SyntaxKind::SECTION),
             Container::Section(section) => {
                 // A handle's section stays in the tree while the handle lives.
-                assert!(section.parent().is_some_and(|root| root == self.root));
+                assert!(section.parent().is_some_and(|root| root == self.root()));
                 header(section).next_sibling()
             }
         };
@@ -270,10 +358,10 @@ impl Editor {
         let last = match container {
             Container::Preamble => match self.sections().next() {
                 Some(section) => section.prev_sibling(),
-                None => self.root.last_child(),
+                None => self.root().last_child(),
             },
             Container::Section(section) => {
-                assert!(section.parent().is_some_and(|root| root == self.root));
+                assert!(section.parent().is_some_and(|root| root == self.root()));
                 section
                     .last_child()
                     .filter(|node| node.kind() != SyntaxKind::SECTION_HEADER)
@@ -292,7 +380,7 @@ impl Editor {
             // Preamble lines go after a byte order mark and before the first header.
             Container::Preamble => self.sections().next(),
             Container::Section(section) => {
-                assert!(section.parent().is_some_and(|root| root == self.root));
+                assert!(section.parent().is_some_and(|root| root == self.root()));
                 None
             }
         }
@@ -302,8 +390,9 @@ impl Editor {
     fn parent_of(&self, container: &Container) -> SyntaxNode {
         match container {
             Container::Preamble => {
-                assert_eq!(self.root.kind(), SyntaxKind::ROOT);
-                self.root.clone()
+                let root = self.root();
+                assert_eq!(root.kind(), SyntaxKind::ROOT);
+                root
             }
             Container::Section(section) => {
                 assert_eq!(section.kind(), SyntaxKind::SECTION);
@@ -380,7 +469,7 @@ impl Editor {
         // The tree holds the lexer's tokens, and no token ending in CR is followed by one starting
         // with LF (C1), so the first line break lies within the first token holding CR or LF.
         let first_line_break = self
-            .root
+            .root()
             .descendants_with_tokens()
             .filter_map(NodeOrToken::into_token)
             .find_map(|token| {
@@ -428,7 +517,7 @@ impl Editor {
     ) -> Result<SyntaxNode, EditError> {
         assert!(!ends_with_newline(line));
         // Only the document's last line lacks a terminator.
-        assert_eq!(line.text_range().end(), self.root.text_range().end());
+        assert_eq!(line.text_range().end(), self.green.text_len());
         let mut nodes = self.fragment_lines(&format!("{line}{terminator}"));
         // A line and its own terminator are one line of the same kind: a header stays a header.
         assert_eq!(nodes.len(), 1);
@@ -473,7 +562,7 @@ impl Editor {
 
     /// Whether the document starts with a byte order mark.
     fn has_byte_order_mark(&self) -> bool {
-        match self.root.first_child_or_token() {
+        match self.root().first_child_or_token() {
             // Every line is a node, so only a byte order mark is a token at the root.
             Some(NodeOrToken::Token(token)) => {
                 assert_eq!(token.text(), BOM);
@@ -559,29 +648,32 @@ impl Editor {
                 .iter()
                 .all(|node| BODY_LINE_KINDS.contains(&node.kind()))
         );
-        let mut steps = Vec::with_capacity(2);
+        // The new lines go before `before`, or at the end of `parent`.
+        let at = slot
+            .before
+            .as_ref()
+            .map_or_else(|| slot.parent.green().children().len(), SyntaxNode::index);
+        let mut range = at..at;
+        let mut new = Vec::with_capacity(nodes.len() + 1);
         if let Some(terminator) = rendering.pending {
             let line = slot
                 .previous
                 .clone()
                 .expect("only a line lacks a terminator");
             let terminated = self.terminate(&line, terminator)?;
-            steps.push(Step::Replace {
-                old: line.into(),
-                new: vec![terminated.into()],
-            });
+            // The unterminated line is the document's last, directly before the new lines, so the
+            // splice takes it in and puts it back terminated.
+            assert_eq!(line.index() + 1, at);
+            range.start = line.index();
+            new.push(terminated.green().to_owned());
         }
         let first = rendering.texts[0].chars().next();
         self.check_document_start(slot.previous.as_ref(), first)?;
-        steps.push(Step::Insert {
-            parent: slot.parent,
-            before: slot.before,
-            nodes,
-        });
-        // At most a terminated last line (rule C), then one insertion.
-        assert_eq!(steps.len(), 1 + usize::from(rendering.pending.is_some()));
+        new.extend(nodes.iter().map(|node| node.green().to_owned()));
+        // At most a terminated last line (rule C), then the new lines.
+        assert_eq!(new.len(), contents.len() + range.len());
         Ok(Plan {
-            steps,
+            splice: Some(Splice::new(slot.parent, range, new)),
             len_after: rendering.len_after,
         })
     }
@@ -616,23 +708,32 @@ impl Editor {
         let len_after = self
             .check_len(len_removed, 0)
             .expect("removals only shrink the document");
-        // The last line goes first, so no detach shifts a line that is still to be detached.
-        let mut steps: Vec<Step> = removed
-            .into_iter()
-            .rev()
-            .map(|node| Step::Remove { node })
-            .collect();
+        // The removed lines are consecutive children of the container's node.
+        let start = removed.first().map(SyntaxNode::index);
+        for (offset, line) in removed.iter().enumerate() {
+            assert_eq!(Some(line.index()), start.map(|start| start + offset));
+        }
+        let mut splice = start.map(|start| (start..start + removed.len(), Vec::new()));
         if let (Some(previous), Some(next)) = (&previous, &next) {
             if fragment::joins_line_breaks(Some(last_char(previous)), Some(first_char(next))) {
                 // Two lines that were adjacent already read their line breaks apart.
                 assert!(!empty);
-                steps.extend(merge_line_breaks(previous, next, &self.parse_options));
+                // The splice also takes in the line before and the blank line after, and puts
+                // back only the line before, with the merged line break.
+                assert_eq!(Some(previous.index() + 1), start);
+                assert_eq!(next.index(), previous.index() + 1 + removed.len());
+                let merged = merge_line_breaks(previous, next, &self.parse_options);
+                splice = Some((previous.index()..next.index() + 1, vec![merged]));
             }
         }
         if empty {
-            assert_eq!(steps.len(), 0);
+            assert!(splice.is_none());
         }
-        Ok(Plan { steps, len_after })
+        let parent = self.parent_of(container);
+        Ok(Plan {
+            splice: splice.map(|(range, new)| Splice::new(parent, range, new)),
+            len_after,
+        })
     }
 
     /// The line before body line `range.start` (a header counts), the lines in `range`, and the
@@ -657,8 +758,8 @@ impl Editor {
     }
 
     /// Plan appending a section named `name` at the end of the document, and return the new
-    /// `SECTION` node with the plan.
-    pub(super) fn plan_section(&self, name: &str) -> Result<(Plan, SyntaxNode), EditError> {
+    /// section's green node with the plan.
+    pub(super) fn plan_section(&self, name: &str) -> Result<(Plan, GreenNode), EditError> {
         let container = self
             .sections()
             .last()
@@ -685,38 +786,62 @@ impl Editor {
         let (blank, section) =
             self.parse_new_section(&rendering.texts.concat(), name, separated)?;
         assert_eq!(blank.is_some(), separated);
-        let mut steps = Vec::with_capacity(3);
+        // The container is the last section, or the preamble of a document without one, so its
+        // end is the end of its node. The lines that end it: its last line, terminated (rule C),
+        // and the blank line that separates the new section.
+        let parent = self.parent_of(&container);
+        let end = parent.green().children().len();
+        let mut range = end..end;
+        let mut tail = Vec::with_capacity(2);
         if let Some(terminator) = rendering.pending {
             let line = last.expect("only a line lacks a terminator");
             let terminated = self.terminate(&line, terminator)?;
-            steps.push(Step::Replace {
-                old: line.into(),
-                new: vec![terminated.into()],
-            });
+            // The unterminated line is the document's last: its container's last child.
+            assert_eq!(line.index() + 1, end);
+            range.start = line.index();
+            tail.push(terminated.green().to_owned());
         }
-        if let Some(blank) = blank {
-            // The container is the last section, or the preamble of a document without one, so
-            // its end is the end of its parent.
-            steps.push(Step::Insert {
-                parent: self.parent_of(&container),
-                before: None,
-                nodes: vec![blank],
-            });
-        }
-        steps.push(Step::Insert {
-            parent: self.root.clone(),
-            before: None,
-            nodes: vec![section.clone()],
-        });
+        tail.extend(blank.map(|blank| blank.green().to_owned()));
         assert_eq!(
-            steps.len(),
-            1 + usize::from(separated) + usize::from(rendering.pending.is_some())
+            tail.len(),
+            usize::from(separated) + usize::from(rendering.pending.is_some())
         );
+        let section = section.green().to_owned();
         let plan = Plan {
-            steps,
+            splice: Some(self.append_section(&container, (range, tail), section.clone())),
             len_after: rendering.len_after,
         };
         Ok((plan, section))
+    }
+
+    /// The splice that replaces the children `range` of `container`'s node with `tail`, and puts
+    /// `section` after `container`, the document's last.
+    fn append_section(
+        &self,
+        container: &Container,
+        (range, mut tail): (Range<usize>, Vec<GreenNode>),
+        section: GreenNode,
+    ) -> Splice {
+        match container {
+            // The preamble's node is the root: one splice at its end.
+            Container::Preamble => {
+                tail.push(section);
+                Splice::new(self.parent_of(container), range, tail)
+            }
+            // The new section follows the last one. A last section that ends with a terminated
+            // blank line keeps its node; any other is rebuilt with its new end.
+            Container::Section(last) => {
+                assert!(last.next_sibling().is_none());
+                let index = last.index();
+                if tail.is_empty() {
+                    assert!(range.is_empty());
+                    return Splice::new(self.root(), index + 1..index + 1, vec![section]);
+                }
+                let tail = tail.into_iter().map(NodeOrToken::Node);
+                let rebuilt = last.green().splice_children(range, tail);
+                Splice::new(self.root(), index..index + 1, vec![rebuilt, section])
+            }
+        }
     }
 
     /// The blank separator line, if any, and the `SECTION` that `text` parses to, or
@@ -740,46 +865,20 @@ impl Editor {
         // A name that reads back is the whole header line, so the section has no body line.
         assert_eq!(section.children().count(), 1);
         assert_eq!(children.len(), usize::from(separated));
-        let blank = children.pop().map(|blank| {
+        let blank = children.pop().inspect(|blank| {
             assert_eq!(blank.kind(), SyntaxKind::BLANK_LINE);
-            fragment::mutable_copy(&blank)
         });
-        Ok((blank, fragment::mutable_copy(&section)))
+        Ok((blank, section))
     }
 
     /// Apply `plan`. Only the planning above can fail, so a commit always completes.
     pub(super) fn commit(&mut self, plan: Plan) {
         // Plans are built from checked sizes only (SQL-1).
         assert!(plan.len_after <= self.len_max);
-        for step in plan.steps {
-            match step {
-                Step::Replace { old, new } => {
-                    assert_ne!(new.len(), 0);
-                    let parent = old.parent().expect("a replaced element is in the tree");
-                    let index = old.index();
-                    parent.splice_children(index..index + 1, new);
-                    // Rowan rule 1: the splice deleted exactly the replaced element.
-                    assert!(old.parent().is_none());
-                }
-                Step::Insert {
-                    parent,
-                    before,
-                    nodes,
-                } => {
-                    assert_ne!(nodes.len(), 0);
-                    let index = before.map_or_else(
-                        || parent.children_with_tokens().count(),
-                        |node| node.index(),
-                    );
-                    parent.splice_children(index..index, nodes.into_iter().map(Into::into));
-                }
-                Step::Remove { node } => {
-                    assert!(node.parent().is_some());
-                    node.detach();
-                }
-            }
+        if let Some(splice) = plan.splice {
+            self.green = splice.apply(&self.root());
         }
-        // A splice that took the wrong elements changes the length: catch it at once, in O(1).
+        // A splice that took the wrong children changes the length: catch it at once, in O(1).
         assert_eq!(self.len(), plan.len_after);
         // C1, in O(document): every debug test, coverage run, mutation run and fuzz build checks
         // it after every edit. Miri runs too slowly for it.
@@ -795,8 +894,14 @@ impl Editor {
     #[cfg(any(test, all(debug_assertions, not(miri))))]
     pub(super) fn agrees_with_reparse(&self) -> bool {
         let reparse = crate::parse_with(&self.finish(), &self.parse_options);
-        *reparse.green() == self.root.green().into_owned()
+        *reparse.green() == self.green
     }
+}
+
+/// Whether `node` holds `green` itself, not an equal copy. The nodes of a fragment parse belong to
+/// no other tree, so after a commit this identity finds the very entry or section it inserted.
+pub(super) fn is_node(node: &SyntaxNode, green: &GreenNode) -> bool {
+    std::ptr::from_ref(node.green()) == std::ptr::from_ref::<rowan::GreenNodeData>(green)
 }
 
 /// The header of `section`, its first child.
@@ -987,13 +1092,13 @@ pub(super) fn terminators(
 }
 
 /// Rule D: a removal left a CR line break directly before an LF blank line, and a reader reads the
-/// two as one CRLF. Make the tree say so: the CR becomes that CRLF and the blank line goes. No
-/// byte changes.
+/// two as one CRLF. Make the tree say so: the CR becomes that CRLF, in the line returned here, and
+/// the caller drops the blank line. No byte changes.
 fn merge_line_breaks(
     previous: &SyntaxNode,
     next: &SyntaxNode,
     options: &ParseOptions,
-) -> [Step; 2] {
+) -> GreenNode {
     // Only an exact LF blank line starts with LF, and only a CR terminator ends a line with CR:
     // `previous` is terminated, because a line follows it.
     assert_eq!(next.kind(), SyntaxKind::BLANK_LINE);
@@ -1006,13 +1111,19 @@ fn merge_line_breaks(
         .expect("a line break is a line");
     let crlf = crlf_line
         .first_child_or_token()
+        .and_then(NodeOrToken::into_token)
         .expect("a blank line holds its line break");
     assert_eq!(crlf.kind(), SyntaxKind::NEWLINE);
-    [
-        Step::Replace {
-            old: line_break,
-            new: vec![crlf],
-        },
-        Step::Remove { node: next.clone() },
-    ]
+    let crlf = NodeOrToken::Token(crlf.green().to_owned());
+    previous.green().replace_child(line_break.index(), crlf)
+}
+
+/// The child node of `parent` that holds the byte at `offset`, found by binary search. Lines and
+/// sections hold at least one byte each, so exactly one child holds it.
+fn child_covering(parent: &SyntaxNode, offset: TextSize) -> SyntaxNode {
+    let byte = TextRange::at(offset, TextSize::from(1));
+    parent
+        .child_or_token_at_range(byte)
+        .and_then(NodeOrToken::into_node)
+        .expect("a line or a section holds the byte")
 }
