@@ -10,6 +10,10 @@
 
 use crate::syntax_kind::SyntaxKind;
 
+/// The UTF-8 byte order mark (U+FEFF). A document may start with one: it
+/// identifies the encoding and is not part of the first line.
+pub(crate) const BOM: &str = "\u{FEFF}";
+
 /// A single lexed token — a zero-copy slice of the original input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Token<'a> {
@@ -41,9 +45,9 @@ pub fn lex_with(input: &str, inline_comments: bool) -> Vec<Token<'_>> {
         tokens: Vec::new(),
         inline_comments,
     };
-    // Skip UTF-8 BOM if present, emitting it as whitespace (trivia).
-    if lexer.rest.starts_with('\u{FEFF}') {
-        lexer.bump(SyntaxKind::WHITESPACE, 3);
+    // A leading BOM is trivia, so it becomes a whitespace token.
+    if lexer.rest.starts_with(BOM) {
+        lexer.bump(SyntaxKind::WHITESPACE, BOM.len());
     }
     while !lexer.rest.is_empty() {
         lexer.lex_line();
@@ -52,6 +56,7 @@ pub fn lex_with(input: &str, inline_comments: bool) -> Vec<Token<'_>> {
 }
 
 struct Lexer<'a> {
+    /// The input that has not been lexed yet.
     rest: &'a str,
     tokens: Vec<Token<'a>>,
     inline_comments: bool,
@@ -64,73 +69,71 @@ impl Lexer<'_> {
         self.rest = rest;
     }
 
-    fn eat_horizontal_ws(&mut self) {
+    fn eat_horizontal_whitespace(&mut self) {
         let len = self
             .rest
             .bytes()
-            .take_while(|&b| b == b' ' || b == b'\t')
+            .take_while(|&byte| byte == b' ' || byte == b'\t')
             .count();
         if len > 0 {
             self.bump(SyntaxKind::WHITESPACE, len);
         }
     }
 
-    fn eat_newline(&mut self) -> bool {
-        if self.rest.starts_with("\r\n") {
-            self.bump(SyntaxKind::NEWLINE, 2);
-            true
-        } else if self.rest.starts_with('\n') || self.rest.starts_with('\r') {
-            self.bump(SyntaxKind::NEWLINE, 1);
-            true
-        } else {
-            false
+    /// Consume the line break at the start of the rest, if there is one.
+    fn eat_newline(&mut self) {
+        let newline_len = line_break_len(self.rest);
+        if newline_len > 0 {
+            self.bump(SyntaxKind::NEWLINE, newline_len);
         }
     }
 
+    /// Lex one logical line: a physical line, or an entry line together with
+    /// the lines its backslash-continued value runs onto. Each kind of line is
+    /// lexed up to its last line break, which this function then consumes for
+    /// all of them.
     fn lex_line(&mut self) {
-        self.eat_horizontal_ws();
+        self.eat_horizontal_whitespace();
         let Some(first) = self.rest.chars().next() else {
             return;
         };
         match first {
-            ';' | '#' => {
-                self.lex_comment_to_eol();
-                self.eat_newline();
-            }
+            ';' | '#' => self.lex_comment(),
             '[' => self.lex_section_header_line(),
             _ => self.lex_entry_line(),
         }
+        self.eat_newline();
     }
 
-    fn lex_comment_to_eol(&mut self) {
-        let len = self
-            .rest
-            .bytes()
-            .take_while(|&b| b != b'\n' && b != b'\r')
-            .count();
-        self.bump(SyntaxKind::COMMENT, len);
+    /// Lex a `;` or `#` comment up to the line break.
+    fn lex_comment(&mut self) {
+        self.bump(SyntaxKind::COMMENT, line_len(self.rest));
     }
 
+    /// Lex a `[name]` header line up to its line break, including a trailing
+    /// comment or unexpected text.
     fn lex_section_header_line(&mut self) {
         self.bump(SyntaxKind::L_BRACK, 1);
-        self.eat_horizontal_ws();
+        self.eat_horizontal_whitespace();
 
-        // Section name: everything up to `]` or EOL, trailing ws separated.
-        let raw_len = self
+        // The name runs up to `]` or the line break, and its trailing
+        // whitespace is a separate token. One pass that stops at either is
+        // faster than line_len followed by a search for `]`.
+        let raw_name_len = self
             .rest
             .bytes()
-            .take_while(|&b| b != b']' && b != b'\n' && b != b'\r')
+            .take_while(|&byte| byte != b']' && !is_line_break(byte))
             .count();
-        if raw_len > 0 {
-            let raw = &self.rest[..raw_len];
-            let trimmed = raw.trim_end_matches([' ', '\t']);
-            let name_len = trimmed.len();
-            let trail_ws = raw_len - name_len;
+        if raw_name_len > 0 {
+            let name_len = self.rest[..raw_name_len]
+                .trim_end_matches([' ', '\t'])
+                .len();
+            let trailing_whitespace_len = raw_name_len - name_len;
             // Leading horizontal whitespace was consumed above, so a non-empty
             // raw name always contains at least one non-whitespace byte.
             self.bump(SyntaxKind::IDENT, name_len);
-            if trail_ws > 0 {
-                self.bump(SyntaxKind::WHITESPACE, trail_ws);
+            if trailing_whitespace_len > 0 {
+                self.bump(SyntaxKind::WHITESPACE, trailing_whitespace_len);
             }
         }
 
@@ -138,38 +141,39 @@ impl Lexer<'_> {
             self.bump(SyntaxKind::R_BRACK, 1);
         }
 
-        // Trailing content on header line.
-        self.eat_horizontal_ws();
+        // A comment may follow the header on its line. Any other text is an
+        // error.
+        self.eat_horizontal_whitespace();
         if self.rest.starts_with(';') || self.rest.starts_with('#') {
-            self.lex_comment_to_eol();
+            self.lex_comment();
         } else {
-            let junk_len = self
-                .rest
-                .bytes()
-                .take_while(|&b| b != b'\n' && b != b'\r')
-                .count();
-            if junk_len > 0 {
-                self.bump(SyntaxKind::LEX_ERROR, junk_len);
-            }
+            self.lex_rest_of_line_as_error();
         }
-        self.eat_newline();
     }
 
+    /// Lex an entry line, and the lines its value continues onto, up to the
+    /// last line break: the key, then a separator and the value, a bare key's
+    /// inline comment, or unexpected text. A line that starts with a separator
+    /// has no key, so all of it is unexpected text. Blank lines come here too
+    /// and produce no token before their line break.
     fn lex_entry_line(&mut self) {
         let key_len = self
             .rest
             .bytes()
-            .take_while(|&b| {
-                b != b'=' && b != b':' && b != b' ' && b != b'\t' && b != b'\n' && b != b'\r'
+            .take_while(|&byte| {
+                byte != b'='
+                    && byte != b':'
+                    && byte != b' '
+                    && byte != b'\t'
+                    && !is_line_break(byte)
             })
             .count();
         if key_len == 0 {
             self.lex_rest_of_line_as_error();
-            self.eat_newline();
             return;
         }
         self.bump(SyntaxKind::IDENT, key_len);
-        self.eat_horizontal_ws();
+        self.eat_horizontal_whitespace();
 
         match self.rest.chars().next() {
             Some('=') => self.bump(SyntaxKind::EQ, 1),
@@ -177,135 +181,146 @@ impl Lexer<'_> {
             // A key ends at whitespace, so a marker here is whitespace-preceded:
             // a bare key's inline comment (`flag ; note`).
             Some(';' | '#') if self.inline_comments => {
-                self.lex_comment_to_eol();
-                self.eat_newline();
+                self.lex_comment();
                 return;
             }
             _ => {
                 self.lex_rest_of_line_as_error();
-                self.eat_newline();
                 return;
             }
         }
-        self.eat_horizontal_ws();
+        self.eat_horizontal_whitespace();
 
-        // Value: everything to EOL. If the logical value ends with `\`
-        // (backslash continuation), consume the newline and next line too,
-        // repeating until no trailing backslash. The entire multi-line span
-        // becomes one VALUE_TEXT token (lossless).
-        let value_start = self.rest;
-        let mut total_len: usize = 0;
-        loop {
-            let line_len = self.rest[total_len..]
-                .bytes()
-                .take_while(|&b| b != b'\n' && b != b'\r')
-                .count();
-            let line_end = total_len + line_len;
-            // Check if line ends with backslash (ignoring trailing whitespace).
-            let line_content = &self.rest[total_len..line_end];
-            let trimmed = line_content.trim_end_matches([' ', '\t']);
-            let has_continuation = trimmed.ends_with('\\');
+        let span_len = value_span_len(self.rest);
+        if span_len > 0 {
+            self.lex_value(span_len);
+        }
+    }
 
-            if has_continuation {
-                // Include the newline in the value span.
-                let nl_len = if self.rest[line_end..].starts_with("\r\n") {
-                    2
-                } else {
-                    usize::from(
-                        self.rest[line_end..].starts_with('\n')
-                            || self.rest[line_end..].starts_with('\r'),
-                    )
-                };
-                total_len = line_end + nl_len;
-                // Continue to next line.
-            } else {
-                total_len = line_end;
-                break;
+    /// Lex the `span_len` bytes of a value span (see [`value_span_len`]) as
+    /// the value, then its trailing whitespace or inline comment.
+    fn lex_value(&mut self, span_len: usize) {
+        let span = &self.rest[..span_len];
+
+        // When inline comments are enabled, a whitespace-preceded `;`/`#`
+        // marker on the final physical line ends the value and starts a
+        // trailing comment.
+        let inline_comment = if self.inline_comments {
+            find_inline_comment(span)
+        } else {
+            None
+        };
+
+        if let Some((value_len, whitespace_len)) = inline_comment {
+            // find_inline_comment only returns a marker after a non-empty
+            // value and a non-empty run of horizontal whitespace.
+            let comment_len = span_len - value_len - whitespace_len;
+            self.bump(SyntaxKind::VALUE_TEXT, value_len);
+            self.bump(SyntaxKind::WHITESPACE, whitespace_len);
+            self.bump(SyntaxKind::COMMENT, comment_len);
+        } else {
+            // Separate trailing whitespace from the last line of the value.
+            let value_len = span.trim_end_matches([' ', '\t']).len();
+            let trailing_whitespace_len = span_len - value_len;
+            // Whitespace immediately after the separator was already
+            // consumed, so a non-empty span cannot trim to empty.
+            self.bump(SyntaxKind::VALUE_TEXT, value_len);
+            if trailing_whitespace_len > 0 {
+                self.bump(SyntaxKind::WHITESPACE, trailing_whitespace_len);
             }
         }
-
-        if total_len > 0 {
-            let raw = &value_start[..total_len];
-
-            // When inline comments are enabled, a whitespace-preceded `;`/`#`
-            // marker on the final physical line ends the value and starts a
-            // trailing comment.
-            let split = if self.inline_comments {
-                find_inline_comment(raw)
-            } else {
-                None
-            };
-
-            if let Some((value_len, ws_len)) = split {
-                // find_inline_comment only returns a marker after a non-empty
-                // value and a non-empty run of horizontal whitespace.
-                self.bump(SyntaxKind::VALUE_TEXT, value_len);
-                self.bump(SyntaxKind::WHITESPACE, ws_len);
-                let comment_len = total_len - value_len - ws_len;
-                self.bump(SyntaxKind::COMMENT, comment_len);
-            } else {
-                // Separate trailing whitespace from the last line of the value.
-                let trimmed = raw.trim_end_matches([' ', '\t']);
-                let value_len = trimmed.len();
-                let trail_ws_len = total_len - value_len;
-                // Whitespace immediately after the separator was already
-                // consumed, so a non-empty raw value cannot trim to empty.
-                self.bump(SyntaxKind::VALUE_TEXT, value_len);
-                if trail_ws_len > 0 {
-                    self.bump(SyntaxKind::WHITESPACE, trail_ws_len);
-                }
-            }
-        }
-        self.eat_newline();
     }
 
     fn lex_rest_of_line_as_error(&mut self) {
-        let len = self
-            .rest
-            .bytes()
-            .take_while(|&b| b != b'\n' && b != b'\r')
-            .count();
+        let len = line_len(self.rest);
         if len > 0 {
             self.bump(SyntaxKind::LEX_ERROR, len);
         }
     }
 }
 
+/// Byte length of the value span at the start of `text`: the rest of its line
+/// and, while a line ends with `\` (ignoring trailing spaces and tabs), the
+/// line break after it and the next line. A continued value is therefore one
+/// `VALUE_TEXT` token, line breaks included, which keeps it lossless.
+fn value_span_len(text: &str) -> usize {
+    let mut value_end = 0;
+    loop {
+        let line_break_start = value_end + line_len(&text[value_end..]);
+        let line = &text[value_end..line_break_start];
+        if line.trim_end_matches([' ', '\t']).ends_with('\\') {
+            // The line break is part of the value, which continues on the
+            // next line.
+            value_end = line_break_start + line_break_len(&text[line_break_start..]);
+        } else {
+            return line_break_start;
+        }
+    }
+}
+
 /// Locate a trailing inline comment within a value span.
 ///
-/// Scans the final physical line of `raw` for the first run of spaces/tabs that
-/// is immediately followed by a `;` or `#` marker and is not at the start of
-/// that line. Returns `(value_len, ws_len)`: the byte length of the value
-/// preceding the whitespace run, and the length of the whitespace run itself.
-/// The comment spans from `value_len + ws_len` to the end of `raw`.
+/// Scans the final physical line of `span` for the first run of spaces/tabs
+/// that is immediately followed by a `;` or `#` marker and is not at the start
+/// of that line. Returns `(value_len, whitespace_len)`: the byte length of the
+/// value preceding the whitespace run, and the length of the whitespace run
+/// itself. The comment spans from `value_len + whitespace_len` to the end of
+/// `span`.
 ///
 /// Returns `None` when there is no such marker, which leaves the whole span as
 /// the value. This protects markers that are not whitespace-adjacent
 /// (`a=1;b=2`), markers at the value start (`#fff`), and `;`/`#` on earlier
 /// continued lines (only the final physical line is inspected).
-fn find_inline_comment(raw: &str) -> Option<(usize, usize)> {
-    let bytes = raw.as_bytes();
+fn find_inline_comment(span: &str) -> Option<(usize, usize)> {
+    let bytes = span.as_bytes();
     // Only the final physical line of a (possibly continued) value is eligible.
-    let final_line_start = raw.rfind(['\n', '\r']).map_or(0, |i| i + 1);
+    let final_line_start = span
+        .rfind(['\n', '\r'])
+        .map_or(0, |line_break| line_break + 1);
 
-    let mut i = final_line_start;
-    while i < bytes.len() {
-        if bytes[i] == b' ' || bytes[i] == b'\t' {
-            let ws_start = i;
-            while i < bytes.len() && (bytes[i] == b' ' || bytes[i] == b'\t') {
-                i += 1;
+    let mut index = final_line_start;
+    while index < bytes.len() {
+        if bytes[index] == b' ' || bytes[index] == b'\t' {
+            let whitespace_start = index;
+            while index < bytes.len() && (bytes[index] == b' ' || bytes[index] == b'\t') {
+                index += 1;
             }
-            if i < bytes.len()
-                && (bytes[i] == b';' || bytes[i] == b'#')
-                && ws_start > final_line_start
+            if index < bytes.len()
+                && (bytes[index] == b';' || bytes[index] == b'#')
+                && whitespace_start > final_line_start
             {
-                return Some((ws_start, i - ws_start));
+                return Some((whitespace_start, index - whitespace_start));
             }
         } else {
-            i += 1;
+            index += 1;
         }
     }
     None
+}
+
+/// Byte length of the line at the start of `text`, up to but excluding its
+/// line break (`\n`, `\r\n` or `\r`), or to the end of `text` if it has none.
+pub(crate) fn line_len(text: &str) -> usize {
+    text.bytes()
+        .take_while(|&byte| !is_line_break(byte))
+        .count()
+}
+
+/// Byte length of the line break at the start of `text`: 2 for `\r\n`, 1 for
+/// `\n` or a bare `\r`, and 0 if `text` does not start with one.
+pub(crate) fn line_break_len(text: &str) -> usize {
+    if text.starts_with("\r\n") {
+        2
+    } else {
+        usize::from(text.bytes().next().is_some_and(is_line_break))
+    }
+}
+
+/// Whether `byte` is one of the two bytes that line breaks (`\n`, `\r\n` and
+/// `\r`) are made of. Neither occurs inside a multi-byte UTF-8 character, so
+/// scanning bytes finds every line break.
+fn is_line_break(byte: u8) -> bool {
+    byte == b'\n' || byte == b'\r'
 }
 
 #[cfg(test)]
@@ -315,10 +330,10 @@ mod tests {
     use SyntaxKind::*;
 
     fn lex_kinds(input: &str) -> Vec<SyntaxKind> {
-        let toks = lex(input);
-        let reconstructed: String = toks.iter().map(|t| t.text).collect();
+        let tokens = lex(input);
+        let reconstructed: String = tokens.iter().map(|token| token.text).collect();
         assert_eq!(reconstructed, input, "lexer must be lossless");
-        toks.iter().map(|t| t.kind).collect()
+        tokens.iter().map(|token| token.kind).collect()
     }
 
     #[test]
@@ -369,8 +384,8 @@ mod tests {
             lex_kinds("[my section]\n"),
             vec![L_BRACK, IDENT, R_BRACK, NEWLINE]
         );
-        let toks = lex("[my section]\n");
-        assert_eq!(toks[1].text, "my section");
+        let tokens = lex("[my section]\n");
+        assert_eq!(tokens[1].text, "my section");
     }
 
     #[test]
@@ -472,89 +487,110 @@ mod tests {
 
     #[test]
     fn crlf() {
-        let toks = lex("k=v\r\n");
-        assert_eq!(toks.last().unwrap().text, "\r\n");
+        let tokens = lex("k=v\r\n");
+        assert_eq!(tokens.last().unwrap().text, "\r\n");
     }
 
     #[test]
     fn utf8_bom() {
         let input = "\u{FEFF}[author]\nE-MAIL = u@gogs.io\n";
-        let toks = lex(input);
-        // Round-trip
-        let reconstructed: String = toks.iter().map(|t| t.text).collect();
+        let tokens = lex(input);
+        // The tokens reproduce the input.
+        let reconstructed: String = tokens.iter().map(|token| token.text).collect();
         assert_eq!(reconstructed, input);
-        // BOM is emitted as whitespace (trivia), not an error
-        assert_eq!(toks[0].kind, WHITESPACE);
-        assert_eq!(toks[0].text, "\u{FEFF}");
-        // Parsing continues normally after BOM
-        assert_eq!(toks[1].kind, L_BRACK);
+        // The BOM is emitted as whitespace (trivia), not as an error.
+        assert_eq!(tokens[0].kind, WHITESPACE);
+        assert_eq!(tokens[0].text, "\u{FEFF}");
+        // Lexing continues normally after the BOM.
+        assert_eq!(tokens[1].kind, L_BRACK);
     }
 
     #[test]
     fn backslash_continuation() {
         let input = "k=hello \\\nworld\n";
-        let toks = lex(input);
-        let reconstructed: String = toks.iter().map(|t| t.text).collect();
+        let tokens = lex(input);
+        let reconstructed: String = tokens.iter().map(|token| token.text).collect();
         assert_eq!(reconstructed, input);
-        let value_tok = toks.iter().find(|t| t.kind == VALUE_TEXT).unwrap();
-        assert_eq!(value_tok.text, "hello \\\nworld");
+        let value_token = tokens
+            .iter()
+            .find(|token| token.kind == VALUE_TEXT)
+            .unwrap();
+        assert_eq!(value_token.text, "hello \\\nworld");
     }
 
     #[test]
     fn backslash_continuation_multiple_lines() {
         let input = "k=a \\\nb \\\nc\n";
-        let toks = lex(input);
-        let reconstructed: String = toks.iter().map(|t| t.text).collect();
+        let tokens = lex(input);
+        let reconstructed: String = tokens.iter().map(|token| token.text).collect();
         assert_eq!(reconstructed, input);
-        let value_tok = toks.iter().find(|t| t.kind == VALUE_TEXT).unwrap();
-        assert_eq!(value_tok.text, "a \\\nb \\\nc");
+        let value_token = tokens
+            .iter()
+            .find(|token| token.kind == VALUE_TEXT)
+            .unwrap();
+        assert_eq!(value_token.text, "a \\\nb \\\nc");
     }
 
     #[test]
     fn backslash_not_at_end_is_literal() {
         let input = "k=path\\to\\file\n";
-        let toks = lex(input);
-        let reconstructed: String = toks.iter().map(|t| t.text).collect();
+        let tokens = lex(input);
+        let reconstructed: String = tokens.iter().map(|token| token.text).collect();
         assert_eq!(reconstructed, input);
-        let value_tok = toks.iter().find(|t| t.kind == VALUE_TEXT).unwrap();
-        assert_eq!(value_tok.text, "path\\to\\file");
+        let value_token = tokens
+            .iter()
+            .find(|token| token.kind == VALUE_TEXT)
+            .unwrap();
+        assert_eq!(value_token.text, "path\\to\\file");
     }
 
     #[test]
     fn backslash_continuation_with_crlf() {
         let input = "k=a \\\r\nb\r\n";
-        let toks = lex(input);
-        let reconstructed: String = toks.iter().map(|t| t.text).collect();
+        let tokens = lex(input);
+        let reconstructed: String = tokens.iter().map(|token| token.text).collect();
         assert_eq!(reconstructed, input);
-        let value_tok = toks.iter().find(|t| t.kind == VALUE_TEXT).unwrap();
-        assert_eq!(value_tok.text, "a \\\r\nb");
+        let value_token = tokens
+            .iter()
+            .find(|token| token.kind == VALUE_TEXT)
+            .unwrap();
+        assert_eq!(value_token.text, "a \\\r\nb");
     }
 
     #[test]
     fn backslash_continuation_with_bare_cr() {
         let input = "k=a \\\rb\r";
-        let toks = lex(input);
-        assert_eq!(toks.iter().map(|t| t.text).collect::<String>(), input);
-        let value_tok = toks.iter().find(|t| t.kind == VALUE_TEXT).unwrap();
-        assert_eq!(value_tok.text, "a \\\rb");
+        let tokens = lex(input);
+        assert_eq!(
+            tokens.iter().map(|token| token.text).collect::<String>(),
+            input
+        );
+        let value_token = tokens
+            .iter()
+            .find(|token| token.kind == VALUE_TEXT)
+            .unwrap();
+        assert_eq!(value_token.text, "a \\\rb");
     }
 
     #[test]
     fn backslash_at_eof_is_literal() {
         // No newline after backslash — it's just a literal backslash.
         let input = "k=val\\";
-        let toks = lex(input);
-        let reconstructed: String = toks.iter().map(|t| t.text).collect();
+        let tokens = lex(input);
+        let reconstructed: String = tokens.iter().map(|token| token.text).collect();
         assert_eq!(reconstructed, input);
-        let value_tok = toks.iter().find(|t| t.kind == VALUE_TEXT).unwrap();
-        assert_eq!(value_tok.text, "val\\");
+        let value_token = tokens
+            .iter()
+            .find(|token| token.kind == VALUE_TEXT)
+            .unwrap();
+        assert_eq!(value_token.text, "val\\");
     }
 
     #[test]
     fn bare_cr_line_ending() {
         let input = "k=v\r[s]\rx=y\r";
-        let toks = lex(input);
-        let reconstructed: String = toks.iter().map(|t| t.text).collect();
+        let tokens = lex(input);
+        let reconstructed: String = tokens.iter().map(|token| token.text).collect();
         assert_eq!(reconstructed, input);
     }
 
@@ -563,11 +599,11 @@ mod tests {
         // A bare identifier followed by more text but no = or : triggers LEX_ERROR
         // for the trailing content.
         let input = "=value_no_key\n";
-        let toks = lex(input);
-        let reconstructed: String = toks.iter().map(|t| t.text).collect();
+        let tokens = lex(input);
+        let reconstructed: String = tokens.iter().map(|token| token.text).collect();
         assert_eq!(reconstructed, input);
         // The `=` isn't a valid start for a key, so the whole line becomes error.
-        assert!(toks.iter().any(|t| t.kind == LEX_ERROR));
+        assert!(tokens.iter().any(|token| token.kind == LEX_ERROR));
         assert_eq!(
             lex_kinds("key\r"),
             vec![IDENT, NEWLINE],
@@ -580,114 +616,123 @@ mod tests {
         );
     }
 
-    // --- inline comments (opt-in) ---
+    // The tests below cover inline comments, which are opt-in.
 
-    fn val<'a>(toks: &'a [Token<'a>]) -> Option<&'a str> {
-        toks.iter().find(|t| t.kind == VALUE_TEXT).map(|t| t.text)
+    fn value_text<'a>(tokens: &'a [Token<'a>]) -> Option<&'a str> {
+        tokens
+            .iter()
+            .find(|token| token.kind == VALUE_TEXT)
+            .map(|token| token.text)
     }
-    fn com<'a>(toks: &'a [Token<'a>]) -> Option<&'a str> {
-        toks.iter().find(|t| t.kind == COMMENT).map(|t| t.text)
+    fn comment_text<'a>(tokens: &'a [Token<'a>]) -> Option<&'a str> {
+        tokens
+            .iter()
+            .find(|token| token.kind == COMMENT)
+            .map(|token| token.text)
     }
 
     #[test]
     fn inline_comment_basic() {
-        let toks = lex_with("k = 1   ; note\n", true);
+        let tokens = lex_with("k = 1   ; note\n", true);
         assert_eq!(
-            toks.iter().map(|t| t.kind).collect::<Vec<_>>(),
+            tokens.iter().map(|token| token.kind).collect::<Vec<_>>(),
             vec![
                 IDENT, WHITESPACE, EQ, WHITESPACE, VALUE_TEXT, WHITESPACE, COMMENT, NEWLINE
             ]
         );
-        assert_eq!(val(&toks), Some("1"));
-        assert_eq!(com(&toks), Some("; note"));
+        assert_eq!(value_text(&tokens), Some("1"));
+        assert_eq!(comment_text(&tokens), Some("; note"));
     }
 
     #[test]
     fn inline_comment_disabled_by_default() {
-        let toks = lex("k = 1   ; note\n");
-        assert_eq!(val(&toks), Some("1   ; note"));
-        assert!(com(&toks).is_none());
+        let tokens = lex("k = 1   ; note\n");
+        assert_eq!(value_text(&tokens), Some("1   ; note"));
+        assert!(comment_text(&tokens).is_none());
     }
 
     #[test]
     fn inline_comment_requires_whitespace_before_marker() {
         // Connection-string style — no space before `;` keeps it in the value.
-        let toks = lex_with("conn = a=1;b=2;c=3\n", true);
-        assert_eq!(val(&toks), Some("a=1;b=2;c=3"));
-        assert!(com(&toks).is_none());
+        let tokens = lex_with("conn = a=1;b=2;c=3\n", true);
+        assert_eq!(value_text(&tokens), Some("a=1;b=2;c=3"));
+        assert!(comment_text(&tokens).is_none());
     }
 
     #[test]
     fn inline_comment_marker_at_value_start_is_value() {
-        let toks = lex_with("color = #fff\n", true);
-        assert_eq!(val(&toks), Some("#fff"));
-        assert!(com(&toks).is_none());
+        let tokens = lex_with("color = #fff\n", true);
+        assert_eq!(value_text(&tokens), Some("#fff"));
+        assert!(comment_text(&tokens).is_none());
     }
 
     #[test]
     fn inline_comment_hash_after_value() {
-        let toks = lex_with("color = #fff ; my color\n", true);
-        assert_eq!(val(&toks), Some("#fff"));
-        assert_eq!(com(&toks), Some("; my color"));
+        let tokens = lex_with("color = #fff ; my color\n", true);
+        assert_eq!(value_text(&tokens), Some("#fff"));
+        assert_eq!(comment_text(&tokens), Some("; my color"));
     }
 
     #[test]
     fn inline_comment_url_with_fragment_preserved() {
-        let toks = lex_with("url = http://example.com/#section\n", true);
-        assert_eq!(val(&toks), Some("http://example.com/#section"));
-        assert!(com(&toks).is_none());
+        let tokens = lex_with("url = http://example.com/#section\n", true);
+        assert_eq!(value_text(&tokens), Some("http://example.com/#section"));
+        assert!(comment_text(&tokens).is_none());
     }
 
     #[test]
     fn inline_comment_value_with_internal_spaces() {
-        let toks = lex_with("name = John Smith ; note\n", true);
-        assert_eq!(val(&toks), Some("John Smith"));
-        assert_eq!(com(&toks), Some("; note"));
+        let tokens = lex_with("name = John Smith ; note\n", true);
+        assert_eq!(value_text(&tokens), Some("John Smith"));
+        assert_eq!(comment_text(&tokens), Some("; note"));
     }
 
     #[test]
     fn inline_comment_no_value_before_marker_stays_value() {
         // After the separator, the post-`=` whitespace is consumed, so a marker
         // at the very start of the value region is treated as value.
-        let toks = lex_with("k =    ; not a comment\n", true);
-        assert_eq!(val(&toks), Some("; not a comment"));
-        assert!(com(&toks).is_none());
+        let tokens = lex_with("k =    ; not a comment\n", true);
+        assert_eq!(value_text(&tokens), Some("; not a comment"));
+        assert!(comment_text(&tokens).is_none());
     }
 
     #[test]
     fn inline_comment_real_world_boot_project() {
         let input =
             "Bootproject.RetainMismatch.Init=1           ; HANDLES RETAIN VARIABLE MISMATCHES\n";
-        let toks = lex_with(input, true);
-        let reconstructed: String = toks.iter().map(|t| t.text).collect();
+        let tokens = lex_with(input, true);
+        let reconstructed: String = tokens.iter().map(|token| token.text).collect();
         assert_eq!(reconstructed, input);
-        assert_eq!(val(&toks), Some("1"));
-        assert_eq!(com(&toks), Some("; HANDLES RETAIN VARIABLE MISMATCHES"));
+        assert_eq!(value_text(&tokens), Some("1"));
+        assert_eq!(
+            comment_text(&tokens),
+            Some("; HANDLES RETAIN VARIABLE MISMATCHES")
+        );
     }
 
     #[test]
     fn inline_comment_lossless_mixed() {
         let input = "k = 1   ; note\ncolor=#fff ; c\nconn = a;b\nurl = http://x/#f\n";
-        let toks = lex_with(input, true);
-        let reconstructed: String = toks.iter().map(|t| t.text).collect();
+        let tokens = lex_with(input, true);
+        let reconstructed: String = tokens.iter().map(|token| token.text).collect();
         assert_eq!(reconstructed, input);
     }
 
     #[test]
     fn inline_comment_on_final_continuation_line() {
         let input = "k = a \\\nb ; note\n";
-        let toks = lex_with(input, true);
-        let reconstructed: String = toks.iter().map(|t| t.text).collect();
+        let tokens = lex_with(input, true);
+        let reconstructed: String = tokens.iter().map(|token| token.text).collect();
         assert_eq!(reconstructed, input);
-        assert_eq!(val(&toks), Some("a \\\nb"));
-        assert_eq!(com(&toks), Some("; note"));
+        assert_eq!(value_text(&tokens), Some("a \\\nb"));
+        assert_eq!(comment_text(&tokens), Some("; note"));
     }
 
     #[test]
     fn inline_comment_tab_before_marker() {
-        let toks = lex_with("k = v\t; note\n", true);
-        assert_eq!(val(&toks), Some("v"));
-        assert_eq!(com(&toks), Some("; note"));
+        let tokens = lex_with("k = v\t; note\n", true);
+        assert_eq!(value_text(&tokens), Some("v"));
+        assert_eq!(comment_text(&tokens), Some("; note"));
     }
 
     #[test]
@@ -697,14 +742,17 @@ mod tests {
             ("flag\t#\r", "#"),
             ("flag  ; λ", "; λ"),
         ] {
-            let toks = lex_with(input, true);
-            assert_eq!(toks.iter().map(|t| t.text).collect::<String>(), input);
-            let kinds: Vec<_> = toks.iter().map(|t| t.kind).collect();
+            let tokens = lex_with(input, true);
+            assert_eq!(
+                tokens.iter().map(|token| token.text).collect::<String>(),
+                input
+            );
+            let kinds: Vec<_> = tokens.iter().map(|token| token.kind).collect();
             assert_eq!(&kinds[..3], [IDENT, WHITESPACE, COMMENT], "{input:?}");
-            assert_eq!(com(&toks), Some(comment));
+            assert_eq!(comment_text(&tokens), Some(comment));
             // Without the option, the marker is unexpected text after the key.
-            let toks = lex(input);
-            assert_eq!(toks[2].kind, LEX_ERROR, "{input:?}");
+            let tokens = lex(input);
+            assert_eq!(tokens[2].kind, LEX_ERROR, "{input:?}");
         }
         // Markers need whitespace before them, and text after a key is not a
         // comment just because it contains one.
@@ -712,7 +760,7 @@ mod tests {
         assert_eq!(
             lex_with("flag junk ; note", true)
                 .iter()
-                .map(|t| t.kind)
+                .map(|token| token.kind)
                 .collect::<Vec<_>>(),
             vec![IDENT, WHITESPACE, LEX_ERROR]
         );
@@ -738,5 +786,63 @@ mod tests {
             find_inline_comment("earlier # marker\\\rfinal ; comment"),
             Some((23, 1))
         );
+    }
+
+    #[test]
+    fn is_line_break_accepts_only_cr_and_lf() {
+        let line_breaks: Vec<u8> = (0..=u8::MAX).filter(|&byte| is_line_break(byte)).collect();
+        assert_eq!(line_breaks, [b'\n', b'\r']);
+    }
+
+    #[test]
+    fn line_len_stops_at_every_kind_of_line_break() {
+        for (text, len) in [
+            ("", 0),
+            ("\n", 0),
+            ("\r", 0),
+            ("key", 3),
+            ("key\nnext", 3),
+            ("key\r\nnext", 3),
+            ("key\rnext", 3),
+            ("λ ;\n", 4),
+        ] {
+            assert_eq!(line_len(text), len, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn line_break_len_measures_one_line_break() {
+        for (text, len) in [
+            ("\r\n", 2),
+            ("\r\n\n", 2),
+            ("\n\r", 1),
+            ("\n", 1),
+            ("\r", 1),
+            ("\rnext", 1),
+            ("", 0),
+            ("next\n", 0),
+            (" \n", 0),
+        ] {
+            assert_eq!(line_break_len(text), len, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn value_span_len_follows_backslash_continuations() {
+        for (text, len) in [
+            ("", 0),
+            ("value", 5),
+            ("value \t\nnext", 7),
+            ("a\\b\nnext", 3),
+            ("a \\\nb\nnext", 5),
+            ("a \\ \t\r\nb\r\nnext", 8),
+            ("a\\\rb\\\nc\n", 7),
+            ("\\\n\\\n\n", 4),
+            // A continuation at the end of the input keeps its line break.
+            ("a\\", 2),
+            ("a\\\n", 3),
+        ] {
+            assert_eq!(value_span_len(text), len, "{text:?}");
+        }
     }
 }

@@ -87,13 +87,13 @@ impl SectionHeader {
         self.0
             .children_with_tokens()
             .filter_map(rowan::NodeOrToken::into_token)
-            .find(|t| t.kind() == SyntaxKind::IDENT)
+            .find(|token| token.kind() == SyntaxKind::IDENT)
     }
 
     /// The section name as a string.
     #[must_use]
     pub fn name(&self) -> Option<String> {
-        self.name_token().map(|t| t.text().to_string())
+        self.name_token().map(|token| token.text().to_string())
     }
 }
 
@@ -120,16 +120,17 @@ impl Entry {
     /// `None` for bare keys without a separator (`key` alone).
     #[must_use]
     pub fn value(&self) -> Option<String> {
-        // A bare key has no EQ or COLON token — distinguish from empty value
+        // A bare key has no EQ or COLON token, unlike an empty value (`key =`).
         let has_separator = self
             .0
             .children_with_tokens()
             .filter_map(rowan::NodeOrToken::into_token)
-            .any(|t| t.kind() == SyntaxKind::EQ || t.kind() == SyntaxKind::COLON);
+            .any(|token| token.kind() == SyntaxKind::EQ || token.kind() == SyntaxKind::COLON);
         if !has_separator {
             return None;
         }
-        self.value_node().map(|v| v.text().unwrap_or_default())
+        self.value_node()
+            .map(|value| value.text().unwrap_or_default())
     }
 
     /// True if the separator is `:` rather than `=`.
@@ -138,7 +139,7 @@ impl Entry {
         self.0
             .children_with_tokens()
             .filter_map(rowan::NodeOrToken::into_token)
-            .any(|t| t.kind() == SyntaxKind::COLON)
+            .any(|token| token.kind() == SyntaxKind::COLON)
     }
 
     /// The trailing inline comment (e.g. `; note`), including its leading
@@ -153,8 +154,8 @@ impl Entry {
         self.0
             .children_with_tokens()
             .filter_map(rowan::NodeOrToken::into_token)
-            .find(|t| t.kind() == SyntaxKind::COMMENT)
-            .map(|t| t.text().to_string())
+            .find(|token| token.kind() == SyntaxKind::COMMENT)
+            .map(|token| token.text().to_string())
     }
 }
 
@@ -165,13 +166,13 @@ impl Key {
         self.0
             .children_with_tokens()
             .filter_map(rowan::NodeOrToken::into_token)
-            .find(|t| t.kind() == SyntaxKind::IDENT)
+            .find(|token| token.kind() == SyntaxKind::IDENT)
     }
 
     /// The key as a string.
     #[must_use]
     pub fn text(&self) -> Option<String> {
-        self.token().map(|t| t.text().to_string())
+        self.token().map(|token| token.text().to_string())
     }
 }
 
@@ -182,13 +183,13 @@ impl Value {
         self.0
             .children_with_tokens()
             .filter_map(rowan::NodeOrToken::into_token)
-            .find(|t| t.kind() == SyntaxKind::VALUE_TEXT)
+            .find(|token| token.kind() == SyntaxKind::VALUE_TEXT)
     }
 
     /// The value text, or `None` for empty values (`key =`).
     #[must_use]
     pub fn text(&self) -> Option<String> {
-        self.token().map(|t| t.text().to_string())
+        self.token().map(|token| token.text().to_string())
     }
 }
 
@@ -199,13 +200,13 @@ impl CommentLine {
         self.0
             .children_with_tokens()
             .filter_map(rowan::NodeOrToken::into_token)
-            .find(|t| t.kind() == SyntaxKind::COMMENT)
+            .find(|token| token.kind() == SyntaxKind::COMMENT)
     }
 
     /// The comment text, including its leading `;`/`#` marker.
     #[must_use]
     pub fn text(&self) -> Option<String> {
-        self.token().map(|t| t.text().to_string())
+        self.token().map(|token| token.text().to_string())
     }
 }
 
@@ -221,80 +222,87 @@ mod tests {
 
     #[test]
     fn sections_and_entries() {
-        let f = ast("[a]\nx=1\ny=2\n[b]\nz=3\n");
-        let secs: Vec<_> = f.sections().collect();
-        assert_eq!(secs.len(), 2);
-        assert_eq!(secs[0].name().as_deref(), Some("a"));
-        assert_eq!(secs[1].name().as_deref(), Some("b"));
-        let entries: Vec<_> = secs[0].entries().collect();
+        let file = ast("[a]\nx=1\ny=2\n[b]\nz=3\n");
+        let sections: Vec<_> = file.sections().collect();
+        assert_eq!(sections.len(), 2);
+        assert_eq!(sections[0].name().as_deref(), Some("a"));
+        assert_eq!(sections[1].name().as_deref(), Some("b"));
+        let entries: Vec<_> = sections[0].entries().collect();
         assert_eq!(entries[0].key().as_deref(), Some("x"));
         assert_eq!(entries[0].value().as_deref(), Some("1"));
     }
 
     #[test]
     fn empty_value() {
-        let f = ast("[s]\nk=\n");
-        let e = f.sections().next().unwrap().entries().next().unwrap();
-        assert_eq!(e.value().as_deref(), Some(""));
+        let file = ast("[s]\nk=\n");
+        let entry = file.sections().next().unwrap().entries().next().unwrap();
+        assert_eq!(entry.value().as_deref(), Some(""));
     }
 
     #[test]
     fn colon_separator() {
-        let f = ast("[s]\nk: v\n");
-        let e = f.sections().next().unwrap().entries().next().unwrap();
-        assert!(e.uses_colon());
-        assert_eq!(e.value().as_deref(), Some("v"));
+        let file = ast("[s]\nk: v\n");
+        let entry = file.sections().next().unwrap().entries().next().unwrap();
+        assert!(entry.uses_colon());
+        assert_eq!(entry.value().as_deref(), Some("v"));
 
-        let f = ast("[s]\nk = v\nbare\n");
-        let entries: Vec<_> = f.sections().next().unwrap().entries().collect();
+        let file = ast("[s]\nk = v\nbare\n");
+        let entries: Vec<_> = file.sections().next().unwrap().entries().collect();
         assert!(!entries[0].uses_colon());
         assert!(!entries[1].uses_colon());
     }
 
     #[test]
     fn preamble() {
-        let f = ast("g=1\n[s]\nk=2\n");
-        assert_eq!(f.preamble_entries().count(), 1);
-        assert_eq!(f.sections().next().unwrap().entries().count(), 1);
+        let file = ast("g=1\n[s]\nk=2\n");
+        assert_eq!(file.preamble_entries().count(), 1);
+        assert_eq!(file.sections().next().unwrap().entries().count(), 1);
     }
 
     #[test]
     fn inline_comment_accessor() {
         use crate::{ParseOptions, parse_with};
-        let opts = ParseOptions {
+        let options = ParseOptions {
             inline_comments: true,
             ..Default::default()
         };
-        let f = File::cast(parse_with("[s]\nk = 1   ; note\n", &opts).syntax()).unwrap();
-        let e = f.sections().next().unwrap().entries().next().unwrap();
-        assert_eq!(e.key().as_deref(), Some("k"));
-        assert_eq!(e.value().as_deref(), Some("1"));
-        assert_eq!(e.inline_comment().as_deref(), Some("; note"));
+        let file = File::cast(parse_with("[s]\nk = 1   ; note\n", &options).syntax()).unwrap();
+        let entry = file.sections().next().unwrap().entries().next().unwrap();
+        assert_eq!(entry.key().as_deref(), Some("k"));
+        assert_eq!(entry.value().as_deref(), Some("1"));
+        assert_eq!(entry.inline_comment().as_deref(), Some("; note"));
     }
 
     #[test]
     fn no_inline_comment_when_disabled() {
         // Default parse leaves the marker in the value and reports no comment.
-        let f = ast("[s]\nk = 1   ; note\n");
-        let e = f.sections().next().unwrap().entries().next().unwrap();
-        assert_eq!(e.value().as_deref(), Some("1   ; note"));
-        assert_eq!(e.inline_comment(), None);
+        let file = ast("[s]\nk = 1   ; note\n");
+        let entry = file.sections().next().unwrap().entries().next().unwrap();
+        assert_eq!(entry.value().as_deref(), Some("1   ; note"));
+        assert_eq!(entry.inline_comment(), None);
     }
 
     #[test]
     fn comment_lines_and_blank_lines() {
-        let f = ast("[s]\n; first\nk = v\n# second\n\n");
-        let sec = f.sections().next().unwrap();
+        let file = ast("[s]\n; first\nk = v\n# second\n\n");
+        let section = file.sections().next().unwrap();
 
-        let first = sec.comment_lines().next().unwrap();
+        let first = section.comment_lines().next().unwrap();
         assert_eq!(first.token().unwrap().kind(), SyntaxKind::COMMENT);
         assert_eq!(first.text().as_deref(), Some("; first"));
         assert_eq!(first.syntax().text().to_string(), "; first\n");
 
-        let texts: Vec<_> = sec.comment_lines().filter_map(|c| c.text()).collect();
+        let texts: Vec<_> = section
+            .comment_lines()
+            .filter_map(|comment| comment.text())
+            .collect();
         assert_eq!(texts, vec!["; first".to_string(), "# second".to_string()]);
 
-        let blank = sec.syntax().children().find_map(BlankLine::cast).unwrap();
+        let blank = section
+            .syntax()
+            .children()
+            .find_map(BlankLine::cast)
+            .unwrap();
         assert_eq!(blank.syntax().text().to_string(), "\n");
     }
 
