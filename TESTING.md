@@ -492,6 +492,26 @@ remain useful.
 Crash and timeout inputs are uploaded separately and retained for 90 days,
 which is still finite: that is why reproducers must be committed.
 
+Every night at 21:23 UTC, the Nightly fuzzing workflow
+(`.github/workflows/fuzz-nightly.yml`) fuzzes each target for five hours in a
+job of its own, with libFuzzer's fork mode on all of the runner's cores. With
+`-ignore_crashes`, `-ignore_timeouts` and `-ignore_ooms`, a finding is
+recorded and the campaign goes on. Each target starts from its own nightly
+corpus, the `fuzz` job's corpus, the reproducible seeds and the committed
+inputs, and replays all of them first: fork mode would drop a crashing starting
+input without reporting it. After fuzzing, the job minimizes the corpus with
+a libFuzzer merge and saves it for the next night. Any crash, timeout or
+out-of-memory input is uploaded for 90 days and fails the run, so GitHub
+emails the owner, and the job summary reports executions, coverage, corpus
+sizes and findings. The workflow is neither a pull-request check nor a release
+gate, so look at its latest run before releasing. To check it, or a change to
+it on a branch, dispatch a short run; `--ref` picks the branch whose version
+runs, and only runs on `main` save their corpus:
+
+```sh
+gh workflow run fuzz-nightly.yml --ref main -f seconds=300
+```
+
 Each fuzz input has a 10-second timeout and each target has a 1 GiB RSS limit.
 Input lengths are bounded per target (`-max_len`):
 
