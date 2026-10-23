@@ -2,6 +2,6 @@
 # crate included; tests/style.rs also measures physical lines and columns.
 too-many-lines-threshold = 70
 too-many-arguments-threshold = 4
-# For min_ident_chars, which src/lib.rs enables: no one-letter name, not even the default i, j,
-# n, w, x, y and z.
+# For min_ident_chars, which src/lib.rs and benches/parse.rs enable: no one-letter name, not
+# even the default i, j, n, w, x, y and z.
 allowed-idents-below-min-chars = []

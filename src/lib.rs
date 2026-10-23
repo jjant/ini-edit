@@ -40,8 +40,8 @@
 #![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 // Users copy the examples, so they compile without a warning.
 #![doc(test(attr(deny(warnings))))]
-// TigerStyle: names are not abbreviated. Integration tests and benchmarks are exempt, where
-// Criterion's closures conventionally name their arguments `c` and `b`.
+// TigerStyle: names are not abbreviated. benches/parse.rs enables the lint as well; integration
+// tests are exempt.
 #![warn(clippy::min_ident_chars)]
 
 pub mod ast;

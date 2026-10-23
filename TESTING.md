@@ -31,13 +31,19 @@ LLVM's MC/DC instrumentation is currently tied to
 `nightly-2026-09-17`. Compiler versions produce slightly different region
 counts, so CI requires 100% independently in each report.
 
+`cargo llvm-cov --lib` builds every dev-dependency for the library's unit
+tests, so the MC/DC job compiles them all with that 2025 nightly. Every
+dev-dependency, and every update of one, must build there as well as on the
+minimum supported Rust version. Criterion's zerocopy did not: it uses AVX-512
+types that the nightly had not stabilized yet, so the benchmark has a std-only
+harness.
+
 Run the same measurements locally:
 
 ```sh
 cargo +nightly-2026-09-17 llvm-cov --lib --all-features
 cargo +nightly-2026-09-17 llvm-cov --lib --all-features --branch
-RUSTFLAGS='--cfg no_zerocopy_simd_x86_avx12_1_89_0' \
-  cargo +nightly-2025-06-01 llvm-cov --lib --all-features --mcdc
+cargo +nightly-2025-06-01 llvm-cov --lib --all-features --mcdc
 ```
 
 Before switching between the two nightlies, delete `target/llvm-cov-target`
@@ -279,6 +285,17 @@ CI runners and produced a false alarm on the same source tree. The larger
 window checks sustained growth with the same ratio bound; other workload
 families use 16,384, 32,768, and 65,536 units.
 
+`benches/parse.rs` times parsing, traversal and edits, and the same parses and
+edits in `rust-ini` and `configparser`, set up as in the differential tests,
+with a std-only harness. `cargo bench --bench parse` prints the median time of
+one call for each case. Filters, `--skip`, `--exact` and `--ignored` select
+cases as in libtest, and `--list` lists them: `-- compare` times the
+comparisons, and `-- --skip malformed` every case but the malformed ones.
+libtest's other options change nothing, and any other option is an error, as
+in libtest. The timings are for comparisons by hand and gate nothing: the
+scaling probe is the performance check. Every `cargo test --all-targets` runs
+each case once, so the benchmark keeps compiling and running.
+
 ## Assertions
 
 The lexer and the parser check their own invariants, following TigerStyle
@@ -479,11 +496,12 @@ cargo +nightly-2026-09-17 fuzz run generated_edits path/to/reproducer
 - Clippy runs `all` and `pedantic` plus the extra lints in `Cargo.toml`, with
   `--deny warnings`, on the crate and on the fuzz crate, a separate workspace
   that repeats the `[lints]` tables. `clippy.toml` caps a function at 70 lines
-  of code and 4 arguments, and `src/lib.rs` refuses one-letter names in the
-  library and its unit tests. An exception is an `#[expect]` with a reason, so
-  it fails once it is no longer needed. The two on `mod parser` in `src/lib.rs`
-  wait for the parser work in flight. Until it moves them onto their items,
-  each covers all of `src/parser.rs`, so a new instance there passes too.
+  of code and 4 arguments, and `src/lib.rs` and `benches/parse.rs` refuse
+  one-letter names in the library, its unit tests and the benchmark. An
+  exception is an `#[expect]` with a reason, so it fails once it is no longer
+  needed. The two on `mod parser` in `src/lib.rs` wait for the parser work in
+  flight. Until it moves them onto their items, each covers all of
+  `src/parser.rs`, so a new instance there passes too.
 - `tests/style.rs`, part of every `cargo test`, caps every line of the Rust,
   TOML, YAML and Markdown files at 100 columns and every function at 70
   physical lines, comments and blank lines included. It reads only the paths

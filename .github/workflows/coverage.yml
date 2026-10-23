@@ -72,10 +72,6 @@ jobs:
     name: MC/DC (100%)
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    env:
-      # zerocopy probes an AVX-512 feature stabilized after this pinned
-      # compiler. The cfg keeps that optional implementation disabled.
-      RUSTFLAGS: --cfg no_zerocopy_simd_x86_avx12_1_89_0
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
