@@ -381,8 +381,9 @@ jobs:
 
   fuzz:
     runs-on: ubuntu-24.04
-    # Scheduled runs fuzz each of the five targets for 15 minutes; the longest
-    # observed run took 76 minutes including the builds.
+    # Scheduled runs, and pushes whose version is not released yet, fuzz each
+    # of the five targets for 15 minutes; the longest observed run took 76
+    # minutes including the builds.
     timeout-minutes: 100
     env:
       # The only list of fuzz targets in this file. A step below checks it
@@ -483,13 +484,25 @@ jobs:
               -runs=0 -timeout=10 -rss_limit_mb=1024
           done
       - name: Fuzz parser and editor
+        shell: bash
         run: |
           seconds=10
-          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
-            seconds=60
-          elif [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
+          if [ "$GITHUB_EVENT_NAME" = schedule ]; then
             seconds=900
+          elif [ "$GITHUB_EVENT_NAME" = push ]; then
+            seconds=60
+            # release-plz skips a version whose v<version> tag exists. Without
+            # the tag, `release` may upload this very commit after this run,
+            # so it gets the scheduled soak; so does a failed tag lookup.
+            version=$(cargo metadata --locked --no-deps --format-version 1 \
+              | jq --exit-status --raw-output \
+                '.packages[] | select(.name == "ini-edit") | .version')
+            if ! git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null; then
+              echo "No v$version tag found, so this push may publish v$version."
+              seconds=900
+            fi
           fi
+          echo "Fuzzing each target for $seconds seconds."
           status=0
           for target in $FUZZ_TARGETS; do
             max_len=16384
@@ -522,3 +535,143 @@ jobs:
         with:
           path: fuzz/corpus
           key: ${{ steps.restore-corpus.outputs.cache-primary-key }}
+
+  # The 100% coverage gates. Called from here, they run in this run, on this
+  # commit, so `required` can wait for them.
+  coverage:
+    # Not $/: actionlint 1.7.12 rejects that syntax, and for a reusable
+    # workflow both forms resolve to this commit before any job starts.
+    uses: ./.github/workflows/coverage.yml # zizmor: ignore[self-repository]
+    # Only the Codecov upload's secret; these jobs need no publishing token.
+    secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  # One check that stands for every gate: `release` needs it, and so can a
+  # branch rule. It runs however the gates end, because GitHub reports a
+  # skipped job as successful to branch rules, and it fails unless each gate
+  # succeeded.
+  required:
+    if: always()
+    needs:
+      - check
+      - msrv
+      - platforms
+      - package
+      - extended-tests
+      - miri-strict
+      - miri
+      - dependencies
+      - mutation
+      - fuzz
+      - coverage
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      NEEDS: ${{ toJSON(needs) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Require every other job to be a gate or the release
+        # Checks the wiring that makes `release` wait for every gate:
+        # - every job except `release` is a gate listed above;
+        # - `release` is the only job that needs this one;
+        # - `release` has exactly the `if:` in RELEASE_IF;
+        # - no other workflow runs on pushes: `release` cannot wait for its
+        #   jobs, as it could not wait for coverage.yml's before.
+        shell: bash
+        env:
+          RELEASE_IF: needs.required.result == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          ci=.github/workflows/ci.yml
+          jobs=$(yq --output-format=json '.jobs' "$ci")
+          # A job's needs is one job name or a list of them.
+          after=$(jq --raw-output '
+            . as $jobs
+            | [keys[] | select([$jobs[.].needs] | flatten | any(.[]; . == "required"))]
+            | join(" ")' <<< "$jobs")
+          gates=$(jq --raw-output '
+            . as $jobs
+            | [keys[]
+                | select(. != "required")
+                | select([$jobs[.].needs] | flatten | any(.[]; . == "required") | not)]
+            | join(" ")' <<< "$jobs")
+          needed=$(jq --raw-output 'keys | join(" ")' <<< "$NEEDS")
+          release_if=$(jq --raw-output '.release.if' <<< "$jobs")
+          status=0
+          if [ "$gates" != "$needed" ]; then
+            echo "::error file=$ci::The required job needs '$needed'," \
+              "but the jobs that do not need it are '$gates'."
+            status=1
+          fi
+          if [ "$after" != release ]; then
+            echo "::error file=$ci::Only release may need the required job," \
+              "but the jobs that need it are '$after'."
+            status=1
+          fi
+          if [ "$release_if" != "$RELEASE_IF" ]; then
+            echo "::error file=$ci::The release job must have this if: $RELEASE_IF." \
+              "It has: $release_if"
+            status=1
+          fi
+          shopt -s nullglob
+          for workflow in .github/workflows/*.yml .github/workflows/*.yaml; do
+            if [ "$workflow" = "$ci" ]; then
+              continue
+            fi
+            # on is one event name, a list of them, or a map keyed by them.
+            if yq --output-format=json '.on' "$workflow" | jq --exit-status '
+              [if type == "object" then keys else . end]
+              | flatten
+              | any(.[]; . == "push")' > /dev/null; then
+              echo "::error file=$workflow::$workflow runs on push, but release waits" \
+                "only for the jobs of ci.yml. Trigger it with workflow_call and call it" \
+                "from ci.yml instead."
+              status=1
+            fi
+          done
+          exit "$status"
+      - name: Require every gate to succeed
+        shell: bash
+        run: |
+          jq --raw-output 'to_entries[] | "\(.key): \(.value.result)"' <<< "$NEEDS"
+          jq --exit-status 'all(.[]; .result == "success")' <<< "$NEEDS" > /dev/null
+
+  # The only job that publishes: on a push to main, after every gate passed on
+  # that commit in this run. release-plz publishes the version in Cargo.toml
+  # unless its v<version> tag exists or crates.io has it, so most pushes
+  # publish nothing.
+  release:
+    needs: [required]
+    # The first condition states what GitHub's implicit success() already
+    # requires. The required job checks that this line stays as it is.
+    if: needs.required.result == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    # release-plz pushes tags and creates GitHub releases through the GitHub
+    # API with the RELEASE_PLZ_TOKEN personal access token, so the automatic
+    # token only needs to read the repository. 0.4.0 was published with the
+    # repository default, which is read-only as well.
+    permissions:
+      contents: read
+    # One release at a time, and an upload in progress is never cancelled.
+    concurrency:
+      group: publish
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          # release-plz does not push with git (tags are unsigned), so the
+          # checkout token need not stay in .git/config.
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+      # v0.5.140 runs release-plz 0.3.170, which published 0.4.0.
+      - uses: release-plz/action@18641b6c63063cc5ff8786ebf69cd57e8541bae1 # v0.5.140
+        with:
+          command: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

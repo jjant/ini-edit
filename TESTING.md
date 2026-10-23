@@ -318,7 +318,8 @@ Clippy, rustdoc, and `cargo deny` cover static analysis, advisories
 duplicate dependencies, and unexpected dependency sources.
 
 The full matrix also runs every Sunday. Scheduled fuzzing gives each target 15
-minutes instead of the short pull-request smoke-test budget.
+minutes instead of the short pull-request smoke-test budget, and so does every
+push to `main` whose version is not released yet (see the release checklist).
 
 Allocation-failure, filesystem I/O-failure, crash-recovery, and concurrency
 tests from SQLite's strategy do not map directly to this crate: `ini-edit`
@@ -328,24 +329,54 @@ relevant anomaly-testing layer here.
 
 ## Release checklist
 
-Before release, all required GitHub checks must be green:
+CI publishes a version to crates.io only from a commit on which it ran every
+item below and each one passed. Merging the release pull request pushes the
+version bump to `main`, and the CI run for that push runs every job below on
+the merged commit. Its `required` job waits for all of them, however they end,
+and fails unless each one succeeded. Only after `required` succeeds, and only
+on a push to `main`, does the `release` job run `release-plz release`. That
+publishes the version in `Cargo.toml` unless its `v<version>` tag exists or
+crates.io already has it, and creates the tag after the upload.
 
-1. Stable debug, stable release, doctests, rustdoc, Clippy, and formatting.
-2. MSRV.
-3. 100% functions, instantiations, lines, regions, branches, and MC/DC.
-4. Full-suite Miri with the documented upstream workaround, plus strict Miri
-   for lexer and diagnostic contracts.
-5. Dependency audit and policy checks.
-6. Full mutation test.
-7. All five fuzz targets.
+Until that tag exists, every push to `main` fuzzes each target for 15 minutes,
+as on Sundays, instead of 60 seconds. The 15-minute campaigns of item 7
+therefore run on the commit that `release` publishes, and the release waits
+for them: it starts about 80 minutes after the merge, when `fuzz` ends.
+
+A failed or cancelled job stops the release. If a job failed for a reason
+outside the commit, such as a flaky runner, re-running the failed jobs of that
+run retries the release; otherwise the push of the fix publishes the version,
+after its own 15-minute campaigns.
+
+`required` also checks the wiring that makes `release` wait for every gate. It
+fails if a job in `ci.yml` other than `release` is missing from its `needs`,
+if a job other than `release` needs it, if the `if:` of `release` is not the
+one it expects, or if another workflow runs on pushes, where `release` cannot
+wait for it. On a pull request, `required` is the one check that stands for
+all the others. No branch rule requires it yet, so wait for it to pass before
+merging.
+
+1. Stable debug, stable release, doctests, rustdoc, Clippy, and formatting
+   (`check`), and the stable tests on macOS and Windows (`macos-26` and
+   `windows-2025`).
+2. MSRV (`msrv`).
+3. 100% functions, instantiations, lines, regions, branches, and MC/DC
+   (`coverage / branches (100%)` and `coverage / MC/DC (100%)`).
+4. Full-suite Miri with the documented upstream workaround (`miri (1/4)`
+   through `miri (4/4)`), plus strict Miri for lexer and diagnostic contracts
+   (`miri-strict`).
+5. Dependency audit and policy checks (`dependencies`).
+6. Full mutation test (`mutation (1/4)` through `mutation (4/4)`).
+7. All five fuzz targets (`fuzz`), for 15 minutes each on the published
+   commit, as on Sundays.
 8. Bounded exhaustive, fixture corruption, large-input, and CPU/memory scaling
-   tests.
-9. A `fuzz/Cargo.lock` that matches the release version. `fuzz/` is a
-   separate workspace, so the version bump does not reach its lockfile. The
+   tests (`extended-tests`).
+9. A `fuzz/Cargo.lock` that matches the release version (`check`). `fuzz/` is
+   a separate workspace, so the version bump does not reach its lockfile. The
    Release PR workflow commits
    `cargo update --manifest-path fuzz/Cargo.toml --package ini-edit` to the
    release pull request every time it opens or rewrites it. If that step
    fails, run the command and commit `fuzz/Cargo.lock` by hand.
-10. The package check: the crate ships every tracked file except the
-    repository-only ones, and its tests and doctests pass when run from the
-    extracted `.crate` file.
+10. The package check (`package`): the crate ships every tracked file except
+    the repository-only ones, and its tests and doctests pass when run from
+    the extracted `.crate` file.
