@@ -59,4 +59,9 @@ name = "generated_edits"
 path = "fuzz_targets/generated_edits.rs"
 doc = false
 
+[[bin]]
+name = "inputs"
+path = "fuzz_targets/inputs.rs"
+doc = false
+
 [workspace]

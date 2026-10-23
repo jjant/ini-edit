@@ -11,7 +11,7 @@
 
 use std::collections::BTreeSet;
 
-use ini_edit::ast::{AstNode, Entry, SectionHeader};
+use ini_edit::ast::{AstNode, Entry, Section, SectionHeader};
 use ini_edit::editor::{EditError, EditOptions, Editor, SectionEditor, SeparatorSpacing};
 use ini_edit::{ParseOptions, SyntaxKind, SyntaxNode, parse_with};
 
@@ -232,17 +232,17 @@ fn gaps(spacing: &SeparatorSpacing) -> (&str, &str) {
 /// One case of the product: `text` written at `site` of `document`, read with `options`, with
 /// new entries written with `spacing`.
 #[derive(Clone, Copy, Debug)]
-struct Case<'case> {
-    document: &'case str,
-    options: &'case ParseOptions,
-    spacing: &'case SeparatorSpacing,
-    site: Site,
-    text: &'case str,
+pub(crate) struct Case<'case> {
+    pub(crate) document: &'case str,
+    pub(crate) options: &'case ParseOptions,
+    pub(crate) spacing: &'case SeparatorSpacing,
+    pub(crate) site: Site,
+    pub(crate) text: &'case str,
 }
 
 /// Whether the edit of `case` is representable, and the reference's text; `None` when the site
 /// does not apply to the document.
-fn reference(case: Case<'_>) -> Option<(bool, String)> {
+pub(crate) fn reference(case: Case<'_>) -> Option<(bool, String)> {
     let Case {
         document,
         options,
@@ -320,6 +320,16 @@ fn reference_section(
     lines: &[Line],
     name: &str,
 ) -> (bool, String) {
+    // The documented lookup comes first: the editor returns a section that already has the
+    // name, and writes nothing.
+    let root = parse_with(document, options).syntax();
+    if root
+        .children()
+        .filter_map(Section::cast)
+        .any(|section| section.name().as_deref() == Some(name))
+    {
+        return (true, document.to_owned());
+    }
     let ending = ending_of(document);
     let mut before = lines.to_vec();
     if let Some(last) = before.last_mut().filter(|line| !line.terminated) {
@@ -707,6 +717,88 @@ pub(crate) fn run(product: &Product<'_>) -> Counts {
         }
     }
     counts
+}
+
+/// Separates the strings of a fuzz input. UTF-8 never uses this byte, so a string never holds it.
+const FIELD_SEPARATOR: u8 = 0xFF;
+
+/// The oracle of the `inputs` fuzz target: one arbitrary string at every site of a document.
+///
+/// The first byte selects the parser options (bit 0 `allow_no_value`, bit 1 `inline_comments`)
+/// and the spacing (the byte shifted right by two, modulo 3: `Preserve`, `Compact` or `Exact`),
+/// and the second byte, modulo 14, one of the [`DOCUMENTS`]. The other bytes are up to three
+/// strings separated by `0xFF`: the text written at every site, then the `Exact` whitespace
+/// before and after the separator. Missing bytes are zero and missing strings empty, invalid
+/// UTF-8 decodes lossily, and later strings are ignored, so every byte string is a case and
+/// committed inputs stay valid.
+///
+/// One document per input, not all 14: the fuzzer checks as many cases per second either way,
+/// but it steers each string to the documents where it finds new behavior, and each committed
+/// input replays in a fourteenth of the time.
+pub(crate) fn check(data: &[u8]) {
+    let selector = data.first().copied().unwrap_or(0);
+    let document = DOCUMENTS[usize::from(data.get(1).copied().unwrap_or(0)) % DOCUMENTS.len()];
+    let mut fields = data
+        .get(2..)
+        .unwrap_or_default()
+        .split(|&byte| byte == FIELD_SEPARATOR)
+        .map(String::from_utf8_lossy);
+    let text = fields.next().unwrap_or_default();
+    let before = fields.next().unwrap_or_default();
+    let after = fields.next().unwrap_or_default();
+    let options = ParseOptions {
+        allow_no_value: selector & 1 != 0,
+        inline_comments: selector & 2 != 0,
+    };
+    let spacing = match (selector >> 2) % 3 {
+        0 => SeparatorSpacing::Preserve,
+        1 => SeparatorSpacing::Compact,
+        _ => match exact_spacing(&before, &after) {
+            Some(spacing) => spacing,
+            None => return,
+        },
+    };
+    let mut counts = Counts::default();
+    for site in SITES {
+        let case = Case {
+            document,
+            options: &options,
+            spacing: &spacing,
+            site,
+            text: &text,
+        };
+        check_case(case, &mut counts);
+    }
+    assert_eq!(
+        (
+            counts.false_accepts,
+            counts.false_rejects,
+            counts.byte_mismatches
+        ),
+        (0, 0, 0),
+        "{counts:?}"
+    );
+}
+
+/// `Exact` spacing from two arbitrary strings, or `None` when the editor refuses them. It must
+/// refuse exactly when one of them is more than spaces and tabs, a rule stated here
+/// independently, and name the first such string.
+fn exact_spacing(before: &str, after: &str) -> Option<SeparatorSpacing> {
+    let is_spacing = |text: &str| {
+        text.chars()
+            .all(|character| matches!(character, ' ' | '\t'))
+    };
+    let refused = [before, after].into_iter().find(|text| !is_spacing(text));
+    match (SeparatorSpacing::exact(before, after), refused) {
+        (Ok(spacing), None) => {
+            assert_eq!(gaps(&spacing), (before, after));
+            Some(spacing)
+        }
+        (Err(EditError::InvalidSpacing { text }), Some(refused)) if text == refused => None,
+        (result, refused) => {
+            panic!("exact({before:?}, {after:?}) is {result:?}; expected to refuse {refused:?}")
+        }
+    }
 }
 
 /// The hostile pieces.
