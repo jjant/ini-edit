@@ -12,15 +12,15 @@ rust-version = "1.85"
 exclude = [
     "fuzz/",
     "tests/snapshots/",
-    # The fuzz oracles, the thousands of committed fuzz inputs, and the test
-    # that runs both stay in the repository.
+    # The editor fuzz oracles, the thousands of committed fuzz inputs, and the
+    # test that runs both stay in the repository. The round-trip oracle ships,
+    # because tests/exhaustive_parser.rs uses it.
     "tests/fuzz_regressions/",
     "tests/fuzz_regressions.rs",
     "tests/support/editor_ops.rs",
     "tests/support/editor_reparse.rs",
     "tests/support/editor_stateful.rs",
     "tests/support/generated_edits.rs",
-    "tests/support/round_trip.rs",
     ".github/",
 ]
 

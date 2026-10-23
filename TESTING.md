@@ -51,6 +51,27 @@ RUSTFLAGS='--cfg no_zerocopy_simd_x86_avx12_1_89_0' \
   comments stay outside that comparison so expected dialect differences do
   not become false bug reports.
 - Real-world fixtures cover AWS, Git, Gitea, MySQL, PHP, and systemd syntax.
+- As in SQLite's malformed-database tests, the fixtures are also corrupted one
+  change at a time. Every character of every fixture is deleted, replaced by
+  each other character of a 14-character alphabet (CR, LF, every delimiter,
+  space, tab, a key character, `é`, and U+FEFF), and has each alphabet
+  character inserted before it (and after the last one). Each of the
+  3,985,991 corrupted documents is parsed under all four parser-option
+  combinations. It must be lossless, keep one node per physical line, and
+  report diagnostics in order at character boundaries. Its diagnostics must
+  also depend only on the text before them, on both sides of the edit: those
+  before the edited line are exactly the diagnostics of parsing the unchanged
+  lines before it, and dropping the lines after the edited line keeps every
+  diagnostic up to its end. The five small fixtures are corrupted whole. The
+  129 KB Gitea example keeps four lines on either side of each edit, because
+  corrupting all of it would parse half a terabyte per option set. Most edits
+  land in comments, values, or whitespace: 442,328 of the documents (11%)
+  report other diagnostic messages than the unchanged text under some option
+  set. Ordinary tests run a sample of 5,332 documents, with one line of
+  context: every deletion, and every inserted or substituted CR, in the
+  systemd unit, which has a continued value, and every deletion in the Git
+  configuration, where deleting a `#` turns the comment above a section
+  header into a key.
 - Boundary decision tables vary line endings, separators, whitespace, comments,
   malformed input, empty input, unterminated input, and editor indices.
 - Regression tests preserve every previously discovered bug.
@@ -68,7 +89,11 @@ RUSTFLAGS='--cfg no_zerocopy_simd_x86_avx12_1_89_0' \
   after deleting their headers and the identity property of empty insertions.
   The round-trip target also requires every physical line, including
   malformed ones, to be exactly one node that owns only its own terminator,
-  because editor line indices address those nodes.
+  because editor line indices address those nodes. Its diagnostics must
+  depend only on the text before them: parsing the input without its last
+  line reports exactly the diagnostics that precede that line. A final line
+  break belongs to the last line, so a file that ends with one still loses a
+  line.
   The reload target applies the same valid edits with and without reopening
   the document between operations, comparing both output and complete syntax
   trees. Its shared oracle also exhausts 5,103 short sequences in normal tests,
@@ -100,10 +125,11 @@ RUSTFLAGS='--cfg no_zerocopy_simd_x86_avx12_1_89_0' \
 - Bounded exhaustive tests enumerate all 41,371 strings of zero through four
   scalars from a 14-character alphabet containing delimiters, whitespace,
   Unicode, and a BOM. Every input runs through all four parser-option
-  combinations. Checks include losslessness, token partitioning, one node per
-  physical line, diagnostic boundaries/locations (a leading BOM is not a
-  column), and an independent semantic expectation for a restricted
-  single-line subset.
+  combinations and through the round-trip fuzz oracle. Checks include
+  losslessness, token partitioning, one node per physical line, diagnostic
+  boundaries/locations (a leading BOM is not a column), diagnostics that do
+  not change when the last line is removed, and an independent semantic
+  expectation for a restricted single-line subset.
 - Large-input tests exercise a 4 MiB value, large Unicode identifiers,
   32,768 continuations, and 65,536 malformed lines. A separate Linux child
   process measures CPU time and peak RSS for growing entry lists, errors,
@@ -111,15 +137,25 @@ RUSTFLAGS='--cfg no_zerocopy_simd_x86_avx12_1_89_0' \
   regressions; they are not a proof of complexity or an absolute latency SLA.
 - Stable tests run on Linux, macOS, and Windows.
 
-The exhaustive and large-input tests are ignored in ordinary test runs and
-mutation testing. The `extended-tests` CI job runs them explicitly in release
-mode and saves the CPU/memory measurements as an artifact:
+The bounded exhaustive test, the corruption shards, and the large-input tests
+are ignored in ordinary test runs and mutation testing; the corruption sample
+runs in both. The `extended-tests` CI job runs them explicitly in release mode
+and saves the CPU/memory measurements as an artifact:
 
 ```sh
 cargo test --release --test exhaustive_parser --test stress -- --include-ignored
 cargo build --release --example scaling_probe
 python3 .github/scripts/check_scaling.py
 ```
+
+The corruption test runs as eight tests, `corruption::shard_0` through
+`corruption::shard_7`. Each one corrupts every eighth line of every fixture, so
+the shards cost about the same and the test harness runs them in parallel. With
+four test threads they take about a minute in release mode. Each shard asserts
+how many documents it corrupted, and the ordinary test
+`corruption::every_line_is_corrupted` counts the edits of every line, without
+making them, to check those numbers and their total of 3,985,991. A shard that
+skipped a line would therefore fail.
 
 The scaling script uses three fresh processes at each size, compares median
 CPU/RSS measurements, and terminates an individual probe after 45 seconds.
@@ -279,7 +315,8 @@ Before release, all required GitHub checks must be green:
 5. Dependency audit and policy checks.
 6. Full mutation test.
 7. All five fuzz targets.
-8. Bounded exhaustive, large-input, and CPU/memory scaling tests.
+8. Bounded exhaustive, fixture corruption, large-input, and CPU/memory scaling
+   tests.
 9. A `fuzz/Cargo.lock` that matches the release version. `fuzz/` is a
    separate workspace, so the version bump does not reach its lockfile. The
    Release PR workflow commits
