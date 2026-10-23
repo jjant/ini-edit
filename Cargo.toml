@@ -2,7 +2,10 @@
 name = "ini-edit"
 version = "0.4.0"
 edition = "2024"
-description = "A lossless, format-preserving INI parser built on rowan — parse, inspect, and edit INI files without losing comments, whitespace, or ordering"
+# A line-ending backslash joins the lines, without the line break and indentation.
+description = """\
+    A lossless, format-preserving INI parser built on rowan — parse, inspect, and edit INI \
+    files without losing comments, whitespace, or ordering"""
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/jjant/ini-edit"
@@ -34,14 +37,27 @@ exclude = [
     "/deny.toml",
 ]
 
+# fuzz/Cargo.toml repeats both tables: the fuzz crate is a workspace of its own,
+# and it compiles tests/support/ too.
 [lints.rust]
+missing_debug_implementations = "warn"
 missing_docs = "warn"
+unreachable_pub = "warn"
 unsafe_code = "deny"
+unused_qualifications = "warn"
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(coverage_nightly)"] }
 
 [lints.clippy]
 all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
+# Every exception is an #[expect] that states its reason, so it fails once it is
+# no longer needed.
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
+let_underscore_must_use = "warn"
+needless_collect = "warn"
+redundant_clone = "warn"
+use_self = "warn"
 
 [dependencies]
 rowan = "0.16"

@@ -27,13 +27,13 @@ use ini_edit::editor::{EditError, EditOptions, Editor, SectionEditor, SeparatorS
 use ini_edit::{ParseOptions, parse_with};
 
 /// Number of distinct operations; a kind byte selects one modulo this.
-pub const OPERATION_KINDS: u8 = 17;
+pub(crate) const OPERATION_KINDS: u8 = 17;
 /// Later operations are ignored, which bounds the work per input.
 const OPERATIONS_MAX: usize = 128;
 
 /// The container an operation addresses.
 #[derive(Debug, Clone)]
-pub enum Target {
+pub(crate) enum Target {
     /// [`Editor::preamble`].
     Preamble,
     /// [`Editor::section`]: arbitrary names rarely match.
@@ -44,7 +44,7 @@ pub enum Target {
 
 /// One public call, or a group of reads.
 #[derive(Debug, Clone)]
-pub enum Operation {
+pub(crate) enum Operation {
     Set {
         key: String,
         value: String,
@@ -110,12 +110,12 @@ impl Operation {
     fn inserts(&self) -> bool {
         matches!(
             self,
-            Operation::AppendEntry { .. }
-                | Operation::InsertEntry { .. }
-                | Operation::AppendBodyLines { .. }
-                | Operation::InsertBodyLines { .. }
-                | Operation::InsertBodyLinesAtEnd { .. }
-                | Operation::SectionOrInsert
+            Self::AppendEntry { .. }
+                | Self::InsertEntry { .. }
+                | Self::AppendBodyLines { .. }
+                | Self::InsertBodyLines { .. }
+                | Self::InsertBodyLinesAtEnd { .. }
+                | Self::SectionOrInsert
         )
     }
 
@@ -123,18 +123,18 @@ impl Operation {
     fn removes(&self) -> bool {
         matches!(
             self,
-            Operation::RemoveEntry { .. }
-                | Operation::RemoveBodyLines { .. }
-                | Operation::RemoveContainer
-                | Operation::RemoveEntryAt { .. }
-                | Operation::ClearBody
+            Self::RemoveEntry { .. }
+                | Self::RemoveBodyLines { .. }
+                | Self::RemoveContainer
+                | Self::RemoveEntryAt { .. }
+                | Self::ClearBody
         )
     }
 }
 
 /// What a call returned, without the handles it borrowed.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Value {
+pub(crate) enum Value {
     /// The target container does not exist.
     NoTarget,
     /// The entry at the requested index does not exist.
@@ -146,7 +146,7 @@ pub enum Value {
 }
 
 /// The result of one step.
-pub type Outcome = Result<Value, EditError>;
+pub(crate) type Outcome = Result<Value, EditError>;
 
 /// The container `target` addresses, if it exists.
 fn container<'e>(editor: &'e mut Editor, target: &Target) -> Option<SectionEditor<'e>> {
@@ -158,7 +158,7 @@ fn container<'e>(editor: &'e mut Editor, target: &Target) -> Option<SectionEdito
 }
 
 /// Run `operation` on `target` of `editor`.
-pub fn apply(editor: &mut Editor, target: &Target, operation: &Operation) -> Outcome {
+pub(crate) fn apply(editor: &mut Editor, target: &Target, operation: &Operation) -> Outcome {
     if let Operation::SectionOrInsert = operation {
         let Target::Name(name) = target else {
             return Ok(Value::NoTarget);
@@ -313,7 +313,7 @@ fn same_tree(left: &File, right: &File) -> bool {
 }
 
 /// C1: the tree equals a parse of the text with the editor's options.
-pub fn assert_agrees_with_reparse(editor: &Editor, context: &dyn std::fmt::Debug) {
+pub(crate) fn assert_agrees_with_reparse(editor: &Editor, context: &dyn std::fmt::Debug) {
     let text = editor.finish();
     let reparse = parse_with(&text, editor.parse_options());
     let tree = editor.file().syntax().green().into_owned();
@@ -322,7 +322,7 @@ pub fn assert_agrees_with_reparse(editor: &Editor, context: &dyn std::fmt::Debug
 
 /// Apply one operation to `live` and to an editor reopened from `live`'s text, and check the
 /// guarantees after it. Returns the outcome.
-pub fn step(live: &mut Editor, target: &Target, operation: &Operation) -> Outcome {
+pub(crate) fn step(live: &mut Editor, target: &Target, operation: &Operation) -> Outcome {
     let before = live.finish();
     let tree = live.file();
     let mut reopened = Editor::new(&before, live.parse_options(), live.edit_options())
@@ -587,7 +587,7 @@ fn check_clearing(input: &Input, editor: &mut Editor) {
 }
 
 /// Decode `data` as described in the module documentation and check it.
-pub fn check(data: &[u8]) {
+pub(crate) fn check(data: &[u8]) {
     let input = decode(data);
     let open = || Editor::new(&input.source, &input.parse_options, &input.edit_options);
     let mut editor = open().expect("a decoded source is small");
@@ -596,7 +596,7 @@ pub fn check(data: &[u8]) {
     assert_agrees_with_reparse(&editor, &input.source);
     for (target, operation) in &input.operations {
         // The step checks every guarantee itself; its outcome only reports what happened.
-        let _ = step(&mut editor, target, operation);
+        drop(step(&mut editor, target, operation));
     }
 }
 

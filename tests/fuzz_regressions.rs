@@ -86,13 +86,13 @@ fn hostile_input_is_refused_exactly_when_a_reader_would_not_read_it_back() {
         "g=1 ; c\n",
     ];
     let options = [options(false, false), options(true, true)];
-    let counts = editor_inputs::run(
-        2,
-        &pieces,
-        &documents,
-        &options,
-        &[SeparatorSpacing::Preserve],
-    );
+    let counts = editor_inputs::run(&editor_inputs::Product {
+        count: 2,
+        pieces: &pieces,
+        documents: &documents,
+        options: &options,
+        spacings: &[SeparatorSpacing::Preserve],
+    });
     assert_eq!(counts.cases, 8_736);
     assert_eq!(
         (
@@ -118,13 +118,13 @@ fn hostile_products(count: usize) {
         SeparatorSpacing::Compact,
         SeparatorSpacing::exact("\t", "  ").unwrap(),
     ];
-    let counts = editor_inputs::run(
+    let counts = editor_inputs::run(&editor_inputs::Product {
         count,
-        &editor_inputs::PIECES,
-        &editor_inputs::DOCUMENTS,
-        &options,
-        &spacings,
-    );
+        pieces: &editor_inputs::PIECES,
+        documents: &editor_inputs::DOCUMENTS,
+        options: &options,
+        spacings: &spacings,
+    });
     eprintln!("{counts:?}");
     assert_eq!(
         (

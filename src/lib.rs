@@ -38,10 +38,29 @@
 //! ```
 
 #![cfg_attr(coverage_nightly, feature(coverage_attribute))]
+// Users copy the examples, so they compile without a warning.
+#![doc(test(attr(deny(warnings))))]
+// TigerStyle: names are not abbreviated. Integration tests and benchmarks are exempt, where
+// Criterion's closures conventionally name their arguments `c` and `b`.
+#![warn(clippy::min_ident_chars)]
 
 pub mod ast;
 pub mod editor;
 pub mod lexer;
+// Two exceptions in parser.rs, which the lexer and parser changes in flight are rewriting: each
+// goes with its code there, and an expectation that is no longer met fails clippy. On the module,
+// each covers all of parser.rs, so until then a new instance anywhere in it passes clippy too.
+#[expect(
+    clippy::let_underscore_must_use,
+    reason = "ParseError::display ignores the Ok of each writeln! into a String"
+)]
+#[cfg_attr(
+    test,
+    expect(
+        clippy::too_many_lines,
+        reason = "malformed_lines_are_single_line_nodes_with_unchanged_diagnostics is a long test"
+    )
+)]
 pub mod parser;
 pub mod syntax_kind;
 

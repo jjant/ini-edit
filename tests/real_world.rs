@@ -11,13 +11,13 @@ use ini_edit::{SyntaxNode, parse};
 fn cst(node: &SyntaxNode, indent: usize) -> String {
     let mut out = String::new();
     let pad = "  ".repeat(indent);
-    let _ = writeln!(out, "{pad}{:?}", node.kind());
+    writeln!(out, "{pad}{:?}", node.kind()).unwrap();
     for child in node.children_with_tokens() {
         match child {
             rowan::NodeOrToken::Node(n) => out.push_str(&cst(&n, indent + 1)),
             rowan::NodeOrToken::Token(t) => {
                 let child_pad = "  ".repeat(indent + 1);
-                let _ = writeln!(out, "{child_pad}{:?} {:?}", t.kind(), t.text());
+                writeln!(out, "{child_pad}{:?} {:?}", t.kind(), t.text()).unwrap();
             }
         }
     }
@@ -30,14 +30,14 @@ fn dump(input: &str) -> String {
 
     let mut out = String::new();
     if p.errors().is_empty() {
-        let _ = writeln!(out, "errors: none");
+        writeln!(out, "errors: none").unwrap();
     } else {
-        let _ = writeln!(out, "errors:");
+        writeln!(out, "errors:").unwrap();
         for e in p.errors() {
-            let _ = writeln!(out, "  - {e:?}");
+            writeln!(out, "  - {e:?}").unwrap();
         }
     }
-    let _ = writeln!(out);
+    writeln!(out).unwrap();
     out.push_str(&cst(&p.syntax(), 0));
     out
 }

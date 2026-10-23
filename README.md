@@ -1,19 +1,31 @@
 # ini-edit
 
-[![crates.io](https://img.shields.io/crates/v/ini-edit.svg)](https://crates.io/crates/ini-edit)
-[![docs.rs](https://docs.rs/ini-edit/badge.svg)](https://docs.rs/ini-edit)
-[![CI](https://github.com/jjant/ini-edit/actions/workflows/ci.yml/badge.svg)](https://github.com/jjant/ini-edit/actions)
-[![codecov](https://codecov.io/gh/jjant/ini-edit/graph/badge.svg)](https://codecov.io/gh/jjant/ini-edit)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![crates.io][crates.io badge]][crates.io]
+[![docs.rs][docs.rs badge]][docs.rs]
+[![CI][CI badge]][CI]
+[![codecov][codecov badge]][codecov]
+[![License: MIT][license badge]](LICENSE)
+
+[crates.io badge]: https://img.shields.io/crates/v/ini-edit.svg
+[crates.io]: https://crates.io/crates/ini-edit
+[docs.rs badge]: https://docs.rs/ini-edit/badge.svg
+[docs.rs]: https://docs.rs/ini-edit
+[CI badge]: https://github.com/jjant/ini-edit/actions/workflows/ci.yml/badge.svg
+[CI]: https://github.com/jjant/ini-edit/actions
+[codecov badge]: https://codecov.io/gh/jjant/ini-edit/graph/badge.svg
+[codecov]: https://codecov.io/gh/jjant/ini-edit
+[license badge]: https://img.shields.io/badge/license-MIT-blue.svg
 
 **A lossless, format-preserving INI parser and editor for Rust.**
 
-Parse, inspect, and edit INI files without losing comments, whitespace, or key ordering. Built on [rowan](https://crates.io/crates/rowan).
+Parse, inspect, and edit INI files without losing comments, whitespace, or key ordering. Built
+on [rowan](https://crates.io/crates/rowan).
 
 ## Features
 
-- **Lossless** — `parse(s).syntax().text() == s` for every input, always
-- **Format-preserving edits** — modify values, add entries, remove sections while keeping untouched lines byte-for-byte identical
+- **Lossless** — `parse(text).syntax().text() == text` for every input, always
+- **Format-preserving edits** — modify values, add entries, remove sections while keeping
+  untouched lines byte-for-byte identical
 - **Error-tolerant** — always produces a valid tree, even for malformed input
 - **Typed AST** — `File`, `Section`, `Entry`, `Key`, `Value` wrappers with ergonomic accessors
 - **Full CST** — every whitespace character, comment, and line ending is in the tree
@@ -54,14 +66,14 @@ use ini_edit::ParseOptions;
 use ini_edit::editor::{EditError, EditOptions, Editor, SeparatorSpacing};
 
 fn main() -> Result<(), EditError> {
-    let src = "\
+    let source = "\
 [server]
 host = 0.0.0.0
 port = 8080
 ";
     let parse_options = ParseOptions { allow_no_value: false, inline_comments: false };
     let edit_options = EditOptions { separator_spacing: SeparatorSpacing::Preserve };
-    let mut editor = Editor::new(src, &parse_options, &edit_options)?;
+    let mut editor = Editor::new(source, &parse_options, &edit_options)?;
 
     let mut server = editor.section_or_insert("server")?;
     server.set("port", "9090")?;

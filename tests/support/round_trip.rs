@@ -10,7 +10,7 @@ mod line_nodes;
 use ini_edit::{Parse, ParseOptions, parse_with};
 
 /// Every parser-option combination.
-pub const OPTIONS: [ParseOptions; 4] = [
+pub(crate) const OPTIONS: [ParseOptions; 4] = [
     ParseOptions {
         allow_no_value: false,
         inline_comments: false,
@@ -30,7 +30,7 @@ pub const OPTIONS: [ParseOptions; 4] = [
 ];
 
 /// Check `data` as source text; input that is not UTF-8 is ignored.
-pub fn check(data: &[u8]) {
+pub(crate) fn check(data: &[u8]) {
     let Ok(source) = std::str::from_utf8(data) else {
         return;
     };
@@ -64,7 +64,7 @@ pub fn check(data: &[u8]) {
 /// Parse `source` and check what every parse guarantees: the tree is
 /// lossless, each line is one node (a continued entry is one line), and
 /// diagnostics are in order at character boundaries.
-pub fn check_parse(source: &str, options: &ParseOptions) -> Parse {
+pub(crate) fn check_parse(source: &str, options: &ParseOptions) -> Parse {
     let parse = parse_with(source, options);
     let root = parse.syntax();
     // Every supported grammar must remain lossless.
@@ -85,7 +85,7 @@ pub fn check_parse(source: &str, options: &ParseOptions) -> Parse {
 }
 
 /// The offset and message of each diagnostic that starts before `boundary`.
-pub fn errors_before(parse: &Parse, boundary: usize) -> Vec<(usize, &str)> {
+pub(crate) fn errors_before(parse: &Parse, boundary: usize) -> Vec<(usize, &str)> {
     let errors = parse.errors();
     let before: Vec<_> = errors
         .iter()
@@ -105,7 +105,7 @@ pub fn errors_before(parse: &Parse, boundary: usize) -> Vec<(usize, &str)> {
 /// Where each line of `source` starts. A final line break ends the last line
 /// instead of starting an empty one, so that the usual file, which ends with
 /// a newline, has one line per line break.
-pub fn line_starts(source: &str) -> Vec<usize> {
+pub(crate) fn line_starts(source: &str) -> Vec<usize> {
     let mut starts = vec![0];
     let mut end = line_end(source, 0);
     while end < source.len() {
@@ -123,7 +123,7 @@ pub fn line_starts(source: &str) -> Vec<usize> {
 /// The end of the line that holds byte `at`, after its line break. Like the
 /// lexer's NEWLINE tokens, a line ends after "\n", after "\r\n", and after a
 /// "\r" that no "\n" follows.
-pub fn line_end(source: &str, at: usize) -> usize {
+pub(crate) fn line_end(source: &str, at: usize) -> usize {
     let bytes = source.as_bytes();
     let end = match bytes[at..]
         .iter()

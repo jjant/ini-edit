@@ -226,7 +226,7 @@ fn set_key_may_not_start_the_document_with_u_feff() {
     });
     assert_eq!(result, Err(EditError::ByteOrderMarkAtStart));
 
-    let mut indented = super::support::open(" k=1\n");
+    let mut indented = open(" k=1\n");
     in_preamble(&mut indented, |preamble| {
         preamble.entry_at(0).unwrap().set_key("\u{FEFF}k")
     })

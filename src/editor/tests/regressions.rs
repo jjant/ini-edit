@@ -358,7 +358,7 @@ fn neg_m1_the_preamble_is_editable() {
     in_preamble(&mut editor, |preamble| preamble.set("root", "false")).unwrap();
     assert_eq!(editor.finish(), "root = false\n[*]\nx=1\n");
     // Preamble lines go after a byte order mark.
-    let mut editor = super::support::open("\u{FEFF}[s]\n");
+    let mut editor = open("\u{FEFF}[s]\n");
     in_preamble(&mut editor, |preamble| preamble.append_entry("g", "1")).unwrap();
     assert_eq!(editor.finish(), "\u{FEFF}g = 1\n[s]\n");
     // `""` names no section, so it creates none.

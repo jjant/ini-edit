@@ -8,9 +8,9 @@
 //! - rule D, a removal between a CR and an LF blank line: [`Editor::plan_remove`].
 //!
 //! Rowan 0.16 rules that every step follows: a splice deletes at most one element, because
-//! `splice_children(a..b)` with `b - a > 1` detaches while it iterates and drops only the first
-//! child; positions are found by sibling walks rather than by collecting a container's lines,
-//! because every splice visits each live handle of its parent.
+//! `splice_children(start..end)` with `end - start > 1` detaches while it iterates and drops only
+//! the first child; positions are found by sibling walks rather than by collecting a container's
+//! lines, because every splice visits each live handle of its parent.
 
 use std::ops::Range;
 
@@ -37,8 +37,8 @@ impl Container {
     /// The section's header, the line before its first body line. The preamble has none.
     fn header(&self) -> Option<SyntaxNode> {
         match self {
-            Container::Preamble => None,
-            Container::Section(section) => {
+            Self::Preamble => None,
+            Self::Section(section) => {
                 assert!(section.parent().is_some());
                 Some(header(section))
             }
@@ -92,7 +92,7 @@ impl Slot {
         before: Option<SyntaxNode>,
         previous: Option<SyntaxNode>,
         next: Option<SyntaxNode>,
-    ) -> Slot {
+    ) -> Self {
         if let Some(before) = &before {
             assert!(before.parent().is_some_and(|node| node == parent));
         }
@@ -108,7 +108,7 @@ impl Slot {
             // At the end of a section, they go at its end, and no body line follows.
             (None, next) => assert!(next.is_none()),
         }
-        Slot {
+        Self {
             parent,
             before,
             previous,
@@ -687,7 +687,7 @@ impl Editor {
         assert_eq!(blank.is_some(), separated);
         let mut steps = Vec::with_capacity(3);
         if let Some(terminator) = rendering.pending {
-            let line = last.clone().expect("only a line lacks a terminator");
+            let line = last.expect("only a line lacks a terminator");
             let terminated = self.terminate(&line, terminator)?;
             steps.push(Step::Replace {
                 old: line.into(),

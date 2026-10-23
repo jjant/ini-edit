@@ -157,22 +157,24 @@ fn section_s<'e>(editor: &'e mut Editor, model: &mut Model) -> (SectionEditor<'e
     (section, id)
 }
 
-/// Add a new entry for `action` at the end of section `id`, or at its start, if the action's key
-/// and value can be written; otherwise expect the editor's error.
-fn add_entry(
+/// The model's entry for the new entry that `action` writes, if its key and value can be
+/// written; otherwise expect the editor's error, `result`, and add no entry.
+fn written_entry(
     model: &mut Model,
-    id: usize,
     action: &Action<'_>,
     result: Result<(), EditError>,
-    at_end: bool,
-) {
+) -> Option<usize> {
     let error = action.new_entry_error();
     assert_eq!(result.err(), error);
-    if error.is_none() {
-        let entry = model.new_entry(action.key, action.value);
-        let at = if at_end { model.sections[id].len() } else { 0 };
-        model.sections[id].insert(at, entry);
-    }
+    error
+        .is_none()
+        .then(|| model.new_entry(action.key, action.value))
+}
+
+/// Add the new entry that `action` writes, if any, at the end of section `id`.
+fn append_entry(model: &mut Model, id: usize, action: &Action<'_>, result: Result<(), EditError>) {
+    let entry = written_entry(model, action, result);
+    model.sections[id].extend(entry);
 }
 
 /// `set` on `section`, the model's section `id`: an assignment or an append.
@@ -190,7 +192,7 @@ fn set(model: &mut Model, id: usize, section: &mut SectionEditor<'_>, action: &A
             result.unwrap();
             model.entries[entry].value = Some(action.value.into());
         }
-        None => add_entry(model, id, action, result, true),
+        None => append_entry(model, id, action, result),
     }
 }
 
@@ -205,11 +207,13 @@ impl Harness {
             0 => set(&mut self.model, id, &mut section, action),
             1 => {
                 let result = section.append_entry(action.key, action.value);
-                add_entry(&mut self.model, id, action, result, true);
+                append_entry(&mut self.model, id, action, result);
             }
             2 => {
                 let result = section.insert_entry(0, action.key, action.value);
-                add_entry(&mut self.model, id, action, result, false);
+                if let Some(entry) = written_entry(&mut self.model, action, result) {
+                    self.model.sections[id].insert(0, entry);
+                }
             }
             _ => {
                 let entry = self.model.find(id, action.key);
@@ -297,7 +301,7 @@ impl Harness {
         match action.operation {
             11 => {
                 let result = section.append_entry(action.key, action.value);
-                add_entry(&mut self.model, id, action, result, true);
+                append_entry(&mut self.model, id, action, result);
             }
             12 => set(&mut self.model, id, &mut section, action),
             14 => {
@@ -497,7 +501,7 @@ fn scenario(data: &[u8]) -> Scenario {
 }
 
 /// Run at most 128 operations; every byte sequence describes valid API inputs.
-pub fn check(data: &[u8]) {
+pub(crate) fn check(data: &[u8]) {
     if data.len() < 3 {
         return;
     }

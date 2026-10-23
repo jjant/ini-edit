@@ -45,8 +45,8 @@ impl SeparatorSpacing {
     ///
     /// [`EditError::InvalidSpacing`] for the first string, `before` then `after`, that contains
     /// anything other than spaces and tabs.
-    pub fn exact(before: &str, after: &str) -> Result<SeparatorSpacing, EditError> {
-        Ok(SeparatorSpacing::Exact {
+    pub fn exact(before: &str, after: &str) -> Result<Self, EditError> {
+        Ok(Self::Exact {
             before: Whitespace::new(before)?,
             after: Whitespace::new(after)?,
         })
@@ -56,9 +56,9 @@ impl SeparatorSpacing {
     /// whose separator gap this policy replaces.
     pub(super) fn new_gap(&self) -> (&str, &str) {
         let (before, after) = match self {
-            SeparatorSpacing::Preserve => (" ", " "),
-            SeparatorSpacing::Compact => ("", ""),
-            SeparatorSpacing::Exact { before, after } => (before.as_str(), after.as_str()),
+            Self::Preserve => (" ", " "),
+            Self::Compact => ("", ""),
+            Self::Exact { before, after } => (before.as_str(), after.as_str()),
         };
         // Whatever the policy, the gap is spacing that a reader reads back as spacing.
         assert_eq!(before.trim_start_matches([' ', '\t']), "");
@@ -82,10 +82,10 @@ impl Whitespace {
         clippy::missing_panics_doc,
         reason = "asserts internal invariants, never caller input"
     )]
-    pub fn new(text: &str) -> Result<Whitespace, EditError> {
+    pub fn new(text: &str) -> Result<Self, EditError> {
         // The lexer reads the same set of characters around a separator as spacing.
         if text.trim_start_matches([' ', '\t']).is_empty() {
-            Ok(Whitespace(text.into()))
+            Ok(Self(text.into()))
         } else {
             // Empty spacing is valid, so refused spacing holds a character that is not spacing.
             assert_ne!(text, "");

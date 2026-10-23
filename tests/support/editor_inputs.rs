@@ -185,7 +185,7 @@ fn entry_of(text: &str, options: &ParseOptions) -> Option<Entry> {
 
 /// Where a hostile string goes.
 #[derive(Clone, Copy, Debug)]
-pub enum Site {
+pub(crate) enum Site {
     AppendKey,
     InsertKeyAtStart,
     SetKey,
@@ -198,7 +198,7 @@ pub enum Site {
     AppendEntryThenLine,
 }
 
-pub const SITES: [Site; 10] = [
+pub(crate) const SITES: [Site; 10] = [
     Site::AppendKey,
     Site::InsertKeyAtStart,
     Site::SetKey,
@@ -229,15 +229,27 @@ fn gaps(spacing: &SeparatorSpacing) -> (&str, &str) {
     }
 }
 
-/// Whether an edit at `site` with `text` is representable, and the reference's text; `None` when
-/// the site does not apply to the document.
-pub fn reference(
-    document: &str,
-    options: &ParseOptions,
-    spacing: &SeparatorSpacing,
+/// One case of the product: `text` written at `site` of `document`, read with `options`, with
+/// new entries written with `spacing`.
+#[derive(Clone, Copy, Debug)]
+struct Case<'case> {
+    document: &'case str,
+    options: &'case ParseOptions,
+    spacing: &'case SeparatorSpacing,
     site: Site,
-    text: &str,
-) -> Option<(bool, String)> {
+    text: &'case str,
+}
+
+/// Whether the edit of `case` is representable, and the reference's text; `None` when the site
+/// does not apply to the document.
+fn reference(case: Case<'_>) -> Option<(bool, String)> {
+    let Case {
+        document,
+        options,
+        spacing,
+        site,
+        text,
+    } = case;
     let lines = lines_of(document, options);
     let (before_gap, after_gap) = gaps(spacing);
     match site {
@@ -272,21 +284,20 @@ pub fn reference(
         Site::AppendLine
         | Site::AppendLineThenEntry
         | Site::AppendEntryThenLine
-        | Site::InsertLineAtStart => Some(reference_lines(document, options, &lines, site, text)),
+        | Site::InsertLineAtStart => Some(reference_lines(case, &lines)),
         Site::Section => Some(reference_section(document, options, &lines, text)),
-        Site::SetKey | Site::SetValue => {
-            reference_rewrite(document, options, &lines, spacing, site, text)
-        }
+        Site::SetKey | Site::SetValue => reference_rewrite(case, &lines),
     }
 }
 
-fn reference_lines(
-    document: &str,
-    options: &ParseOptions,
-    lines: &[Line],
-    site: Site,
-    text: &str,
-) -> (bool, String) {
+fn reference_lines(case: Case<'_>, lines: &[Line]) -> (bool, String) {
+    let Case {
+        document,
+        options,
+        site,
+        text,
+        ..
+    } = case;
     let contents: Vec<String> = match site {
         Site::AppendLineThenEntry => vec![text.into(), "z=9".into()],
         Site::AppendEntryThenLine => vec!["z=9".into(), text.into()],
@@ -358,16 +369,17 @@ fn reference_section(
     (representable, text)
 }
 
-/// The lines that replace entry line `line` when `site` writes `text` into it: the line with
-/// its key replaced, or the moved comment line, if any, and the line with its value assigned.
-fn rewritten_texts(
-    document: &str,
-    options: &ParseOptions,
-    line: &Line,
-    spacing: &SeparatorSpacing,
-    site: Site,
-    text: &str,
-) -> Vec<String> {
+/// The lines that replace entry line `line` when the site of `case` writes its text into it: the
+/// line with its key replaced, or the moved comment line, if any, and the line with its value
+/// assigned.
+fn rewritten_texts(case: Case<'_>, line: &Line) -> Vec<String> {
+    let Case {
+        document,
+        options,
+        spacing,
+        site,
+        text,
+    } = case;
     let root = parse_with(&format!("\n{}", line.text), options).syntax();
     let entry_node = root
         .descendants()
@@ -402,20 +414,20 @@ fn rewrite_reads_back(actual: &Entry, old: &Entry, site: Site, text: &str) -> bo
     }
 }
 
-fn reference_rewrite(
-    document: &str,
-    options: &ParseOptions,
-    lines: &[Line],
-    spacing: &SeparatorSpacing,
-    site: Site,
-    text: &str,
-) -> Option<(bool, String)> {
+fn reference_rewrite(case: Case<'_>, lines: &[Line]) -> Option<(bool, String)> {
+    let Case {
+        document,
+        options,
+        site,
+        text,
+        ..
+    } = case;
     let index = lines
         .iter()
         .position(|line| line.kind == SyntaxKind::ENTRY)?;
     let line = &lines[index];
     let old = entry_of(&line.text, options).expect("an entry line");
-    let new_texts = rewritten_texts(document, options, line, spacing, site, text);
+    let new_texts = rewritten_texts(case, line);
     let mut rendered = format!("{}{}", byte_order_mark_of(document), join(&lines[..index]));
     rendered.extend(new_texts.iter().map(String::as_str));
     rendered.push_str(&join(&lines[index + 1..]));
@@ -568,7 +580,7 @@ fn last_container(editor: &mut Editor) -> SectionEditor<'_> {
 }
 
 /// Apply the edit of `site` with `text`.
-pub fn apply(editor: &mut Editor, site: Site, text: &str) -> Result<(), EditError> {
+pub(crate) fn apply(editor: &mut Editor, site: Site, text: &str) -> Result<(), EditError> {
     match site {
         Site::AppendKey => last_container(editor).append_entry(text, "v"),
         Site::AppendValue => last_container(editor).append_entry("n", text),
@@ -591,7 +603,7 @@ pub fn apply(editor: &mut Editor, site: Site, text: &str) -> Result<(), EditErro
 }
 
 /// Every string of up to `count` pieces.
-pub fn strings(pieces: &[&str], count: usize) -> Vec<String> {
+pub(crate) fn strings(pieces: &[&str], count: usize) -> Vec<String> {
     let mut all = BTreeSet::new();
     let mut layer = vec![String::new()];
     all.insert(String::new());
@@ -607,7 +619,7 @@ pub fn strings(pieces: &[&str], count: usize) -> Vec<String> {
 
 /// The counts of one run: cases, false accepts, false rejects and byte mismatches.
 #[derive(Debug, Default, PartialEq, Eq)]
-pub struct Counts {
+pub(crate) struct Counts {
     pub cases: u64,
     pub false_accepts: u64,
     pub false_rejects: u64,
@@ -615,26 +627,18 @@ pub struct Counts {
 }
 
 /// Check one string at one site of one document.
-fn check_case(
-    document: &str,
-    options: &ParseOptions,
-    spacing: &SeparatorSpacing,
-    site: Site,
-    text: &str,
-    counts: &mut Counts,
-) {
-    let Some((representable, reference)) = reference(document, options, spacing, site, text) else {
+fn check_case(case: Case<'_>, counts: &mut Counts) {
+    let Some((representable, reference)) = reference(case) else {
         return;
     };
     let edit = EditOptions {
-        separator_spacing: spacing.clone(),
+        separator_spacing: case.spacing.clone(),
     };
-    let mut editor = Editor::new(document, options, &edit).expect("a small document");
+    let mut editor = Editor::new(case.document, case.options, &edit).expect("a small document");
     let before = editor.finish();
     let tree = editor.file().syntax().green().into_owned();
-    let result = apply(&mut editor, site, text);
+    let result = apply(&mut editor, case.site, case.text);
     counts.cases += 1;
-    let case = (site, document, text, options, spacing);
     match &result {
         Ok(()) if !representable => {
             counts.false_accepts += 1;
@@ -661,7 +665,7 @@ fn check_case(
             }
         }
     }
-    let reparse = parse_with(&editor.finish(), options);
+    let reparse = parse_with(&editor.finish(), case.options);
     assert_eq!(
         editor.file().syntax().green().into_owned(),
         *reparse.green(),
@@ -669,23 +673,34 @@ fn check_case(
     );
 }
 
-/// Run every string of up to `count` pieces at every site of every document, under every option
-/// set and spacing.
-pub fn run(
-    count: usize,
-    pieces: &[&str],
-    documents: &[&str],
-    options: &[ParseOptions],
-    spacings: &[SeparatorSpacing],
-) -> Counts {
-    let strings = strings(pieces, count);
+/// The inputs of a run: every string of up to `count` of `pieces`, at every site of every
+/// document, under every option set and spacing.
+#[derive(Debug)]
+pub(crate) struct Product<'product> {
+    pub(crate) count: usize,
+    pub(crate) pieces: &'product [&'product str],
+    pub(crate) documents: &'product [&'product str],
+    pub(crate) options: &'product [ParseOptions],
+    pub(crate) spacings: &'product [SeparatorSpacing],
+}
+
+/// Check every case of `product`.
+pub(crate) fn run(product: &Product<'_>) -> Counts {
+    let strings = strings(product.pieces, product.count);
     let mut counts = Counts::default();
-    for options in options {
-        for spacing in spacings {
-            for document in documents {
+    for options in product.options {
+        for spacing in product.spacings {
+            for document in product.documents {
                 for site in SITES {
                     for text in &strings {
-                        check_case(document, options, spacing, site, text, &mut counts);
+                        let case = Case {
+                            document,
+                            options,
+                            spacing,
+                            site,
+                            text,
+                        };
+                        check_case(case, &mut counts);
                     }
                 }
             }
@@ -695,13 +710,13 @@ pub fn run(
 }
 
 /// The hostile pieces.
-pub const PIECES: [&str; 16] = [
+pub(crate) const PIECES: [&str; 16] = [
     "", " ", "\t", "\n", "\r", "\r\n", "=", ":", "[", "]", ";", "#", "\\", "\u{FEFF}", "a", "b",
 ];
 
 /// Documents for the full products: every line ending, byte order marks, a preamble, a
 /// continuing and an unterminated last line, inline comments, and empty documents.
-pub const DOCUMENTS: [&str; 14] = [
+pub(crate) const DOCUMENTS: [&str; 14] = [
     "[s]\na=1\nb=2\n",
     "[s]\r\na=1\r\nb=2\r\n",
     "[s]\ra=1\rb=2\r",

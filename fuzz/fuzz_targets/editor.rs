@@ -1,3 +1,6 @@
+//! Arbitrary editor operations on arbitrary text, each checked against the editor's guarantees
+//! by the oracle in `tests/support/editor_ops.rs`.
+
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;

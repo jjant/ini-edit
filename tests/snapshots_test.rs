@@ -12,19 +12,20 @@ use ini_edit::{SyntaxNode, parse};
 fn dump(node: &SyntaxNode, indent: usize) -> String {
     let mut out = String::new();
     let pad = "  ".repeat(indent);
-    let _ = writeln!(out, "{pad}{:?} {:?}", node.kind(), node.text_range());
+    writeln!(out, "{pad}{:?} {:?}", node.kind(), node.text_range()).unwrap();
     for child in node.children_with_tokens() {
         match child {
             rowan::NodeOrToken::Node(n) => out.push_str(&dump(&n, indent + 1)),
             rowan::NodeOrToken::Token(t) => {
                 let child_pad = "  ".repeat(indent + 1);
-                let _ = writeln!(
+                writeln!(
                     out,
                     "{child_pad}{:?} {:?} {:?}",
                     t.kind(),
                     t.text_range(),
                     t.text()
-                );
+                )
+                .unwrap();
             }
         }
     }
@@ -53,7 +54,8 @@ fn setting_value_may_be_empty() {
 #[test]
 fn many_sections_some_empty() {
     insta::assert_snapshot!(tree(
-        "# comment\n[a section title]\nfoo = bar\n[section 2]\nfoo = bar\n[section 3 which is empty]\n[section4]\nfoo = bar\n"
+        "# comment\n[a section title]\nfoo = bar\n[section 2]\nfoo = bar\n\
+         [section 3 which is empty]\n[section4]\nfoo = bar\n"
     ));
 }
 
@@ -85,7 +87,8 @@ fn not_a_comment_in_value() {
 #[test]
 fn aws_config() {
     insta::assert_snapshot!(tree(
-        "# AWS config\n[default]\nregion = us-west-2\noutput = json\n[profile dev-user]\nregion = us-east-1\noutput = text\n"
+        "# AWS config\n[default]\nregion = us-west-2\noutput = json\n\
+         [profile dev-user]\nregion = us-east-1\noutput = text\n"
     ));
 }
 

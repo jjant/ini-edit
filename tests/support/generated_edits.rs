@@ -136,14 +136,14 @@ impl Section {
         entry
     }
 
-    /// Append an entry after the last line that is not blank, as
-    /// `append_entry` does, completing an unterminated line first.
+    /// Append the replacement entry of `edit` after the last line that is not
+    /// blank, as `append_entry` does, completing an unterminated line first.
     ///
     /// The entry's line break is the document's line ending, except before an
     /// LF blank line in a CR document, where a CR would read together with
     /// that LF: there it is CRLF (rule T2). Generated values never end in CR,
     /// so no CR before the break widens it (rule T1).
-    fn append(&mut self, key: &str, value: &str, spacing: &SeparatorSpacing, ending: &str) {
+    fn append(&mut self, edit: &Edit<'_>, ending: &str) {
         let position = self
             .lines
             .iter()
@@ -164,7 +164,7 @@ impl Section {
                 _ => {}
             }
         }
-        let (before, after) = match spacing {
+        let (before, after) = match edit.spacing {
             SeparatorSpacing::Preserve => (" ", " "),
             SeparatorSpacing::Compact => ("", ""),
             SeparatorSpacing::Exact { before, after } => (before.as_str(), after.as_str()),
@@ -182,11 +182,11 @@ impl Section {
         };
         let entry = Entry {
             indent: String::new(),
-            key: key.into(),
+            key: edit.replacement_key.into(),
             before: before.into(),
             separator: Some('='),
             after: after.into(),
-            value: Some(value.into()),
+            value: Some(edit.replacement_value.into()),
             suffix: String::new(),
             ending: ending.into(),
         };
@@ -440,12 +440,7 @@ fn apply(editor: &mut Editor, expected: &mut Document, edit: &Edit<'_>) {
             actual
                 .append_entry(edit.replacement_key, edit.replacement_value)
                 .unwrap();
-            section.append(
-                edit.replacement_key,
-                edit.replacement_value,
-                edit.spacing,
-                ending,
-            );
+            section.append(edit, ending);
         }
         _ => empty_edits(&mut actual),
     }
@@ -491,7 +486,7 @@ fn empty_edits(actual: &mut SectionEditor<'_>) {
 }
 
 /// Number of distinct edit operations selected by the first input byte.
-pub const OPERATIONS: u8 = 9;
+pub(crate) const OPERATIONS: u8 = 9;
 
 /// The parse and edit options that the input selects, read in input order: a
 /// spacing style, the option flags, then `Exact` spacing if the style is 2.
@@ -526,16 +521,9 @@ fn assert_parses_to(text: &str, options: &ParseOptions, expected: &Document) -> 
     parsed
 }
 
-/// After the edit, the output is the model's text byte for byte, the live tree
-/// and a reparse both have the model's meaning and the same green tree, and the
-/// snapshot taken before the edit still reads the original text.
-fn assert_edited(
-    editor: &Editor,
-    expected: &Document,
-    original: &str,
-    snapshot: &File,
-    operation: u8,
-) {
+/// After the edit, the output is the model's text byte for byte, and the live
+/// tree and a reparse both have the model's meaning and the same green tree.
+fn assert_edited(editor: &Editor, expected: &Document, original: &str, operation: u8) {
     let output = editor.finish();
     assert_eq!(
         output,
@@ -548,12 +536,11 @@ fn assert_edited(
         editor.file().syntax().green().into_owned(),
         *reparsed.green()
     );
-    assert_eq!(snapshot.syntax().text().to_string(), original);
 }
 
 /// Generate a whole document and compare edits against independent text and
 /// meaning. Input size, line counts, word lengths, and continuations are bounded.
-pub fn check(input: &[u8]) {
+pub(crate) fn check(input: &[u8]) {
     let mut bytes = Bytes {
         input: &input[..input.len().min(4096)],
         offset: 0,
@@ -605,5 +592,7 @@ pub fn check(input: &[u8]) {
             spacing: &spacing,
         },
     );
-    assert_edited(&editor, &expected, &original, &snapshot, operation);
+    assert_edited(&editor, &expected, &original, operation);
+    // The snapshot taken before the edit still reads the original text.
+    assert_eq!(snapshot.syntax().text().to_string(), original);
 }

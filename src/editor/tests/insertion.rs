@@ -100,7 +100,7 @@ fn rule_c_refuses_to_continue_the_last_line() {
         ("[s]\nk=C:\\d\\", options(false, false)),
         ("[s]\nk=a \\ \t", options(false, false)),
         // The continuation is decided before the comment split.
-        ("[s]\nk = v ; c\\", inline.clone()),
+        ("[s]\nk = v ; c\\", inline),
     ] {
         let operations: [Operation; 5] = [
             |editor| editor.section("s").unwrap().append_entry("n", "1"),

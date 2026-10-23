@@ -42,6 +42,10 @@ jobs:
       - name: Format check
         run: cargo fmt --all --check
 
+      # fuzz/ is a workspace of its own, which --all does not reach.
+      - name: Format check of the fuzz crate
+        run: cargo fmt --manifest-path fuzz/Cargo.toml --check
+
       - name: Clippy
         run: cargo clippy --locked --all-targets --all-features -- --deny warnings
 
@@ -59,7 +63,8 @@ jobs:
         env:
           RUSTDOCFLAGS: --deny warnings
 
-      # Last, so that a stale fuzz lockfile never hides the results above.
+      # After the checks of the crate, so that a stale fuzz lockfile never hides
+      # their results.
       - name: Require an up-to-date fuzz lockfile
         # fuzz/ is a separate workspace, so a release bumps ini-edit in
         # Cargo.lock but not in fuzz/Cargo.lock. release-pr.yml refreshes it on
@@ -72,6 +77,14 @@ jobs:
               "and commit fuzz/Cargo.lock."
             exit 1
           fi
+
+      # The fuzz crate has the same [lints] tables, and it compiles the shared
+      # oracles in tests/support/ under them too. Last: --locked needs the
+      # up-to-date lockfile that the step above requires.
+      - name: Clippy on the fuzz crate
+        run: |
+          cargo clippy --locked --manifest-path fuzz/Cargo.toml --all-targets -- \
+            --deny warnings
 
   msrv:
     runs-on: ubuntu-24.04
@@ -161,7 +174,8 @@ jobs:
           fuzz/.+
           tests/fuzz_regressions/.+
           tests/fuzz_regressions\.rs
-          tests/support/(editor_inputs|editor_ops|editor_reparse|editor_stateful|editor_walk|generated_edits)\.rs
+          tests/support/editor_(inputs|ops|reparse|stateful|walk)\.rs
+          tests/support/generated_edits\.rs
           \.release-plz\.toml
           \.secretsignore
           codecov\.yml
@@ -661,7 +675,10 @@ jobs:
         #   jobs, as it could not wait for coverage.yml's before.
         shell: bash
         env:
-          RELEASE_IF: needs.required.result == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+          # Folded into one line, exactly as the if: of release.
+          RELEASE_IF: >-
+            needs.required.result == 'success' && github.event_name == 'push'
+            && github.ref == 'refs/heads/main'
         run: |
           ci=.github/workflows/ci.yml
           jobs=$(yq --output-format=json '.jobs' "$ci")
@@ -724,8 +741,10 @@ jobs:
   release:
     needs: [required]
     # The first condition states what GitHub's implicit success() already
-    # requires. The required job checks that this line stays as it is.
-    if: needs.required.result == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # requires. The required job checks that this condition stays as it is.
+    if: >-
+      needs.required.result == 'success' && github.event_name == 'push'
+      && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     # release-plz pushes tags and creates GitHub releases through the GitHub

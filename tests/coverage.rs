@@ -130,7 +130,8 @@ fn parser_round_trips_boundary_matrix() {
             for leading in ["", " ", "\t"] {
                 for trailing in ["", " ", "\t"] {
                     let input = format!(
-                        "{leading}[section]{trailing}{newline}{leading}key{separator}value{trailing}{newline}"
+                        "{leading}[section]{trailing}{newline}\
+                         {leading}key{separator}value{trailing}{newline}"
                     );
                     let parsed = parse(&input);
                     assert_eq!(parsed.syntax().text().to_string(), input);
