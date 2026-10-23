@@ -67,7 +67,7 @@ pre-filled template text that does not apply, because it would become part of th
      written to `fuzz/artifacts/<target>/minimized-from-*`:
 
      ```sh
-     cargo +nightly-2026-09-17 fuzz tmin <target> <input> -- -timeout=10 -rss_limit_mb=1024
+     cargo +nightly fuzz tmin <target> <input> -- -timeout=10 -rss_limit_mb=1024
      ```
 
   2. In the pull request that fixes the bug, commit the minimized file under
@@ -83,7 +83,7 @@ pre-filled template text that does not apply, because it would become part of th
 
      ```sh
      cargo test --test fuzz_regressions
-     cargo +nightly-2026-09-17 fuzz run <target> tests/fuzz_regressions/<target>/<name> -- \
+     cargo +nightly fuzz run <target> tests/fuzz_regressions/<target>/<name> -- \
        -runs=0 -timeout=10 -rss_limit_mb=1024
      ```
 - **Tests for every new behavior.** CI requires 100% function, instantiation, line, region and
@@ -104,13 +104,16 @@ pre-filled template text that does not apply, because it would become part of th
 ## Checks to run locally
 
 CI runs each of these checks on every pull request ([ci.yml](.github/workflows/ci.yml) and
-[coverage.yml](.github/workflows/coverage.yml)), with the same pinned toolchains. Run the first
-group before every push, and the others when your change can affect what they check.
+[coverage.yml](.github/workflows/coverage.yml)), with the same toolchains. Run the first group
+before every push, and the others when your change can affect what they check.
 
-Besides stable Rust, the commands use the rustup toolchains 1.85.0, nightly-2026-09-17 (with the
-`miri`, `rust-src` and `llvm-tools-preview` components) and nightly-2025-06-01 (with
-`llvm-tools-preview`); the cargo-llvm-cov, cargo-fuzz, cargo-mutants, cargo-nextest and cargo-deny
-tools; jq; and, for the scaling check, Python 3 on Linux.
+Besides stable Rust, the commands use the rustup toolchains 1.85.0 (the `rust-version` in
+Cargo.toml), nightly (with the `miri`, `rust-src` and `llvm-tools-preview` components) and
+nightly-2025-08-08 (with `llvm-tools-preview`); the cargo-llvm-cov, cargo-fuzz, cargo-mutants,
+cargo-nextest and cargo-deny tools; jq; and, for the scaling check, Python 3 on Linux. CI installs
+the newest stable, nightly and tools on every run, so update yours (`rustup update stable nightly`)
+when a check passes locally but fails in CI. nightly-2025-08-08 is the one nightly that CI pins:
+rustc removed its MC/DC instrumentation that day, so no later nightly can measure MC/DC.
 
 Every change. ci.yml denies warnings in every build, so a warning that only a release or MSRV
 build emits fails CI. The first line does the same locally (rustdoc reads `RUSTDOCFLAGS` instead):
@@ -138,19 +141,18 @@ totals are all 100%, and `jq '.data[0].totals'` shows the counts (this report's 
 empty, so it is not checked here):
 
 ```sh
-CARGO_TARGET_DIR=target/coverage-branch cargo +nightly-2026-09-17 llvm-cov --lib \
+CARGO_TARGET_DIR=target/coverage-branch cargo +nightly llvm-cov --lib \
   --all-features --branch --json --summary-only --output-path /tmp/ini-edit-coverage.json
 jq --exit-status '.data[0].totals | [.branches, .functions, .instantiations, .lines, .regions]
   | all(.percent == 100)' /tmp/ini-edit-coverage.json
 ```
 
-When you add or change a condition, MC/DC too. This report needs its own pinned nightly and
-`RUSTFLAGS`, and CI requires 100% of MC/DC conditions as well as the totals above:
+When you add or change a condition, MC/DC too. This report needs its own pinned nightly, and CI
+requires 100% of MC/DC conditions as well as the totals above:
 
 ```sh
-CARGO_TARGET_DIR=target/coverage-mcdc RUSTFLAGS='--cfg no_zerocopy_simd_x86_avx12_1_89_0' \
-  cargo +nightly-2025-06-01 llvm-cov --lib --all-features --mcdc \
-  --json --summary-only --output-path /tmp/ini-edit-mcdc.json
+CARGO_TARGET_DIR=target/coverage-mcdc cargo +nightly-2025-08-08 llvm-cov --lib --all-features \
+  --mcdc --json --summary-only --output-path /tmp/ini-edit-mcdc.json
 jq --exit-status '.data[0].totals
   | [.mcdc, .branches, .functions, .instantiations, .lines, .regions]
   | all(.percent == 100)' /tmp/ini-edit-mcdc.json
@@ -164,8 +166,8 @@ not see this, because every job starts from a fresh checkout.
 Lexer changes, under Miri with full borrow checking:
 
 ```sh
-cargo +nightly-2026-09-17 miri test --lib lexer::tests::
-cargo +nightly-2026-09-17 miri test --test exhaustive_parser \
+cargo +nightly miri test --lib lexer::tests::
+cargo +nightly miri test --test exhaustive_parser \
   lexer_and_diagnostic_contracts -- --exact
 ```
 
@@ -173,7 +175,7 @@ The whole library suite under Miri takes about half an hour, so CI splits it int
 jobs. TESTING.md explains why that run disables Stacked Borrows. To run it anyway:
 
 ```sh
-MIRIFLAGS=-Zmiri-disable-stacked-borrows cargo +nightly-2026-09-17 miri test --lib
+MIRIFLAGS=-Zmiri-disable-stacked-borrows cargo +nightly miri test --lib
 ```
 
 Changes to the lexer, the parser, or code whose cost grows with the input: the exhaustive and
@@ -197,7 +199,7 @@ Fuzzing: TESTING.md explains how to seed each target's corpus, how to start from
 inputs, and what each target's input limits are. A two-minute campaign looks like this:
 
 ```sh
-cargo +nightly-2026-09-17 fuzz run generated_edits -- \
+cargo +nightly fuzz run generated_edits -- \
   -max_len=4096 -max_total_time=120 -timeout=10 -rss_limit_mb=1024
 ```
 
