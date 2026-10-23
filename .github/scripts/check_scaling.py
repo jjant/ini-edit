@@ -9,13 +9,13 @@ BASELINE_KIB.
 Measured with one parse in a fresh process on Linux x86-64, with the input
 string included, the unchanged parser peaks at 66 bytes per input byte for
 blank lines (`newlines`), 85 for `=` lines (`error-lines`, an error with its
-own message every two bytes), and 110 for `[` lines (`header-errors`, two
-errors every two bytes, the densest input found). TESTING.md turns this into
-a sizing rule for untrusted input, about 128 bytes per input byte, and
-`header-errors` is bounded at that rule. The other two bounds are about one
-and a half times what the workload needs. A regression that doubles the
-memory of a line takes the three workloads to 130, 169 and 218, at least 30%
-above their bounds of 96, 128 and 128, so the check fails.
+own message every two bytes), and 108 for `[]x` lines (`header-errors`, a
+section and two errors every four bytes, the densest input found). TESTING.md
+turns this into a sizing rule for untrusted input, about 128 bytes per input
+byte, and `header-errors` is bounded at that rule. The other two bounds are
+about one and a half times what the workload needs. A regression that doubles
+the memory of a line takes the three workloads to 130, 169 and 213, at least
+30% above their bounds of 96, 128 and 128, so the check fails.
 """
 
 import argparse
@@ -32,6 +32,7 @@ import time
 WORKLOADS = (
     "entries",
     "errors",
+    "bare-key-errors",
     "error-lines",
     "header-errors",
     "continuations",

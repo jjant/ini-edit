@@ -4,12 +4,12 @@ expression: "errors(\"[mysqldump]\\nquick\\nquote-names\\nmax = 64M\\n\")"
 ---
 INI parse error at line 2, column 6
   |
-  2 | quick
+2 | quick
   |      ^
   = expected '=' or ':'
 
 INI parse error at line 3, column 12
   |
-  3 | quote-names
+3 | quote-names
   |            ^
   = expected '=' or ':'

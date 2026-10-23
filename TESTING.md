@@ -107,7 +107,8 @@ one, and the tests list, for each kind of edit, which nodes it keeps.
   3,985,991 corrupted documents is parsed under all four parser-option
   combinations. It must be lossless, keep one node per line (an entry whose
   value continues over several physical lines is one line), and report
-  diagnostics in order at character boundaries. Its diagnostics must
+  diagnostics in order at character boundaries, at most one per position and
+  worded without internal names. Its diagnostics must
   also depend only on the text before them, on both sides of the edit: those
   before the edited line are exactly the diagnostics of parsing the unchanged
   lines before it, and dropping the lines after the edited line keeps every
@@ -221,8 +222,9 @@ one, and the tests list, for each kind of edit, which nodes it keeps.
   combinations and through the round-trip fuzz oracle. Checks include
   losslessness, token partitioning, one node per line (a continued entry is
   one line), diagnostic boundaries/locations (a leading BOM is not a
-  column), diagnostics that do not change when the last line is removed, and
-  an independent semantic expectation for a restricted single-line subset.
+  column), a rendered caret under its column (tabs included), diagnostics
+  that do not change when the last line is removed, and an independent
+  semantic expectation for a restricted single-line subset.
 - Large-input tests exercise a 4 MiB value, large Unicode identifiers,
   32,768 continuations, and 65,536 malformed lines. A separate Linux child
   process measures CPU time and peak RSS for growing entry lists, errors,
@@ -274,31 +276,33 @@ use the CPU is excluded.
 A growth ratio cannot see a parser that needs twice the memory at every size,
 so three dense workloads also have an absolute bound on one parse of their
 largest input: 4 MiB of blank lines, and 2 MiB each of lines holding only `=`
-(an error with its own message every two bytes) and only `[` (two errors every
-two bytes). The check uses one parse in a fresh process because parsing again
-in the same process reuses a fragmented heap: at some sizes, eight parses of
-`=` lines peak 50% higher than one.
+(an error with its own message every two bytes) and of `[]x` lines (a section
+and two errors every four bytes). The check uses one parse in a fresh process
+because parsing again in the same process reuses a fragmented heap: at some
+sizes, eight parses of `=` lines peak 50% higher than one.
 
 Measured that way on Linux x86-64, with the input string included, one parse
 peaks at 66 bytes of RSS per input byte for blank lines, 85 for `=` lines, and
-110 for `[` lines. No line of up to three characters drawn from `[]=:;#\`, a
-letter, space, tab, and CR needs more, with any parse options. Short valid
-lines such as `a=` or `[a]` need about 70, `k=v` lines 59, and entries such as
-`key1=value1` 25. The bounds are 128 bytes per input byte for `=` and `[`
-lines, the sizing rule below, and 96 for blank lines, each plus 4 MiB, twice
-what the probe needs for a one-unit input. A regression that doubles the
-memory of a line takes the three workloads to 130, 169, and 218, at least 30%
-above their bounds, so the check fails.
+108 for `[]x` lines. No line of up to three characters drawn from `[]=:;#\`, a
+letter, space, tab, and CR needs more, with any parse options. The next
+densest are lines such as `a ` (92, where bare keys are not allowed); `[`
+lines need 85, as `=` lines do. Short valid lines such as `a=` or `[a]` need
+about 70, `k=v` lines 59, and entries such as `key1=value1` 25. The bounds are
+128 bytes per input byte for `=` and `[]x` lines, the sizing rule below, and
+96 for blank lines, each plus 4 MiB, twice what the probe needs for a one-unit
+input. A regression that doubles the memory of a line takes the three
+workloads to 130, 169, and 213, at least 30% above their bounds, so the check
+fails.
 
 `parse` frees the lexer's tokens and the tree builder's buffers before it
 returns, but the returned `Parse` keeps the tree and every diagnostic, each
 with its own message string. A `Parse` that stays alive holds 16 bytes per
 input byte for blank lines (a quarter of the peak), 28 for `k=v` lines, 48 for
-`=` lines, and 72 for `[` lines (two thirds of the peak). To parse untrusted
-input, allow about 128 bytes of memory per input byte while `parse` runs, and
-up to 1.5 times that in a process that parses many documents. A `Parse` that
-the caller keeps holds up to 76 bytes per input byte, the most found (for
-lines such as `[]x`), for as long as it lives.
+`=` or `[` lines, and 76 for `[]x` lines (seven tenths of the peak). To parse
+untrusted input, allow about 128 bytes of memory per input byte while `parse`
+runs, and up to 1.5 times that in a process that parses many documents. A
+`Parse` that the caller keeps holds up to 76 bytes per input byte, the most
+found, for as long as it lives.
 
 Distinct-entry measurements use 65,536, 131,072, and 262,144 entries. Smaller
 16K–64K windows showed steep growth in the unchanged parser that varied across
@@ -520,9 +524,7 @@ cargo +nightly fuzz run generated_edits path/to/reproducer
   of code and 4 arguments, and `src/lib.rs` and `benches/parse.rs` refuse
   one-letter names in the library, its unit tests and the benchmark. An
   exception is an `#[expect]` with a reason, so it fails once it is no longer
-  needed. The two on `mod parser` in `src/lib.rs` wait for the parser work in
-  flight. Until it moves them onto their items, each covers all of
-  `src/parser.rs`, so a new instance there passes too.
+  needed.
 - `tests/style.rs`, part of every `cargo test`, caps every line of the Rust,
   TOML, YAML and Markdown files at 100 columns and every function at 70
   physical lines, comments and blank lines included. It reads only the paths

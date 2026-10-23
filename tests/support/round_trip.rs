@@ -69,7 +69,8 @@ pub(crate) fn check(data: &[u8]) {
 
 /// Parse `source` and check what every parse guarantees: the tree is
 /// lossless, each line is one node (a continued entry is one line), and
-/// diagnostics are in order at character boundaries.
+/// diagnostics are in order at character boundaries, at most one per
+/// position, and worded for people.
 pub(crate) fn check_parse(source: &str, options: &ParseOptions) -> Parse {
     let parse = parse_with(source, options);
     let root = parse.syntax();
@@ -77,15 +78,28 @@ pub(crate) fn check_parse(source: &str, options: &ParseOptions) -> Parse {
     assert_eq!(root.text(), source, "{options:?}");
     // Editor positions address line nodes, one per line.
     line_nodes::check(source, &root);
-    let mut previous = 0;
+    let mut previous: Option<usize> = None;
     for error in parse.errors() {
-        // Diagnostics must point forwards to valid input boundaries.
-        assert!(error.offset >= previous, "{source:?}: {error:?}");
+        // Diagnostics must point forwards to valid input boundaries, one
+        // problem per position.
+        assert!(
+            previous.is_none_or(|previous| previous < error.offset),
+            "{source:?}: {:?}",
+            parse.errors()
+        );
         assert!(
             source.is_char_boundary(error.offset),
             "{source:?}: {error:?}"
         );
-        previous = error.offset;
+        // Messages describe the text in lower-case words. Internal names, such
+        // as the upper-case names of token kinds, have no place in them.
+        assert!(
+            !error
+                .message
+                .contains(|character: char| character.is_ascii_uppercase()),
+            "{source:?}: {error:?}"
+        );
+        previous = Some(error.offset);
     }
     parse
 }

@@ -57,14 +57,7 @@ const ENTRIES_MAX: usize = 512;
 
 /// Functions longer than [`FUNCTION_LINES_MAX`] in files that another change is rewriting, as
 /// `(path, name)`. Each one must still be too long: delete its entry once it fits.
-const LONG_FUNCTIONS: [(&str, &str); 1] = [
-    // A unit test, 95 lines, in a file that the lexer and parser changes are rewriting. Split it
-    // there; lib.rs expects clippy's too_many_lines on the parser's tests for the same reason.
-    (
-        "src/parser.rs",
-        "malformed_lines_are_single_line_nodes_with_unchanged_diagnostics",
-    ),
-];
+const LONG_FUNCTIONS: [(&str, &str); 0] = [];
 
 /// The words that rustfmt may put before `fn` on a function's first line, in the order that Rust
 /// requires: one visibility, then `const`, `async` and `unsafe`.

@@ -29,6 +29,7 @@ fn lexer_contract(source: &str) {
 
 fn diagnostic_contract(source: &str, offset: usize) {
     // A leading BOM marks the encoding; it is not a column of the first line.
+    let text = source.strip_prefix('\u{FEFF}').unwrap_or(source);
     let prefix = &source[..offset];
     let prefix = prefix.strip_prefix('\u{FEFF}').unwrap_or(prefix);
     let prefix = prefix.replace("\r\n", "\n").replace('\r', "\n");
@@ -45,11 +46,39 @@ fn diagnostic_contract(source: &str, offset: usize) {
         expected,
         "{source:?} offset={offset}"
     );
-    assert!(
-        error
-            .display(source)
-            .contains(&format!("line {}, column {}", expected.0, expected.1))
-    );
+    let rendered = error.display(source);
+    assert!(rendered.contains(&format!("line {}, column {}", expected.0, expected.1)));
+    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+    let line = normalized.split('\n').nth(expected.0 - 1).unwrap();
+    caret_contract(&rendered, line, expected.1);
+}
+
+/// The caret of `rendered`, a diagnostic at `column` of `line`, sits under
+/// the column: the caret row's gutter is as wide as the source row's, the
+/// caret is as many characters into its row as the column's character is
+/// into the source row, and the padding before it keeps the line's tabs, so
+/// that a terminal expands both rows to the same tab stops.
+fn caret_contract(rendered: &str, line: &str, column: usize) {
+    let rows: Vec<&str> = rendered.split('\n').collect();
+    assert_eq!(rows.len(), 5, "{rendered}");
+    let text_start = rows[2].find(" | ").unwrap() + " | ".len();
+    assert_eq!(&rows[2][text_start..], line, "{rendered}");
+    // The bars and the message's `=` all line up with the source row's bar.
+    let bar = text_start - "| ".len();
+    for (row, mark) in [(rows[1], "|"), (rows[3], "| "), (rows[4], "= ")] {
+        assert_eq!(row.get(bar..bar + mark.len()), Some(mark), "{rendered}");
+        assert!(row[..bar].bytes().all(|byte| byte == b' '), "{rendered}");
+    }
+    // The caret is under a character of the line or just past its end.
+    assert!(line.chars().count() >= column - 1, "{rendered}");
+    let caret_row: Vec<char> = rows[3].chars().collect();
+    assert_eq!(caret_row.last(), Some(&'^'), "{rendered}");
+    assert_eq!(caret_row.len() - 1, text_start + column - 1, "{rendered}");
+    let padding = &caret_row[text_start..caret_row.len() - 1];
+    for (&pad, character) in padding.iter().zip(line.chars()) {
+        let expected = if character == '\t' { '\t' } else { ' ' };
+        assert_eq!(pad, expected, "{rendered}");
+    }
 }
 
 // These contracts never construct rowan trees. Run this test under strict Miri
@@ -65,6 +94,8 @@ fn lexer_and_diagnostic_contracts() {
         "a=\\",
         "\u{FEFF}",
         "[[]]\n",
+        // Two-digit line numbers widen the gutter, under tabs.
+        "1\n2\n3\n4\n5\n6\n7\n8\n9\n\tten = 10\r\n\t[λ\r",
     ] {
         lexer_contract(source);
         for offset in source
