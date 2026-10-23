@@ -70,8 +70,10 @@ pub use syntax_kind::{IniLang, SyntaxElement, SyntaxKind, SyntaxNode, SyntaxToke
 /// The longest input, in bytes, that the parser can represent.
 ///
 /// rowan measures text positions and lengths in `u32` (`TextSize`), so a tree cannot describe more
-/// than `u32::MAX` bytes. The [`editor`] holds one byte less: it refuses documents and edits past
-/// its limit with [`EditError::DocumentTooLarge`](editor::EditError::DocumentTooLarge).
+/// than `u32::MAX` bytes. [`parse`] and [`parse_with`] panic on a longer input before they read any
+/// of it, in every build, rather than build a tree whose length has wrapped around. The
+/// [`editor`] holds one byte less: it refuses documents and edits past its limit with
+/// [`EditError::DocumentTooLarge`](editor::EditError::DocumentTooLarge).
 pub const MAX_INPUT_LEN: usize = u32::MAX as usize;
 
 // The limit is rowan's `TextSize` range.

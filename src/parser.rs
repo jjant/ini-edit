@@ -1,10 +1,13 @@
 //! Error-tolerant recursive-descent parser producing a lossless green tree.
 //!
-//! Always produces a valid tree — errors go to a side channel. The central
-//! invariant is: `parse(s).syntax().text() == s` for every input.
+//! Any input of at most [`MAX_INPUT_LEN`] bytes produces a valid tree —
+//! errors go to a side channel. The central invariant is:
+//! `parse(s).syntax().text() == s` for every such input. A longer input
+//! panics; see [`parse_with`].
 
 use rowan::GreenNodeBuilder;
 
+use crate::MAX_INPUT_LEN;
 use crate::lexer::{BOM, Token, lex_with, line_break_len, line_len};
 use crate::syntax_kind::{SyntaxKind, SyntaxNode};
 
@@ -14,7 +17,8 @@ use crate::syntax_kind::{SyntaxKind, SyntaxNode};
 ///
 /// # Panics
 ///
-/// Panics if `input` is longer than `u32::MAX` bytes, like [`parse_with`].
+/// Panics if `input` is longer than [`MAX_INPUT_LEN`] bytes, like
+/// [`parse_with`].
 #[must_use]
 pub fn parse(input: &str) -> Parse {
     // Spelled out so that a change to the derived defaults cannot silently
@@ -30,10 +34,21 @@ pub fn parse(input: &str) -> Parse {
 ///
 /// # Panics
 ///
-/// Panics if `input` is longer than `u32::MAX` bytes, the most text a
-/// `rowan` tree can measure.
+/// Panics if `input` is longer than [`MAX_INPUT_LEN`] bytes (`u32::MAX`), the
+/// most text a `rowan` tree can measure. The check comes before any lexing,
+/// so a longer input fails at once, the same way in debug and release builds.
 #[must_use]
 pub fn parse_with(input: &str, options: &ParseOptions) -> Parse {
+    // The precondition, before any lexing. rowan measures text in u32, so a
+    // longer input would be lexed in full and then overflow inside rowan in
+    // debug builds, or wrap the tree's length in release builds. A caller
+    // can break it, and `parse_panics_one_byte_past_max_input_len` does, so
+    // unlike the internal checks it carries a message.
+    assert!(
+        fits_text_size(input.len()),
+        "ini-edit parses at most MAX_INPUT_LEN ({MAX_INPUT_LEN}) bytes, got {}",
+        input.len()
+    );
     let tokens = lex_with(input, options.inline_comments);
     let mut parser = Parser {
         tokens,
@@ -57,9 +72,8 @@ pub fn parse_with(input: &str, options: &ParseOptions) -> Parse {
             .is_none_or(|error| error.offset <= input.len())
     );
     let green = parser.builder.finish();
-    // The tree covers the input. rowan measures text in u32, so this also
-    // stops an input that it cannot measure, instead of returning a tree with
-    // a wrapped length.
+    // The tree covers the input. Paired with the precondition, which keeps
+    // its length within the u32 that rowan measures it in.
     assert_eq!(usize::from(green.text_len()), input.len());
     // O(n) checks, so debug builds only.
     #[cfg(all(debug_assertions, not(miri)))]
@@ -76,6 +90,19 @@ pub fn parse_with(input: &str, options: &ParseOptions) -> Parse {
         green,
         errors: parser.errors,
     }
+}
+
+/// Whether rowan can measure a text of `len` bytes: its `TextSize` is a
+/// `u32`, so this means `len <= MAX_INPUT_LEN`. Kept out of the assertion so
+/// that tests can check both sides of the limit without allocating, and so
+/// that cargo-mutants, which does not mutate assertion conditions, mutates
+/// it.
+///
+/// Not written as that comparison: on 32-bit targets `MAX_INPUT_LEN` is
+/// `usize::MAX`, so it is always true, and clippy's deny-by-default
+/// `absurd_extreme_comparisons` rejects it.
+fn fits_text_size(len: usize) -> bool {
+    u32::try_from(len).is_ok()
 }
 
 /// Options for configuring the parser.
@@ -1300,5 +1327,61 @@ mod tests {
         };
         // Without the assertion: diagnostics out of source order.
         parser.error("earlier");
+    }
+
+    // The tests below check both sides of the input size limit. The first
+    // three check, without allocating, the predicate that `parse_with`
+    // asserts first. A 32-bit target has no length past the limit (there it
+    // is `usize::MAX`), so only the third of them runs there.
+
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn an_input_of_max_input_len_bytes_fits() {
+        assert!(fits_text_size(MAX_INPUT_LEN));
+    }
+
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn an_input_one_byte_past_max_input_len_does_not_fit() {
+        // Without the check, parse_with lexed such an input in full before
+        // rowan's u32 lengths overflowed: inside rowan in debug builds, and
+        // into a tree whose length wrapped around in release builds.
+        assert!(!fits_text_size(MAX_INPUT_LEN + 1));
+    }
+
+    #[test]
+    fn the_input_size_limit_is_the_range_of_rowan_text_sizes() {
+        // On 32-bit targets, the saturated length past the limit is
+        // `usize::MAX`, which fits.
+        for len in [
+            0,
+            1,
+            MAX_INPUT_LEN - 1,
+            MAX_INPUT_LEN,
+            MAX_INPUT_LEN.saturating_add(1),
+            usize::MAX,
+        ] {
+            let measurable = rowan::TextSize::try_from(len).is_ok();
+            assert_eq!(fits_text_size(len), measurable, "{len}");
+        }
+    }
+
+    // Linux backs a large zeroed allocation with the shared zero page until
+    // it is written, so this 4 GiB input costs about a second of UTF-8
+    // validation and a few MiB of memory. Miri would interpret every byte.
+    #[test]
+    #[cfg(all(target_os = "linux", target_pointer_width = "64", not(miri)))]
+    #[should_panic(
+        expected = "ini-edit parses at most MAX_INPUT_LEN (4294967295) bytes, got 4294967296"
+    )]
+    fn parse_panics_one_byte_past_max_input_len() {
+        let input = String::from_utf8(vec![0; MAX_INPUT_LEN + 1]).unwrap();
+        // With a predicate that accepted this length, parse would lex and
+        // copy all 4 GiB. This fails the test at once instead: its message is
+        // not the expected one.
+        assert!(!fits_text_size(input.len()));
+        // Without the assertion in parse_with: the 4 GiB input is lexed in
+        // full, and rowan then panics inside text-size.
+        let _ = parse(&input);
     }
 }

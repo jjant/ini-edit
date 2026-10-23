@@ -23,10 +23,12 @@ on [rowan](https://crates.io/crates/rowan).
 
 ## Features
 
-- **Lossless** — `parse(text).syntax().text() == text` for every input, always
+- **Lossless** — `parse(text).syntax().text() == text` for every input of at most
+  `MAX_INPUT_LEN` bytes (see the size limit below)
 - **Format-preserving edits** — modify values, add entries, remove sections while keeping
   untouched lines byte-for-byte identical
-- **Error-tolerant** — always produces a valid tree, even for malformed input
+- **Error-tolerant** — produces a valid tree for every input within the size limit, even for
+  malformed input
 - **Typed AST** — `File`, `Section`, `Entry`, `Key`, `Value` wrappers with ergonomic accessors
 - **Full CST** — every whitespace character, comment, and line ending is in the tree
 - **Zero unsafe** — `#![deny(unsafe_code)]`
@@ -133,9 +135,9 @@ INI has no formal spec. `ini-edit` makes these choices:
 | Preamble entries | Keys before the first `[section]`: read with `File::preamble_entries()`, edit with `Editor::preamble()` |
 | Line endings | `\n`, `\r\n`, `\r` all preserved. Lines added by the editor use the document's first line ending (`\n` if it has none), and CRLF where a line break would otherwise read together with a neighboring CR or LF. A removal between a CR and an LF blank line keeps every byte and drops that blank line, which now reads as part of one CRLF. |
 | UTF-8 BOM | Handled (kept at the root, not part of the first line). An edit never makes U+FEFF the first character of a document without one. |
-| Malformed input | Always produces a tree; errors reported separately |
+| Malformed input | Produces a tree for every input within the size limit; errors reported separately |
 | Bare keys (no value) | Opt-in via `parse_with(.., &ParseOptions { allow_no_value: true })` |
-| Size limit | Inputs up to `ini_edit::MAX_INPUT_LEN` bytes (`u32::MAX`, the range of rowan's text positions); the editor holds one byte less and refuses larger documents and edits |
+| Size limit | Inputs up to `ini_edit::MAX_INPUT_LEN` bytes (`u32::MAX`, the range of rowan's text positions). `parse` and `parse_with` panic on a longer input, the same way in debug and release builds, with a message that names the limit. The editor holds one byte less and refuses larger documents and edits with `EditError::DocumentTooLarge` |
 
 ## Comparison
 
