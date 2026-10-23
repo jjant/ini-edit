@@ -540,7 +540,7 @@ impl Parser<'_> {
 mod tests {
     use super::*;
     use crate::ast::{AstNode, File};
-    use crate::editor::Editor;
+    use crate::editor::{EditOptions, Editor};
 
     #[test]
     fn junk_after_a_section_header_is_reported_without_losing_text() {
@@ -785,8 +785,9 @@ mod tests {
     fn bom_belongs_to_the_document_when_removing_the_first_section() {
         for indent in ["", " \t"] {
             let source = format!("\u{FEFF}{indent}[first]\na=1\n[second]\nb=2\n");
-            let editor = Editor::new(&source);
-            editor.section("first").remove();
+            let mut editor =
+                Editor::new(&source, &ParseOptions::default(), &EditOptions::default()).unwrap();
+            editor.section("first").unwrap().remove();
             assert_eq!(editor.finish(), "\u{FEFF}[second]\nb=2\n");
         }
     }

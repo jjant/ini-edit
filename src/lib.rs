@@ -21,22 +21,44 @@
 //!
 //! ## Editing
 //!
-//! ```
-//! use ini_edit::editor::Editor;
+//! Every edit is checked against the parser before it is applied: an edit that a reader would not
+//! read back as written returns an [`EditError`](editor::EditError) and leaves the document
+//! unchanged. See the [`editor`] module.
 //!
-//! let ed = Editor::new("[server]\nport = 8080\n");
-//! ed.section("server").set("port", "9090");
-//! assert!(ed.finish().contains("port = 9090"));
+//! ```
+//! use ini_edit::ParseOptions;
+//! use ini_edit::editor::{EditOptions, Editor, SeparatorSpacing};
+//!
+//! let parse_options = ParseOptions { allow_no_value: false, inline_comments: false };
+//! let edit_options = EditOptions { separator_spacing: SeparatorSpacing::Preserve };
+//! let mut editor = Editor::new("[server]\nport = 8080\n", &parse_options, &edit_options)?;
+//! editor.section_or_insert("server")?.set("port", "9090")?;
+//! assert_eq!(editor.finish(), "[server]\nport = 9090\n");
+//! # Ok::<(), ini_edit::editor::EditError>(())
 //! ```
 
 #![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 
 pub mod ast;
 pub mod editor;
-pub(crate) mod green_builders;
 pub mod lexer;
 pub mod parser;
 pub mod syntax_kind;
 
 pub use parser::{Parse, ParseError, ParseOptions, parse, parse_with};
 pub use syntax_kind::{IniLang, SyntaxElement, SyntaxKind, SyntaxNode, SyntaxToken};
+
+/// The longest input, in bytes, that the parser can represent.
+///
+/// rowan measures text positions and lengths in `u32` (`TextSize`), so a tree cannot describe more
+/// than `u32::MAX` bytes. The [`editor`] holds one byte less: it refuses documents and edits past
+/// its limit with [`EditError::DocumentTooLarge`](editor::EditError::DocumentTooLarge).
+pub const MAX_INPUT_LEN: usize = u32::MAX as usize;
+
+// The limit is rowan's `TextSize` range.
+const _: () = assert!(MAX_INPUT_LEN == u32::MAX as usize);
+
+/// The README's examples, compiled and run as doctests so they cannot rot.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+pub struct ReadmeDoctests;
