@@ -49,6 +49,18 @@ The report then also counts that binary's copy of the code, which never ran,
 and falls below 100%. CI is not affected, because each job starts from a clean
 checkout.
 
+## Editor guarantees
+
+Every editor test layer checks the guarantees the `editor` module documents.
+After every call, successful or not, the editor's tree equals a parse of its
+text with its parser options (C1); a call that returns `Err` leaves the text
+and the tree unchanged (C2); a successful call changes only the bytes it
+documents, so an insertion adds one contiguous run of bytes and a removal
+deletes one (C3); and no caller input makes the editor panic (C4). Debug builds
+also check inside the editor, after every edit, that C1 holds and that the edit
+added or removed exactly the body lines it documents, so every debug test,
+coverage run, mutation run, and fuzz build checks them.
+
 ## Independent test layers
 
 - Unit tests cover internal lexer, parser, AST, and editor invariants.
@@ -66,8 +78,9 @@ checkout.
   space, tab, a key character, `é`, and U+FEFF), and has each alphabet
   character inserted before it (and after the last one). Each of the
   3,985,991 corrupted documents is parsed under all four parser-option
-  combinations. It must be lossless, keep one node per physical line, and
-  report diagnostics in order at character boundaries. Its diagnostics must
+  combinations. It must be lossless, keep one node per line (an entry whose
+  value continues over several physical lines is one line), and report
+  diagnostics in order at character boundaries. Its diagnostics must
   also depend only on the text before them, on both sides of the edit: those
   before the edited line are exactly the diagnostics of parsing the unchanged
   lines before it, and dropping the lines after the edited line keeps every
@@ -96,32 +109,48 @@ checkout.
   in the job summary. Without `--caught`, cargo-mutants hides ordinary test
   failures, which can make a healthy run appear to consist only of timeouts.
 - Five libFuzzer targets independently stress round trips and
-  arbitrary editor operation sequences, including reuse of section handles
-  after deleting their headers and the identity property of empty insertions.
+  arbitrary editor operation sequences: every public method of `Editor`,
+  `SectionEditor`, and `EntryEditor` with arbitrary strings, positions, and
+  ranges, each call checked for C1, C2, C3, and the
+  same result, text, and tree on an editor reopened before it, plus the
+  identity property of empty insertions.
   `cargo fuzz` builds them with AddressSanitizer, debug assertions, and
   overflow checks, and libFuzzer checks for leaks with LeakSanitizer.
-  The round-trip target also requires every physical line, including
-  malformed ones, to be exactly one node that owns only its own terminator,
-  because editor line indices address those nodes. Its diagnostics must
+  The round-trip target also requires every line, including malformed ones,
+  to be exactly one node that owns only its own terminator, because editor
+  positions address those nodes; line breaks may occur only in line break
+  tokens and, after a continuation backslash, in values. Its diagnostics must
   depend only on the text before them: parsing the input without its last
   line reports exactly the diagnostics that precede that line. A final line
   break belongs to the last line, so a file that ends with one still loses a
   line.
-  The reload target applies the same valid edits with and without reopening
-  the document between operations, comparing both output and complete syntax
-  trees. Its shared oracle also exhausts 5,103 short sequences in normal tests,
-  including a CR-only document and a raw line ending in CR that is inserted
-  before a blank separator line.
+  The reload target applies the same edits with and without reopening
+  the document between operations, comparing results, output, and complete
+  syntax trees. Its shared oracle also runs every pair of its 25 operations on
+  12 documents (7,500 sequences) in normal tests, malformed, CR-only, and
+  mixed CR/LF documents included; an `#[ignore]` test runs every triple
+  (see below).
   Every target is a thin wrapper around a `check(&[u8])` oracle in
   `tests/support/`, so ordinary tests compile, lint, and run the same code,
   and every committed fuzz input is replayed in each `cargo test` (see
   [Fuzz corpus and reproducibility](#fuzz-corpus-and-reproducibility)).
 - An independent identity-based model checks up to 128 edits per fuzz input.
-  It tracks duplicate keys, continued values, bare keys, retained entry and
-  section handles, detached objects, and immutable file snapshots across
-  deletion and recreation. Every step checks live values, reparsed values,
-  the complete syntax tree, and saved handles/views. Ordinary tests also run
-  24 deterministic sequences of 32 edits across parsing and spacing options.
+  It tracks duplicate keys, continued values, bare keys, entries addressed by
+  position and by key, and immutable file snapshots across deletion and
+  recreation; hostile keys and values must be refused with the model
+  unchanged. Every step checks live values, reparsed values, the complete
+  syntax tree, and saved views. Ordinary tests also run 24 deterministic
+  sequences of 32 edits across parsing and spacing options.
+- A bidirectional hostile-input oracle renders hostile strings at ten sites
+  (keys, values, section names, raw lines) of hostile documents by string
+  concatenation, and decides from a full parse of that text whether a reader
+  would read the edit back. The editor must accept exactly those edits and
+  write exactly the reference's bytes. Normal tests run 8,736 cases: every
+  string of up to two of ten pieces, in five documents, under two option sets.
+  `#[ignore]` tests run every string of up to two, and of up to three, of all
+  16 pieces, in 14 documents, under every option set and spacing (see below).
+  A random walk applies hostile operations to hostile documents with the same
+  per-call checks as the editor fuzz target.
 - A generated-document model constructs source text and expected meaning
   together, without parsing to obtain the expected result. It varies section
   and key names, duplicates, Unicode, BOMs, separators, indentation, comments,
@@ -132,17 +161,16 @@ checkout.
   Normal tests run 216 cases
   covering all operations, spacing policies, and parser options; the
   `generated_edits` fuzz target explores more documents using the same oracle.
-  Unindented blank lines stay separate when deleting their neighbor brings a
-  CR and LF together; the model records any required CRLF ending so subsequent
-  edits preserve it.
+  Deleting a line between a CR line break and an LF blank line keeps every
+  byte; the editor's tree then reads the two as one CRLF, as a reader does.
 - Bounded exhaustive tests enumerate all 41,371 strings of zero through four
   scalars from a 14-character alphabet containing delimiters, whitespace,
   Unicode, and a BOM. Every input runs through all four parser-option
   combinations and through the round-trip fuzz oracle. Checks include
-  losslessness, token partitioning, one node per physical line, diagnostic
-  boundaries/locations (a leading BOM is not a column), diagnostics that do
-  not change when the last line is removed, and an independent semantic
-  expectation for a restricted single-line subset.
+  losslessness, token partitioning, one node per line (a continued entry is
+  one line), diagnostic boundaries/locations (a leading BOM is not a
+  column), diagnostics that do not change when the last line is removed, and
+  an independent semantic expectation for a restricted single-line subset.
 - Large-input tests exercise a 4 MiB value, large Unicode identifiers,
   32,768 continuations, and 65,536 malformed lines. A separate Linux child
   process measures CPU time and peak RSS for growing entry lists, errors,
@@ -166,6 +194,15 @@ CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true CARGO_PROFILE_RELEASE_OVERFLOW_CHECK
   cargo test --release --test exhaustive_parser --test stress -- --include-ignored
 cargo build --release --example scaling_probe
 python3 .github/scripts/check_scaling.py
+```
+
+The editor's extended oracles in `tests/fuzz_regressions.rs` are ignored too:
+the reload triples, the full two- and three-piece hostile-input products, and
+a random walk over 60,000 seeds. No CI job runs them yet, so run them by hand
+before changing the editor; together they take under two minutes:
+
+```sh
+cargo test --release --test fuzz_regressions -- --ignored
 ```
 
 The corruption test runs as eight tests, `corruption::shard_0` through
