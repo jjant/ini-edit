@@ -7,7 +7,7 @@ use super::error::EditError;
 use super::fragment::{self, CRLF, LINE_BREAKS};
 use super::options::SeparatorSpacing;
 use super::plan::{self, Plan, Splice};
-use crate::ast::{AstNode, Entry};
+use crate::ast::{self, AstNode, Entry};
 use crate::syntax_kind::{SyntaxKind, SyntaxNode};
 
 /// An exclusive handle to one entry of the preamble or of a section.
@@ -85,7 +85,13 @@ impl EntryEditor<'_> {
         reason = "asserts internal invariants, never caller input"
     )]
     pub fn key(&self) -> String {
-        let key = plan::key_token(&self.node()).text().to_owned();
+        let node = self.node();
+        let key = ast::entry_key(node.green())
+            .expect("an entry has a key")
+            .to_owned();
+        // Two readings agree: the cursor walk that the green one replaced reads the same key.
+        #[cfg(all(debug_assertions, not(miri)))]
+        assert_eq!(key, plan::key_token(&node).text());
         // The lexer ends a key at a separator, spacing or a line break, after one character.
         assert_ne!(key, "");
         assert!(!key.contains(['=', ':', ' ', '\t', '\r', '\n']));

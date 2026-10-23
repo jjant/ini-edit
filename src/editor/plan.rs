@@ -22,7 +22,7 @@ use super::Editor;
 use super::error::EditError;
 use super::fragment::{self, BODY_LINE_KINDS, CRLF, LINE_BREAKS, LINE_KINDS};
 use crate::ParseOptions;
-use crate::ast::{AstNode, Entry, Section};
+use crate::ast::{self, AstNode, Entry, Section};
 use crate::lexer::BOM;
 use crate::syntax_kind::{IniLang, SyntaxKind, SyntaxNode, SyntaxToken};
 
@@ -315,10 +315,66 @@ impl Editor {
         line
     }
 
-    /// The first section whose header names exactly `name`.
+    /// The first section whose header names exactly `name` (NEG-12). The names are read from the
+    /// green tree, so only the section found gets a cursor.
     pub(super) fn find_section(&self, name: &str) -> Option<SyntaxNode> {
-        self.sections()
-            .find(|section| header_name_is(section, name))
+        let mut start = TextSize::from(0);
+        let mut found = None;
+        for child in self.green.children() {
+            let section = child
+                .into_node()
+                .filter(|node| IniLang::kind_from_raw(node.kind()) == SyntaxKind::SECTION);
+            if section.and_then(ast::section_name) == Some(name) {
+                let section = child_covering(&self.root(), start);
+                assert_eq!(section.kind(), SyntaxKind::SECTION);
+                assert_eq!(section.text_range().start(), start);
+                found = Some(section);
+                break;
+            }
+            start += child.text_len();
+        }
+        // Two readings agree, on a miss as on a hit: the cursor walk that the green one replaced
+        // finds the same first section, or none.
+        #[cfg(all(debug_assertions, not(miri)))]
+        assert_eq!(
+            found,
+            self.sections()
+                .find(|section| header_name_is(section, name))
+        );
+        found
+    }
+
+    /// The first entry of `container` keyed exactly `key` (NEG-12). The keys are read from the
+    /// green tree, so only the entry found gets a cursor.
+    pub(super) fn find_entry(&self, container: &Container, key: &str) -> Option<SyntaxNode> {
+        let parent = self.parent_of(container);
+        let mut start = parent.text_range().start();
+        let mut found = None;
+        for child in parent.green().children() {
+            let kind = IniLang::kind_from_raw(child.kind());
+            // In the preamble the first section ends the body.
+            if kind == SyntaxKind::SECTION {
+                break;
+            }
+            let entry = child.into_node().filter(|_| kind == SyntaxKind::ENTRY);
+            if entry.and_then(ast::entry_key) == Some(key) {
+                let entry = child_covering(&parent, start);
+                assert_eq!(entry.kind(), SyntaxKind::ENTRY);
+                assert_eq!(entry.text_range().start(), start);
+                found = Some(entry);
+                break;
+            }
+            start += child.text_len();
+        }
+        // Two readings agree, on a miss as on a hit: the cursor walk that the green one replaced
+        // finds the same first entry, or none.
+        #[cfg(all(debug_assertions, not(miri)))]
+        assert_eq!(
+            found,
+            self.entries(container)
+                .find(|entry| key_token(entry).text() == key)
+        );
+        found
     }
 
     /// The body lines of `container`, in document order.
@@ -913,7 +969,9 @@ pub(super) fn header(section: &SyntaxNode) -> SyntaxNode {
     header
 }
 
-/// Whether the header of `section` names exactly `name`, read without copying the name.
+/// Whether the header of `section` names exactly `name`, read without copying the name, through
+/// cursors: debug builds check [`Editor::find_section`], which reads the green tree, against it.
+#[cfg(all(debug_assertions, not(miri)))]
 pub(super) fn header_name_is(section: &SyntaxNode, name: &str) -> bool {
     assert_eq!(section.kind(), SyntaxKind::SECTION);
     header(section)

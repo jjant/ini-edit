@@ -89,20 +89,8 @@ impl SectionEditor<'_> {
 
     /// The first entry whose key is exactly `key`. Never changes the document. O(lines).
     #[must_use]
-    #[expect(
-        clippy::missing_panics_doc,
-        reason = "asserts internal invariants, never caller input"
-    )]
     pub fn entry(&mut self, key: &str) -> Option<EntryEditor<'_>> {
         let node = self.find_entry(key)?;
-        // First match (NEG-12): no entry before it has the key.
-        #[cfg(all(debug_assertions, not(miri)))]
-        assert!(
-            self.editor
-                .entries(&self.container())
-                .take_while(|entry| *entry != node)
-                .all(|entry| plan::key_token(&entry).text() != key)
-        );
         Some(EntryEditor::new(self.editor, &node))
     }
 
@@ -365,9 +353,7 @@ impl SectionEditor<'_> {
 
     /// The first entry of this container keyed exactly `key`.
     fn find_entry(&self, key: &str) -> Option<SyntaxNode> {
-        self.editor
-            .entries(&self.container())
-            .find(|entry| plan::key_token(entry).text() == key)
+        self.editor.find_entry(&self.container(), key)
     }
 
     /// Insert one new entry at `slot`.

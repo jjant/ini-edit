@@ -2,8 +2,11 @@
 //! with one node per line (an entry whose value continues over several physical
 //! lines is one line) and diagnostics at valid input boundaries.
 //! Diagnostics also depend only on the text before them: parsing just the
-//! lines before a line reports exactly the diagnostics that precede it.
+//! lines before a line reports exactly the diagnostics that precede it. The
+//! typed AST reads every tree as rowan's cursors read it.
 
+#[path = "ast_reads.rs"]
+mod ast_reads;
 #[path = "line_nodes.rs"]
 mod line_nodes;
 
@@ -52,6 +55,9 @@ pub(crate) fn check(data: &[u8]) {
     );
     for options in &OPTIONS {
         let parse = check_parse(source, options);
+        // Here and not in `check_parse`, which the corruption tests call for millions of
+        // documents: this check would make them take half as long again.
+        ast_reads::check(&parse.syntax());
         let prefix = parse_with(&source[..boundary], options);
         assert_eq!(
             errors_before(&parse, boundary),

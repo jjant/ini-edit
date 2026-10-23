@@ -530,19 +530,8 @@ impl Editor {
     /// The first section whose name is exactly `name`. Never changes the document: `None` if
     /// there is none, including for names that no header can have (`""`, `" a"`).
     #[must_use]
-    #[expect(
-        clippy::missing_panics_doc,
-        reason = "asserts internal invariants, never caller input"
-    )]
     pub fn section(&mut self, name: &str) -> Option<SectionEditor<'_>> {
         let section = self.find_section(name)?;
-        // First match (NEG-12): no section before it has the name.
-        #[cfg(all(debug_assertions, not(miri)))]
-        assert!(
-            self.sections()
-                .take_while(|before| *before != section)
-                .all(|before| !plan::header_name_is(&before, name))
-        );
         let start = section.text_range().start();
         Some(SectionEditor::new(self, Address::Section(start)))
     }

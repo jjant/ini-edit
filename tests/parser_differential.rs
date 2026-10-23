@@ -8,6 +8,9 @@ use std::fmt::Write;
 use ini_edit::ast::{AstNode, File};
 use ini_edit::{ParseOptions, parse_with};
 
+#[path = "support/ast_reads.rs"]
+mod ast_reads;
+
 type Document = BTreeMap<Option<String>, BTreeMap<String, String>>;
 
 fn next(state: &mut usize, count: usize) -> usize {
@@ -71,6 +74,7 @@ fn read_ours(source: &str, options: &ParseOptions) -> Document {
         parsed.errors()
     );
     assert_eq!(parsed.syntax().text().to_string(), source);
+    ast_reads::check(&parsed.syntax());
     let file = File::cast(parsed.syntax()).unwrap();
     let entries = |items: Vec<ini_edit::ast::Entry>| {
         items
