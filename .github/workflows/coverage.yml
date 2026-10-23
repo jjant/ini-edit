@@ -1,23 +1,22 @@
 name: Coverage
 
+# Only ci.yml runs these jobs, as part of its own run on the same commit, so
+# its `required` job, and with it the release, waits for both coverage gates.
 on:
-  push:
-    branches: [main]
-  pull_request:
-  schedule:
-    - cron: "17 3 * * 0"
-  workflow_dispatch:
+  workflow_call:
+    secrets:
+      CODECOV_TOKEN:
+        # Pull requests from forks and from Dependabot get no repository
+        # secrets. The upload is advisory, so the gates run without it.
+        required: false
 
 permissions:
   contents: read
 
-# Same policy as ci.yml: a new push to a pull request cancels its superseded
-# run, and every other run finishes. Delete this block if ci.yml ever calls
-# this file as a reusable workflow: github.workflow would then name the caller,
-# so caller and callee would share one group and cancel each other.
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+# No concurrency block: ci.yml's group already cancels a pull request's
+# superseded run, these jobs included. In a called workflow, github.workflow
+# names the caller, so a group here would repeat ci.yml's, and GitHub cancels
+# a run whose called workflow waits on the caller's own group as a deadlock.
 
 env:
   CARGO_TERM_COLOR: always
