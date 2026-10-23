@@ -646,7 +646,7 @@ fn check_case(case: Case<'_>, counts: &mut Counts) {
     };
     let mut editor = Editor::new(case.document, case.options, &edit).expect("a small document");
     let before = editor.finish();
-    let tree = editor.file().syntax().green().into_owned();
+    let tree = editor.file().syntax().green().to_owned();
     let result = apply(&mut editor, case.site, case.text);
     counts.cases += 1;
     match &result {
@@ -665,7 +665,7 @@ fn check_case(case: Case<'_>, counts: &mut Counts) {
         Err(error) => {
             assert_eq!(editor.finish(), before, "C2: {case:?}");
             assert_eq!(
-                editor.file().syntax().green().into_owned(),
+                editor.file().syntax().green().to_owned(),
                 tree,
                 "C2: {case:?}"
             );
@@ -677,7 +677,7 @@ fn check_case(case: Case<'_>, counts: &mut Counts) {
     }
     let reparse = parse_with(&editor.finish(), case.options);
     assert_eq!(
-        editor.file().syntax().green().into_owned(),
+        editor.file().syntax().green().to_owned(),
         *reparse.green(),
         "C1: {case:?}"
     );

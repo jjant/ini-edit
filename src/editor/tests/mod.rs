@@ -13,3 +13,4 @@ mod removal;
 mod rewrite;
 mod sections;
 mod support;
+mod tree;

@@ -5,30 +5,32 @@ use std::ops::Range;
 use super::Editor;
 use super::entry::{self, EntryEditor};
 use super::error::EditError;
-use super::plan::{self, Container, NewLines, Slot, Step};
+use super::plan::{self, Address, Container, NewLines, Slot, Splice};
 use crate::ast::{AstNode, Section};
 use crate::syntax_kind::{SyntaxKind, SyntaxNode};
 
 /// An exclusive handle to the preamble or one section.
 ///
 /// While it exists, nothing else can change the editor, so it never observes a stale or removed
-/// line; read the whole document through [`editor`](Self::editor). Positions count *body lines*:
-/// the lines after the header, or the lines of the preamble. Position `p` is in
-/// `0..=body_line_count()` and stands directly before body line `p`.
+/// line; read the whole document through [`editor`](Self::editor). It stores where its section
+/// starts and finds the section again in the editor's current tree on every call, in
+/// O(log(sections)). Positions count *body lines*: the lines after the header, or the lines of
+/// the preamble. Position `p` is in `0..=body_line_count()` and stands directly before body line
+/// `p`.
 #[derive(Debug)]
 pub struct SectionEditor<'e> {
     editor: &'e mut Editor,
-    container: Container,
+    address: Address,
 }
 
 impl<'e> SectionEditor<'e> {
-    /// A handle to `container` of `editor`.
-    pub(super) fn new(editor: &'e mut Editor, container: Container) -> Self {
-        if let Container::Section(section) = &container {
+    /// A handle to the container of `editor` at `address`.
+    pub(super) fn new(editor: &'e mut Editor, address: Address) -> Self {
+        if let Container::Section(section) = editor.container(address) {
             assert_eq!(section.kind(), SyntaxKind::SECTION);
-            assert!(section.parent().is_some_and(|root| root == editor.root));
+            assert!(section.parent().is_some_and(|root| root == editor.root()));
         }
-        SectionEditor { editor, container }
+        SectionEditor { editor, address }
     }
 }
 
@@ -42,7 +44,7 @@ impl SectionEditor<'_> {
     /// Whether this handle addresses the preamble.
     #[must_use]
     pub fn is_preamble(&self) -> bool {
-        matches!(self.container, Container::Preamble)
+        matches!(self.address, Address::Preamble)
     }
 
     /// The header's name: `None` for the preamble and for a nameless `[]` header.
@@ -52,10 +54,10 @@ impl SectionEditor<'_> {
         reason = "asserts internal invariants, never caller input"
     )]
     pub fn name(&self) -> Option<String> {
-        let name = match &self.container {
+        let name = match self.container() {
             Container::Preamble => None,
-            Container::Section(section) => Section::cast(section.clone())
-                .expect("a section handle holds a section")
+            Container::Section(section) => Section::cast(section)
+                .expect("a section address names a section")
                 .name(),
         };
         if let Some(name) = &name {
@@ -68,7 +70,7 @@ impl SectionEditor<'_> {
     /// The number of body lines; the header is not one. O(lines).
     #[must_use]
     pub fn body_line_count(&self) -> usize {
-        self.editor.body_lines(&self.container).count()
+        self.editor.body_lines(&self.container()).count()
     }
 
     /// The number of entries. O(lines).
@@ -78,7 +80,7 @@ impl SectionEditor<'_> {
         reason = "asserts internal invariants, never caller input"
     )]
     pub fn entry_count(&self) -> usize {
-        let entry_count = self.editor.entries(&self.container).count();
+        let entry_count = self.editor.entries(&self.container()).count();
         // Entries are body lines.
         #[cfg(all(debug_assertions, not(miri)))]
         assert!(entry_count <= self.body_line_count());
@@ -97,11 +99,11 @@ impl SectionEditor<'_> {
         #[cfg(all(debug_assertions, not(miri)))]
         assert!(
             self.editor
-                .entries(&self.container)
+                .entries(&self.container())
                 .take_while(|entry| *entry != node)
                 .all(|entry| plan::key_token(&entry).text() != key)
         );
-        Some(EntryEditor::new(self.editor, node))
+        Some(EntryEditor::new(self.editor, &node))
     }
 
     /// Entry `index` among this container's entries, duplicates included. O(lines).
@@ -111,8 +113,8 @@ impl SectionEditor<'_> {
         reason = "asserts internal invariants, never caller input"
     )]
     pub fn entry_at(&mut self, index: usize) -> Option<EntryEditor<'_>> {
-        let node = self.editor.entries(&self.container).nth(index)?;
-        let entry = EntryEditor::new(self.editor, node);
+        let node = self.editor.entries(&self.container()).nth(index)?;
+        let entry = EntryEditor::new(self.editor, &node);
         // Two walks agree: entry `index` reports its index as `index`.
         #[cfg(all(debug_assertions, not(miri)))]
         assert_eq!(entry.index(), index);
@@ -157,12 +159,12 @@ impl SectionEditor<'_> {
         reason = "asserts internal invariants, never caller input"
     )]
     pub fn append_entry(&mut self, key: &str, value: &str) -> Result<(), EditError> {
-        let slot = self.editor.slot_at_content_end(&self.container);
+        let slot = self.editor.slot_at_content_end(&self.container());
         self.insert_entry_at(slot, key, value)?;
         // The content end follows every entry, so the new entry is the last one.
         #[cfg(all(debug_assertions, not(miri)))]
         {
-            let last = self.editor.entries(&self.container).last();
+            let last = self.editor.entries(&self.container()).last();
             let entry = last
                 .and_then(crate::ast::Entry::cast)
                 .expect("an entry was added");
@@ -183,12 +185,12 @@ impl SectionEditor<'_> {
         reason = "asserts internal invariants, never caller input"
     )]
     pub fn insert_entry(&mut self, at: usize, key: &str, value: &str) -> Result<(), EditError> {
-        let slot = self.editor.slot_at(&self.container, at)?;
+        let slot = self.editor.slot_at(&self.container(), at)?;
         self.insert_entry_at(slot, key, value)?;
         // Positions count body lines: the new entry is body line `at`.
         #[cfg(all(debug_assertions, not(miri)))]
         {
-            let line = self.editor.body_lines(&self.container).nth(at);
+            let line = self.editor.body_lines(&self.container()).nth(at);
             let entry = line
                 .and_then(crate::ast::Entry::cast)
                 .expect("the new entry is body line `at`");
@@ -234,14 +236,20 @@ impl SectionEditor<'_> {
         }
         let (plan, renamed) = entry::plan_set_key(self.editor, &entry, new_key)?;
         self.editor.commit(plan);
-        assert!(renamed.parent().is_some());
+        // The renamed line starts where the entry did, and it is the node the commit inserted.
+        let start = entry.text_range().start();
+        assert!(plan::is_node(
+            &self.editor.line_starting_at(start),
+            &renamed
+        ));
         // No other entry had `new_key`, so the renamed entry is the first one with it, and the
         // first entry keyed `old_key`, if any, is another one.
         #[cfg(all(debug_assertions, not(miri)))]
         {
-            assert_eq!(self.find_entry(new_key).as_ref(), Some(&renamed));
+            let first_start = |entry: SyntaxNode| entry.text_range().start();
+            assert_eq!(self.find_entry(new_key).map(first_start), Some(start));
             if old_key != new_key {
-                assert_ne!(self.find_entry(old_key).as_ref(), Some(&renamed));
+                assert_ne!(self.find_entry(old_key).map(first_start), Some(start));
             }
         }
         Ok(true)
@@ -260,7 +268,7 @@ impl SectionEditor<'_> {
     /// element that is not exactly one line, is a section header, or ends with a continuation
     /// backslash; [`EditError::LastLineContinues`]; [`EditError::ByteOrderMarkAtStart`].
     pub fn append_body_lines(&mut self, lines: &[&str]) -> Result<(), EditError> {
-        let slot = self.editor.slot_at_content_end(&self.container);
+        let slot = self.editor.slot_at_content_end(&self.container());
         self.insert_lines_at(slot, lines)
     }
 
@@ -279,12 +287,12 @@ impl SectionEditor<'_> {
         reason = "asserts internal invariants, never caller input"
     )]
     pub fn insert_body_lines(&mut self, at: usize, lines: &[&str]) -> Result<(), EditError> {
-        let slot = self.editor.slot_at(&self.container, at)?;
+        let slot = self.editor.slot_at(&self.container(), at)?;
         self.insert_lines_at(slot, lines)?;
         // Positions count body lines: the first new line is body line `at`.
         #[cfg(all(debug_assertions, not(miri)))]
         if let Some(first) = lines.first() {
-            let line = self.editor.body_lines(&self.container).nth(at);
+            let line = self.editor.body_lines(&self.container()).nth(at);
             let line = line.expect("the first new line is body line `at`");
             assert!(line.to_string().starts_with(first));
         }
@@ -306,7 +314,7 @@ impl SectionEditor<'_> {
         reason = "asserts internal invariants, never caller input"
     )]
     pub fn remove_body_lines(&mut self, range: Range<usize>) -> Result<(), EditError> {
-        let plan = self.editor.plan_remove(&self.container, range.clone())?;
+        let plan = self.editor.plan_remove(&self.container(), range.clone())?;
         #[cfg(all(debug_assertions, not(miri)))]
         let body_line_count = self.body_line_count();
         self.editor.commit(plan);
@@ -327,7 +335,7 @@ impl SectionEditor<'_> {
         reason = "asserts internal invariants, never caller input"
     )]
     pub fn remove(self) {
-        let plan = match &self.container {
+        let plan = match self.container() {
             Container::Preamble => {
                 let body_line_count = self.body_line_count();
                 self.editor
@@ -335,12 +343,11 @@ impl SectionEditor<'_> {
                     .expect("the line after the preamble is a header or nothing")
             }
             Container::Section(section) => {
-                assert!(section.parent().is_some());
+                let root = section.parent().expect("a section is a child of the root");
                 let removed = usize::from(section.text_range().len());
+                let index = section.index();
                 plan::Plan {
-                    steps: vec![Step::Remove {
-                        node: section.clone(),
-                    }],
+                    splice: Some(Splice::new(root, index..index + 1, Vec::new())),
                     len_after: self
                         .editor
                         .check_len(removed, 0)
@@ -351,10 +358,15 @@ impl SectionEditor<'_> {
         self.editor.commit(plan);
     }
 
+    /// This handle's container in the editor's current tree.
+    fn container(&self) -> Container {
+        self.editor.container(self.address)
+    }
+
     /// The first entry of this container keyed exactly `key`.
     fn find_entry(&self, key: &str) -> Option<SyntaxNode> {
         self.editor
-            .entries(&self.container)
+            .entries(&self.container())
             .find(|entry| plan::key_token(entry).text() == key)
     }
 

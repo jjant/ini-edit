@@ -1,35 +1,35 @@
 //! Handles to one entry, and the renderings that rewrite an entry's line.
 
+use rowan::{GreenNode, TextSize};
+
 use super::Editor;
 use super::error::EditError;
 use super::fragment::{self, CRLF, LINE_BREAKS};
 use super::options::SeparatorSpacing;
-use super::plan::{self, Plan, Step};
+use super::plan::{self, Plan, Splice};
 use crate::ast::{AstNode, Entry};
 use crate::syntax_kind::{SyntaxKind, SyntaxNode};
 
 /// An exclusive handle to one entry of the preamble or of a section.
 ///
-/// It addresses its entry by identity, so it is unambiguous among duplicate keys, and it keeps
+/// It stores where its entry's line starts and finds the entry again in the editor's current
+/// tree on every call, in O(log(lines)), so it is unambiguous among duplicate keys. It keeps
 /// addressing the entry across its own [`set_key`](Self::set_key) and
 /// [`set_value`](Self::set_value). While it exists, nothing else can change the document.
 #[derive(Debug)]
 pub struct EntryEditor<'s> {
     editor: &'s mut Editor,
-    /// The `ENTRY` node, in the editor's tree.
-    node: SyntaxNode,
+    /// Where the entry's line starts, in the editor's current tree.
+    start: TextSize,
 }
 
 impl<'s> EntryEditor<'s> {
-    /// A handle to `node`, an `ENTRY` in `editor`'s tree.
-    pub(super) fn new(editor: &'s mut Editor, node: SyntaxNode) -> Self {
+    /// A handle to `node`, an `ENTRY` in `editor`'s current tree.
+    pub(super) fn new(editor: &'s mut Editor, node: &SyntaxNode) -> Self {
         assert_eq!(node.kind(), SyntaxKind::ENTRY);
-        assert!(
-            node.ancestors()
-                .last()
-                .is_some_and(|root| root == editor.root)
-        );
-        EntryEditor { editor, node }
+        assert_eq!(node.tree_top(), editor.root());
+        let start = node.text_range().start();
+        EntryEditor { editor, start }
     }
 }
 
@@ -48,11 +48,12 @@ impl EntryEditor<'_> {
         reason = "asserts internal invariants, never caller input"
     )]
     pub fn index(&self) -> usize {
-        let container = plan::container_of(&self.node);
+        let node = self.node();
+        let container = plan::container_of(&node);
         let index = self
             .editor
             .entries(&container)
-            .position(|entry| entry == self.node)
+            .position(|entry| entry == node)
             .expect("an entry handle's entry is in its container");
         // Entries are body lines, so an entry's index never exceeds its body line.
         #[cfg(all(debug_assertions, not(miri)))]
@@ -68,11 +69,12 @@ impl EntryEditor<'_> {
         reason = "asserts internal invariants, never caller input"
     )]
     pub fn body_line(&self) -> usize {
-        let container = plan::container_of(&self.node);
+        let node = self.node();
+        let container = plan::container_of(&node);
         let body_line = self
             .editor
             .body_lines(&container)
-            .position(|line| line == self.node);
+            .position(|line| line == node);
         body_line.expect("an entry handle's entry is in its container")
     }
 
@@ -83,7 +85,7 @@ impl EntryEditor<'_> {
         reason = "asserts internal invariants, never caller input"
     )]
     pub fn key(&self) -> String {
-        let key = plan::key_token(&self.node).text().to_owned();
+        let key = plan::key_token(&self.node()).text().to_owned();
         // The lexer ends a key at a separator, spacing or a line break, after one character.
         assert_ne!(key, "");
         assert!(!key.contains(['=', ':', ' ', '\t', '\r', '\n']));
@@ -134,11 +136,11 @@ impl EntryEditor<'_> {
         reason = "asserts internal invariants, never caller input"
     )]
     pub fn set_key(&mut self, key: &str) -> Result<(), EditError> {
-        let (plan, node) = plan_set_key(self.editor, &self.node, key)?;
+        let (plan, new_entry) = plan_set_key(self.editor, &self.node(), key)?;
         self.editor.commit(plan);
-        // The handle now holds the entry's new node, which the commit attached.
-        assert!(node.parent().is_some());
-        self.node = node;
+        // The new line starts where the old one did: the handle's address now names the very
+        // node the commit inserted.
+        assert!(plan::is_node(&self.node(), &new_entry));
         assert_eq!(self.key(), key);
         Ok(())
     }
@@ -167,11 +169,12 @@ impl EntryEditor<'_> {
         reason = "asserts internal invariants, never caller input"
     )]
     pub fn set_value(&mut self, value: &str) -> Result<(), EditError> {
-        let (plan, node) = plan_set_value(self.editor, &self.node, value)?;
+        let (plan, new_entry, moved) = plan_set_value(self.editor, &self.node(), value)?;
         self.editor.commit(plan);
-        // The handle now holds the entry's new node, which the commit attached.
-        assert!(node.parent().is_some());
-        self.node = node;
+        // A comment moved above the entry pushes the entry's line down by the comment's line; the
+        // handle's address then names the very node the commit inserted.
+        self.start += moved;
+        assert!(plan::is_node(&self.node(), &new_entry));
         assert_eq!(self.value().as_deref(), Some(value));
         Ok(())
     }
@@ -183,27 +186,29 @@ impl EntryEditor<'_> {
     ///
     /// [`EditError::ByteOrderMarkAtStart`] if the entry is the first line of a document without a
     /// byte order mark and the next line starts with U+FEFF.
-    #[expect(
-        clippy::missing_panics_doc,
-        reason = "asserts internal invariants, never caller input"
-    )]
     pub fn remove(self) -> Result<(), EditError> {
-        let container = plan::container_of(&self.node);
+        let container = plan::container_of(&self.node());
         let position = self.body_line();
         let plan = self
             .editor
             .plan_remove(&container, position..position + 1)?;
+        // The commit asserts that the document lost exactly the entry's bytes: rule D, which may
+        // merge the line breaks around the entry, changes no byte.
         self.editor.commit(plan);
-        // The entry's own node is the one the commit detached.
-        assert!(self.node.parent().is_none());
         Ok(())
+    }
+
+    /// The entry's node in the editor's current tree. O(log(lines)).
+    fn node(&self) -> SyntaxNode {
+        let node = self.editor.line_starting_at(self.start);
+        // No edit but this handle's own can change the tree while it lives.
+        assert_eq!(node.kind(), SyntaxKind::ENTRY);
+        node
     }
 
     /// The typed view of the entry.
     fn typed(&self) -> Entry {
-        // A handle's entry stays in the tree while the handle lives.
-        assert!(self.node.parent().is_some());
-        Entry::cast(self.node.clone()).expect("an entry handle holds an entry")
+        Entry::cast(self.node()).expect("an entry handle addresses an entry")
     }
 }
 
@@ -380,12 +385,13 @@ fn rewrite<'a>(
     }
 }
 
-/// Plan assigning `value` to `entry`, and return its new node with the plan.
+/// Plan assigning `value` to `entry`. Returns the plan, the entry's new green node, and how far
+/// the entry's line moves down: the length of a comment line moved above it, or zero.
 fn plan_set_value(
     editor: &Editor,
     entry: &SyntaxNode,
     value: &str,
-) -> Result<(Plan, SyntaxNode), EditError> {
+) -> Result<(Plan, GreenNode, TextSize), EditError> {
     assert_eq!(entry.kind(), SyntaxKind::ENTRY);
     assert!(entry.parent().is_some());
     let parts = entry_parts(entry);
@@ -422,14 +428,26 @@ fn plan_set_value(
         });
     }
     let new_entry = rewritten_entry(&parts, &nodes, rewrite.moved.is_some());
+    // Every line before the entry's new line is the moved comment, if any.
+    let moved = new_entry.text_range().start() - nodes[0].text_range().start();
+    assert_eq!(
+        moved,
+        nodes[..nodes.len() - 1]
+            .iter()
+            .map(|node| node.text_range().len())
+            .sum()
+    );
+    let new_entry = new_entry.green().to_owned();
+    let parent = entry
+        .parent()
+        .expect("an edited entry is in the editor's tree");
+    let index = entry.index();
+    let new = nodes.iter().map(|node| node.green().to_owned()).collect();
     let plan = Plan {
-        steps: vec![Step::Replace {
-            old: entry.clone().into(),
-            new: nodes.into_iter().map(Into::into).collect(),
-        }],
+        splice: Some(Splice::new(parent, index..index + 1, new)),
         len_after,
     };
-    Ok((plan, new_entry))
+    Ok((plan, new_entry, moved))
 }
 
 /// The rewritten entry, the last of `nodes`, after asserting what a value that reads back implies
@@ -459,12 +477,13 @@ fn rewritten_entry(parts: &EntryParts, nodes: &[SyntaxNode], moved: bool) -> Syn
     entry.syntax().clone()
 }
 
-/// Plan replacing the key of `entry` with `key`, and return its new node with the plan.
+/// Plan replacing the key of `entry` with `key`, and return the entry's new green node with the
+/// plan.
 pub(super) fn plan_set_key(
     editor: &Editor,
     entry: &SyntaxNode,
     key: &str,
-) -> Result<(Plan, SyntaxNode), EditError> {
+) -> Result<(Plan, GreenNode), EditError> {
     let line = entry.to_string();
     let old_key = plan::key_token(entry);
     let start = usize::from(old_key.text_range().start() - entry.text_range().start());
@@ -501,11 +520,17 @@ pub(super) fn plan_set_key(
         plan::ends_with_newline(&new_entry),
         plan::ends_with_newline(entry)
     );
+    let new_entry = new_entry.green().to_owned();
+    let parent = entry
+        .parent()
+        .expect("an edited entry is in the editor's tree");
+    let index = entry.index();
     let plan = Plan {
-        steps: vec![Step::Replace {
-            old: entry.clone().into(),
-            new: vec![new_entry.clone().into()],
-        }],
+        splice: Some(Splice::new(
+            parent,
+            index..index + 1,
+            vec![new_entry.clone()],
+        )),
         len_after,
     };
     Ok((plan, new_entry))

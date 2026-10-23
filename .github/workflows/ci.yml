@@ -371,7 +371,8 @@ jobs:
         # The values only name the legs; the test step numbers them.
         partition: [1, 2, 3, 4]
     env:
-      # rowan 0.16.1 has an open provenance-model failure upstream:
+      # rowan 0.17.0 still fails Stacked and Tree Borrows upstream
+      # (TESTING.md has the measurements):
       # https://github.com/rust-analyzer/rowan/issues/192
       # Keep all other Miri checks enabled until rowan ships a fix.
       MIRIFLAGS: -Zmiri-disable-stacked-borrows

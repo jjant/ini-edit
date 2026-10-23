@@ -4,7 +4,7 @@ use super::support::{
     all_options, all_spacings, atomic, body_line_count, in_preamble, in_section, open, open_with,
     options, spacing,
 };
-use crate::editor::plan::{Container, terminators};
+use crate::editor::plan::{Address, terminators};
 use crate::editor::{EditError, Editor, SeparatorSpacing};
 
 /// One call on an editor, for tables of operations.
@@ -398,12 +398,14 @@ fn the_line_ending_follows_the_current_first_line() {
 }
 
 #[test]
-fn a_container_of_the_wrong_editor_is_a_programmer_error() {
-    let mut first = open("[s]\n");
-    let second = open("[s]\n");
-    let section = second.sections().next().unwrap();
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _ = crate::editor::SectionEditor::new(&mut first, Container::Section(section));
-    }));
-    assert!(result.is_err());
+fn an_address_where_no_section_starts_is_a_programmer_error() {
+    let mut editor = open("k=v\n[s]\n");
+    // A preamble line, the middle of the section's header, and the end of the document.
+    for start in [0, 5, 8] {
+        let address = Address::Section(rowan::TextSize::from(start));
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = crate::editor::SectionEditor::new(&mut editor, address);
+        }));
+        assert!(result.is_err());
+    }
 }

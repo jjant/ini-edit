@@ -61,15 +61,15 @@ pub(super) fn parse_fragment(text: &str, options: &ParseOptions) -> Vec<SyntaxNo
     fragment
 }
 
-/// Mutable copies of the line nodes of [`parse_fragment`], with each `SECTION` replaced by its
-/// lines, ready to be spliced into the editor's tree.
+/// The line nodes of [`parse_fragment`], with each `SECTION` replaced by its lines: the parser's
+/// own nodes, whose green nodes a commit puts into the editor's tree.
 pub(super) fn fragment_lines(text: &str, options: &ParseOptions) -> Vec<SyntaxNode> {
     let mut lines = Vec::new();
     for child in parse_fragment(text, options) {
         if child.kind() == SyntaxKind::SECTION {
-            lines.extend(child.children().map(|line| mutable_copy(&line)));
+            lines.extend(child.children());
         } else {
-            lines.push(mutable_copy(&child));
+            lines.push(child);
         }
     }
     // Lines only, and together exactly the text: the parse is lossless.
@@ -80,17 +80,6 @@ pub(super) fn fragment_lines(text: &str, options: &ParseOptions) -> Vec<SyntaxNo
         .sum();
     assert_eq!(len, text.len());
     lines
-}
-
-/// A mutable tree of its own holding `node`'s green node. Splicing it into the editor's tree
-/// attaches this very node, so a handle can keep addressing it.
-pub(super) fn mutable_copy(node: &SyntaxNode) -> SyntaxNode {
-    let copy = SyntaxNode::new_root(node.green().into_owned()).clone_for_update();
-    // Only a mutable root can be spliced into the editor's tree, and it is the parser's node.
-    assert!(copy.is_mutable());
-    assert!(copy.parent().is_none());
-    assert_eq!(copy.green(), node.green());
-    copy
 }
 
 /// Whether text ending with the character `before`, followed by text starting with `after`, reads

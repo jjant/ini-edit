@@ -374,12 +374,11 @@ impl Harness {
             "{output:?}"
         );
         assert_eq!(
-            live.syntax().green().into_owned(),
+            live.syntax().green().to_owned(),
             *parsed.green(),
             "{output:?}"
         );
         for (snapshot, expected) in &self.snapshots {
-            assert!(!snapshot.syntax().is_mutable());
             assert_eq!(read(snapshot), *expected, "retained file snapshot");
         }
     }

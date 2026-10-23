@@ -64,15 +64,15 @@ pub(super) fn atomic<T: std::fmt::Debug>(
     operation: impl FnOnce(&mut Editor) -> Result<T, EditError>,
 ) -> Result<T, EditError> {
     let text = editor.finish();
-    let green = editor.root.green().into_owned();
+    let green = editor.green.clone();
     let result = operation(editor);
     if result.is_err() {
         assert_eq!(editor.finish(), text, "C2: the text changed: {result:?}");
-        assert_eq!(
-            editor.root.green().into_owned(),
-            green,
-            "C2: the tree changed"
-        );
+        assert_eq!(editor.green, green, "C2: the tree changed");
+        // Planning only reads the tree, so a refused edit leaves the very same tree.
+        let same = std::ptr::from_ref::<rowan::GreenNodeData>(&editor.green)
+            == std::ptr::from_ref::<rowan::GreenNodeData>(&green);
+        assert!(same, "C2: the tree was rebuilt");
     }
     assert!(
         editor.agrees_with_reparse(),

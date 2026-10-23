@@ -28,7 +28,7 @@ fn strings(pieces: &[&str], count: usize) -> Vec<String> {
 
 /// The green nodes of `nodes`.
 fn greens(nodes: impl Iterator<Item = SyntaxNode>) -> Vec<rowan::GreenNode> {
-    nodes.map(|node| node.green().into_owned()).collect()
+    nodes.map(|node| node.green().to_owned()).collect()
 }
 
 #[test]
@@ -106,12 +106,14 @@ fn fragments_of_every_line_kind_are_the_document_s_lines() {
 }
 
 #[test]
-fn fragment_lines_are_mutable_roots_of_their_own() {
+fn fragment_lines_are_the_parser_s_lines_of_the_fragment() {
     let lines = fragment_lines("[s]\nk=v\n", &ParseOptions::default());
     assert_eq!(lines.len(), 2);
+    // The header and the entry of the fragment's section, read in the middle of a document.
     for line in &lines {
-        assert!(line.is_mutable());
-        assert!(line.parent().is_none());
+        let section = line.parent().unwrap();
+        assert_eq!(section.kind(), SyntaxKind::SECTION);
+        assert_eq!(section.parent().unwrap().kind(), SyntaxKind::ROOT);
     }
     assert_eq!(lines[0].kind(), SyntaxKind::SECTION_HEADER);
     assert_eq!(lines[1].kind(), SyntaxKind::ENTRY);

@@ -115,7 +115,6 @@ fn file_snapshots_are_immutable() {
     let source = "[s]\nk=old\nk=duplicate\n[t]\nx=1\n";
     let mut editor = open(source);
     let snapshot = editor.file();
-    assert!(!snapshot.syntax().is_mutable());
     in_section(&mut editor, "s", |section| section.set("k", "new")).unwrap();
     atomic(&mut editor, |editor| {
         editor.section("t").unwrap().remove();
@@ -199,14 +198,16 @@ fn removing_more_than_the_document_is_a_programmer_error() {
 
 #[test]
 fn a_corrupted_tree_disagrees_with_its_reparse() {
-    let editor = open("[s]\nk=v\n");
+    let mut editor = open("[s]\nk=v\n");
     assert!(editor.agrees_with_reparse());
     // Move the entry out of its section to the end of the root: the text stays the same, but a
     // reader puts that line in the section.
-    let entry = editor.root.first_child().unwrap().last_child().unwrap();
-    entry.detach();
-    let end = editor.root.children_with_tokens().count();
-    editor.root.splice_children(end..end, vec![entry.into()]);
+    let section = editor.root().first_child().unwrap();
+    let entry = section.last_child().unwrap();
+    let root = section.replace_with(section.green().remove_child(entry.index()));
+    let end = root.children().len();
+    let entry = rowan::NodeOrToken::Node(entry.green().to_owned());
+    editor.green = root.insert_child(end, entry);
     assert_eq!(editor.finish(), "[s]\nk=v\n");
     assert!(!editor.agrees_with_reparse());
 }
