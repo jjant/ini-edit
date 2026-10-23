@@ -3,8 +3,8 @@
 //! PHP `parse_ini_file`, .NET ini-parser, tree-sitter-ini.
 
 use ini_edit::ast::{AstNode, File};
-use ini_edit::editor::Editor;
-use ini_edit::parse;
+use ini_edit::editor::{EditError, EditOptions, Editor, SeparatorSpacing};
+use ini_edit::{ParseOptions, parse};
 
 fn assert_round_trip(s: &str) {
     let p = parse(s);
@@ -156,13 +156,21 @@ fn duplicate_sections_round_trip() {
 #[test]
 fn duplicate_sections_editor_targets_first() {
     let src = "[peer]\nkey = a\n[peer]\nkey = b\n";
-    let ed = Editor::new(src);
-    ed.section("peer").set("key", "changed");
-    let out = ed.finish();
-    // First occurrence should be modified
-    assert!(out.contains("key = changed"));
-    // Second should remain
-    assert!(out.contains("key = b"));
+    let mut editor = open(src);
+    editor
+        .section("peer")
+        .unwrap()
+        .set("key", "changed")
+        .unwrap();
+    // The first occurrence changes; the second stays.
+    assert_eq!(
+        meaning(&editor.finish()),
+        [
+            (None, vec![]),
+            (Some("peer".into()), vec![entry("key", "changed")]),
+            (Some("peer".into()), vec![entry("key", "b")]),
+        ]
+    );
 }
 
 // --- BOM handling (rust-ini #79, systemd) ---
@@ -272,116 +280,204 @@ fn line_with_only_separator() {
 }
 
 // --- Editor operations on edge cases ---
+//
+// Each edit is checked by its meaning in a reparse of the saved text, not only
+// by the text round-tripping, which holds for any input (NEG-13).
+
+/// An editor with every option spelled out.
+fn open(source: &str) -> Editor {
+    let parse_options = ParseOptions {
+        allow_no_value: false,
+        inline_comments: false,
+    };
+    let edit_options = EditOptions {
+        separator_spacing: SeparatorSpacing::Preserve,
+    };
+    Editor::new(source, &parse_options, &edit_options).unwrap()
+}
+
+type Entries = Vec<(String, Option<String>)>;
+
+/// The sections and entries a reader finds in `text`, the preamble first.
+fn meaning(text: &str) -> Vec<(Option<String>, Entries)> {
+    let parse = parse(text);
+    assert_eq!(parse.syntax().text().to_string(), text);
+    let file = File::cast(parse.syntax()).unwrap();
+    let entries = |entries: Vec<ini_edit::ast::Entry>| {
+        entries
+            .into_iter()
+            .map(|entry| (entry.key().unwrap(), entry.value()))
+            .collect()
+    };
+    let mut result = vec![(None, entries(file.preamble_entries().collect()))];
+    result.extend(
+        file.sections()
+            .map(|section| (section.name(), entries(section.entries().collect()))),
+    );
+    result
+}
+
+fn entry(key: &str, value: &str) -> (String, Option<String>) {
+    (key.to_owned(), Some(value.to_owned()))
+}
 
 #[test]
 fn editor_on_empty_input() {
-    let ed = Editor::new("");
-    ed.section("new").set("k", "v");
-    let out = ed.finish();
-    assert!(out.contains("[new]"));
-    assert!(out.contains("k = v"));
-    // Must re-parse cleanly
-    let re = parse(&out);
-    assert_eq!(re.syntax().text().to_string(), out);
+    let mut editor = open("");
+    editor
+        .section_or_insert("new")
+        .unwrap()
+        .set("k", "v")
+        .unwrap();
+    assert_eq!(
+        meaning(&editor.finish()),
+        [(None, vec![]), (Some("new".into()), vec![entry("k", "v")])]
+    );
 }
 
 #[test]
 fn editor_on_comment_only_input() {
-    let ed = Editor::new("; just comments\n# more\n");
-    ed.section("s").set("k", "v");
-    let out = ed.finish();
-    assert!(out.contains("; just comments"));
-    assert!(out.contains("[s]"));
-    let re = parse(&out);
-    assert_eq!(re.syntax().text().to_string(), out);
+    let mut editor = open("; just comments\n# more\n");
+    editor
+        .section_or_insert("s")
+        .unwrap()
+        .set("k", "v")
+        .unwrap();
+    let out = editor.finish();
+    assert!(out.starts_with("; just comments\n# more\n"));
+    assert_eq!(
+        meaning(&out),
+        [(None, vec![]), (Some("s".into()), vec![entry("k", "v")])]
+    );
 }
 
 #[test]
 fn editor_set_value_with_equals() {
-    let ed = Editor::new("[s]\nk = old\n");
-    ed.section("s").set("k", "a=b=c");
-    let out = ed.finish();
-    assert!(out.contains("k = a=b=c"));
-    let re = parse(&out);
-    assert_eq!(re.syntax().text().to_string(), out);
+    let mut editor = open("[s]\nk = old\n");
+    editor.section("s").unwrap().set("k", "a=b=c").unwrap();
+    assert_eq!(
+        meaning(&editor.finish()),
+        [
+            (None, vec![]),
+            (Some("s".into()), vec![entry("k", "a=b=c")])
+        ]
+    );
 }
 
 #[test]
 fn editor_set_value_with_comment_chars() {
-    let ed = Editor::new("[s]\nk = old\n");
-    ed.section("s").set("k", "val;ue#here");
-    let out = ed.finish();
-    assert!(out.contains("val;ue#here"));
-    let re = parse(&out);
-    assert_eq!(re.syntax().text().to_string(), out);
+    let mut editor = open("[s]\nk = old\n");
+    editor
+        .section("s")
+        .unwrap()
+        .set("k", "val;ue#here")
+        .unwrap();
+    assert_eq!(
+        meaning(&editor.finish()),
+        [
+            (None, vec![]),
+            (Some("s".into()), vec![entry("k", "val;ue#here")])
+        ]
+    );
 }
 
 #[test]
 fn editor_remove_only_entry_in_section() {
-    let ed = Editor::new("[s]\nk = v\n[other]\nx = y\n");
-    let _ = ed.section("s").remove_entry("k");
-    let out = ed.finish();
-    assert!(out.contains("[s]"));
-    assert!(!out.contains("k = v"));
-    assert!(out.contains("[other]"));
-    let re = parse(&out);
-    assert_eq!(re.syntax().text().to_string(), out);
+    let mut editor = open("[s]\nk = v\n[other]\nx = y\n");
+    assert_eq!(editor.section("s").unwrap().remove_entry("k"), Ok(true));
+    assert_eq!(
+        meaning(&editor.finish()),
+        [
+            (None, vec![]),
+            (Some("s".into()), vec![]),
+            (Some("other".into()), vec![entry("x", "y")]),
+        ]
+    );
 }
 
 #[test]
 fn editor_rename_to_key_with_special_chars() {
-    let ed = Editor::new("[s]\nold = v\n");
-    let _ = ed.section("s").rename_key("old", "new.key-name");
-    let out = ed.finish();
-    assert!(out.contains("new.key-name = v"));
-    let re = parse(&out);
-    assert_eq!(re.syntax().text().to_string(), out);
+    let mut editor = open("[s]\nold = v\n");
+    let renamed = editor
+        .section("s")
+        .unwrap()
+        .rename_key("old", "new.key-name");
+    assert_eq!(renamed, Ok(true));
+    assert_eq!(
+        meaning(&editor.finish()),
+        [
+            (None, vec![]),
+            (Some("s".into()), vec![entry("new.key-name", "v")])
+        ]
+    );
+}
+
+#[test]
+fn editor_refuses_keys_and_values_that_would_not_read_back() {
+    let mut editor = open("[s]\nk = v\n");
+    let mut section = editor.section("s").unwrap();
+    let refused = section.rename_key("k", "a=b");
+    assert_eq!(refused, Err(EditError::InvalidKey { key: "a=b".into() }));
+    let refused = section.set("k", "v\n[injected]");
+    assert!(matches!(refused, Err(EditError::InvalidValue { .. })));
+    assert_eq!(editor.finish(), "[s]\nk = v\n");
 }
 
 #[test]
 fn editor_multiple_operations_same_section() {
-    let ed = Editor::new("[s]\na = 1\nb = 2\nc = 3\n");
-    ed.section("s").set("a", "10");
-    let _ = ed.section("s").remove_entry("b");
-    ed.section("s").append_entry("d", "4");
-    let _ = ed.section("s").rename_key("c", "cc");
-    let out = ed.finish();
-    assert!(out.contains("a = 10"));
-    assert!(!out.contains("b = 2"));
-    assert!(out.contains("d = 4"));
-    assert!(out.contains("cc = 3"));
-    let re = parse(&out);
-    assert_eq!(re.syntax().text().to_string(), out);
+    let mut editor = open("[s]\na = 1\nb = 2\nc = 3\n");
+    let mut section = editor.section("s").unwrap();
+    section.set("a", "10").unwrap();
+    assert_eq!(section.remove_entry("b"), Ok(true));
+    section.append_entry("d", "4").unwrap();
+    assert_eq!(section.rename_key("c", "cc"), Ok(true));
+    assert_eq!(
+        meaning(&editor.finish()),
+        [
+            (None, vec![]),
+            (
+                Some("s".into()),
+                vec![entry("a", "10"), entry("cc", "3"), entry("d", "4")]
+            ),
+        ]
+    );
 }
 
 #[test]
 fn editor_on_crlf_file() {
-    let ed = Editor::new("[s]\r\nk = old\r\n");
-    ed.section("s").set("k", "new");
-    let out = ed.finish();
-    assert!(out.contains("k = new"));
-    let re = parse(&out);
-    assert_eq!(re.syntax().text().to_string(), out);
+    let mut editor = open("[s]\r\nk = old\r\n");
+    editor.section("s").unwrap().set("k", "new").unwrap();
+    editor.section("s").unwrap().append_entry("n", "1").unwrap();
+    assert_eq!(editor.finish(), "[s]\r\nk = new\r\nn = 1\r\n");
 }
 
 #[test]
 fn editor_on_file_with_bom() {
-    let ed = Editor::new("\u{FEFF}[s]\nk = old\n");
-    ed.section("s").set("k", "new");
-    let out = ed.finish();
+    let mut editor = open("\u{FEFF}[s]\nk = old\n");
+    editor.section("s").unwrap().set("k", "new").unwrap();
+    let out = editor.finish();
     assert!(out.starts_with('\u{FEFF}'));
-    assert!(out.contains("k = new"));
-    let re = parse(&out);
-    assert_eq!(re.syntax().text().to_string(), out);
+    assert_eq!(
+        meaning(&out),
+        [(None, vec![]), (Some("s".into()), vec![entry("k", "new")])]
+    );
 }
 
 // --- Regression: fuzzer crash from out-of-bounds insert_raw_lines_at ---
 
 #[test]
 fn fuzzed_insert_raw_lines_oob_index() {
-    let ed = Editor::new("");
-    ed.section("").insert_raw_lines_at(84, &[""]);
-    let output = ed.finish();
-    let re = parse(&output);
-    assert_eq!(re.syntax().text().to_string(), output);
+    // 0.4 clamped the position; it is now an error that changes nothing.
+    let mut editor = open("");
+    let mut section = editor.section_or_insert("s").unwrap();
+    let result = section.insert_body_lines(84, &[""]);
+    let expected = EditError::PositionOutOfRange {
+        at: 84,
+        body_line_count: 0,
+    };
+    assert_eq!(result, Err(expected));
+    assert_eq!(editor.finish(), "[s]\n");
+    let result = editor.preamble().insert_body_lines(84, &[""]);
+    assert!(matches!(result, Err(EditError::PositionOutOfRange { .. })));
+    assert_eq!(editor.finish(), "[s]\n");
 }

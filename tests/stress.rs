@@ -1,7 +1,7 @@
 //! Large inputs run separately from the fast suite and mutation testing.
 
 use ini_edit::ast::{AstNode, File};
-use ini_edit::editor::Editor;
+use ini_edit::editor::{EditOptions, Editor, SeparatorSpacing};
 use ini_edit::{ParseOptions, parse, parse_with};
 
 #[test]
@@ -14,8 +14,19 @@ fn multi_megabyte_values_and_large_unicode_identifiers() {
     let parsed = parse(&source);
     assert!(parsed.errors().is_empty());
     assert_eq!(parsed.syntax().text().to_string(), source);
-    let editor = Editor::new(&source);
-    editor.section(&section).set(&key, "small");
+    let parse_options = ParseOptions {
+        allow_no_value: false,
+        inline_comments: false,
+    };
+    let edit_options = EditOptions {
+        separator_spacing: SeparatorSpacing::Preserve,
+    };
+    let mut editor = Editor::new(&source, &parse_options, &edit_options).unwrap();
+    editor
+        .section(&section)
+        .unwrap()
+        .set(&key, "small")
+        .unwrap();
     assert_eq!(
         editor.finish(),
         format!("\u{FEFF}[{section}]\r\n{key} = small\r\n; keep")
@@ -33,8 +44,8 @@ fn many_continuations_are_one_value() {
     value.push_str("last");
     let source = format!("[s]\nk={value} ; retained\nnext=stay\n");
     let options = ParseOptions {
+        allow_no_value: false,
         inline_comments: true,
-        ..Default::default()
     };
     let parsed = parse_with(&source, &options);
     assert!(parsed.errors().is_empty());
@@ -45,8 +56,11 @@ fn many_continuations_are_one_value() {
         section.entries().next().unwrap().value().as_deref(),
         Some(value.as_str())
     );
-    let editor = Editor::with_parse_options(&source, &options);
-    editor.section("s").set("k", "short");
+    let edit_options = EditOptions {
+        separator_spacing: SeparatorSpacing::Preserve,
+    };
+    let mut editor = Editor::new(&source, &options, &edit_options).unwrap();
+    editor.section("s").unwrap().set("k", "short").unwrap();
     assert_eq!(editor.finish(), "[s]\nk=short ; retained\nnext=stay\n");
 }
 

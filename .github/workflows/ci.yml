@@ -161,7 +161,7 @@ jobs:
           fuzz/.+
           tests/fuzz_regressions/.+
           tests/fuzz_regressions\.rs
-          tests/support/(editor_ops|editor_reparse|editor_stateful|generated_edits)\.rs
+          tests/support/(editor_inputs|editor_ops|editor_reparse|editor_stateful|editor_walk|generated_edits)\.rs
           \.release-plz\.toml
           \.secretsignore
           codecov\.yml

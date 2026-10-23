@@ -1,5 +1,6 @@
 //! Arbitrary text must parse losslessly under every parser-option combination,
-//! with one node per physical line and diagnostics at valid input boundaries.
+//! with one node per line (an entry whose value continues over several physical
+//! lines is one line) and diagnostics at valid input boundaries.
 //! Diagnostics also depend only on the text before them: parsing just the
 //! lines before a line reports exactly the diagnostics that precede it.
 
@@ -61,14 +62,14 @@ pub fn check(data: &[u8]) {
 }
 
 /// Parse `source` and check what every parse guarantees: the tree is
-/// lossless, each physical line is one node, and diagnostics are in order at
-/// character boundaries.
+/// lossless, each line is one node (a continued entry is one line), and
+/// diagnostics are in order at character boundaries.
 pub fn check_parse(source: &str, options: &ParseOptions) -> Parse {
     let parse = parse_with(source, options);
     let root = parse.syntax();
     // Every supported grammar must remain lossless.
     assert_eq!(root.text(), source, "{options:?}");
-    // Editor line indices require one node per physical line.
+    // Editor positions address line nodes, one per line.
     line_nodes::check(source, &root);
     let mut previous = 0;
     for error in parse.errors() {

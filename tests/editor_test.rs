@@ -3,35 +3,53 @@
 use ini_edit::editor::{EditOptions, Editor, SeparatorSpacing};
 use ini_edit::{ParseOptions, parse};
 
+/// Parse options with both options off.
+fn plain() -> ParseOptions {
+    ParseOptions {
+        allow_no_value: false,
+        inline_comments: false,
+    }
+}
+
+/// Edit options with `separator_spacing`.
+fn spacing(separator_spacing: SeparatorSpacing) -> EditOptions {
+    EditOptions { separator_spacing }
+}
+
 #[test]
-fn append_raw_lines_and_remove_lines() {
+fn append_body_lines_and_remove_body_lines() {
     let src = "[config]\nkey = value\n";
-    let ed = Editor::new(src);
+    let preserve = spacing(SeparatorSpacing::Preserve);
+    let mut editor = Editor::new(src, &plain(), &preserve).unwrap();
 
     // Insert a managed block.
-    ed.section("config").append_raw_lines(&[
-        "; --- BEGIN MANAGED ---",
-        "managed_key = managed_val",
-        "; --- END MANAGED ---",
-    ]);
+    editor
+        .section("config")
+        .unwrap()
+        .append_body_lines(&[
+            "; --- BEGIN MANAGED ---",
+            "managed_key = managed_val",
+            "; --- END MANAGED ---",
+        ])
+        .unwrap();
 
-    let after_insert = ed.finish();
-    assert!(after_insert.contains("; --- BEGIN MANAGED ---"));
-    assert!(after_insert.contains("managed_key = managed_val"));
-    assert!(after_insert.contains("; --- END MANAGED ---"));
-    assert!(after_insert.contains("key = value")); // original preserved
+    let after_insert = editor.finish();
+    assert_eq!(
+        after_insert,
+        "[config]\nkey = value\n; --- BEGIN MANAGED ---\nmanaged_key = managed_val\n\
+         ; --- END MANAGED ---\n"
+    );
+    // The raw entry is an entry right away.
+    let mut config = editor.section("config").unwrap();
+    let managed = config.entry("managed_key").unwrap().value();
+    assert_eq!(managed.as_deref(), Some("managed_val"));
 
-    // Remove the inserted block using remove_lines.
-    // Re-parsed line-node layout (child index == line index):
-    //   0 SECTION_HEADER, 1 ENTRY(key), 2 COMMENT_LINE(BEGIN),
-    //   3 ENTRY(managed_key), 4 COMMENT_LINE(END)
-    let ed2 = Editor::new(&after_insert);
-    ed2.section("config").remove_lines(2..5);
-
-    let after_remove = ed2.finish();
-    assert!(!after_remove.contains("MANAGED"), "got: {after_remove}");
-    assert!(!after_remove.contains("managed_key"), "got: {after_remove}");
-    assert!(after_remove.contains("key = value"));
+    // Remove the block by body lines, after reopening: 0 is `key = value`, 1..4 the block.
+    let mut reopened = Editor::new(&after_insert, &plain(), &preserve).unwrap();
+    let mut config = reopened.section("config").unwrap();
+    assert_eq!(config.body_line_count(), 4);
+    config.remove_body_lines(1..4).unwrap();
+    assert_eq!(reopened.finish(), src);
 }
 
 #[test]
@@ -46,58 +64,40 @@ port = 8080
 url = postgres://localhost/db
 ";
 
-    let ed = Editor::new(src);
+    let mut editor = Editor::new(src, &plain(), &spacing(SeparatorSpacing::Preserve)).unwrap();
 
-    // Modify existing value.
-    ed.section("server").set("port", "9090");
-
-    // Add new entry.
-    ed.section("server").append_entry("timeout", "30");
+    // Modify an existing value and add a new entry.
+    let mut server = editor.section("server").unwrap();
+    server.set("port", "9090").unwrap();
+    server.append_entry("timeout", "30").unwrap();
 
     // Rename a key.
-    assert!(
-        ed.section("database")
-            .rename_key("url", "connection_string")
-    );
+    let mut database = editor.section("database").unwrap();
+    assert_eq!(database.rename_key("url", "connection_string"), Ok(true));
 
     // Create a new section.
-    ed.section("cache").set("backend", "redis");
+    let mut cache = editor.section_or_insert("cache").unwrap();
+    cache.set("backend", "redis").unwrap();
 
-    let output = ed.finish();
-
-    // Verify edits.
-    assert!(output.contains("port = 9090"), "got: {output}");
-    assert!(output.contains("timeout = 30"), "got: {output}");
-    assert!(
-        output.contains("connection_string = postgres://localhost/db"),
-        "got: {output}"
+    let output = editor.finish();
+    assert_eq!(
+        output,
+        "; App config\n[server]\nhost = 0.0.0.0\nport = 9090\ntimeout = 30\n\n[database]\n\
+         connection_string = postgres://localhost/db\n\n[cache]\nbackend = redis\n"
     );
-    assert!(output.contains("[cache]"), "got: {output}");
-    assert!(output.contains("backend = redis"), "got: {output}");
 
-    // Verify preservation.
-    assert!(output.contains("; App config"), "got: {output}");
-    assert!(output.contains("host = 0.0.0.0"), "got: {output}");
-
-    // Verify the result still parses cleanly.
-    let p = parse(&output);
-    assert!(p.errors().is_empty());
-    assert_eq!(p.syntax().text().to_string(), output);
+    // The result still parses cleanly.
+    let parsed = parse(&output);
+    assert!(parsed.errors().is_empty());
+    assert_eq!(parsed.syntax().text().to_string(), output);
 }
 
 #[test]
 fn remove_section_preserves_rest() {
     let src = "[a]\nx = 1\n[b]\ny = 2\n[c]\nz = 3\n";
-    let ed = Editor::new(src);
-    ed.section("b").remove();
-    let output = ed.finish();
-
-    assert!(output.contains("[a]\nx = 1"));
-    assert!(output.contains("[c]\nz = 3"));
-    assert!(!output.contains("[b]"));
-
-    let p = parse(&output);
-    assert_eq!(p.syntax().text().to_string(), output);
+    let mut editor = Editor::new(src, &plain(), &spacing(SeparatorSpacing::Preserve)).unwrap();
+    editor.section("b").unwrap().remove();
+    assert_eq!(editor.finish(), "[a]\nx = 1\n[c]\nz = 3\n");
 }
 
 #[test]
@@ -106,36 +106,36 @@ fn configurable_separator_spacing_only_normalizes_touched_entries() {
         allow_no_value: true,
         inline_comments: true,
     };
-    let edit_options = EditOptions {
-        separator_spacing: SeparatorSpacing::Compact,
-    };
-    let ed = Editor::with_options(
+    let mut editor = Editor::new(
         "[service]\r\nendpoint = old   ; retained\r\nflag   \r\nuntouched : value\r\n",
         &parse_options,
-        &edit_options,
-    );
+        &spacing(SeparatorSpacing::Compact),
+    )
+    .unwrap();
 
-    ed.section("service")
-        .set("endpoint", "unix:///tmp/service.sock");
-    ed.section("service").set("flag", "enabled");
-    ed.section("service").append_entry("timeout", "30");
+    let mut service = editor.section("service").unwrap();
+    service.set("endpoint", "unix:///tmp/service.sock").unwrap();
+    service.set("flag", "enabled").unwrap();
+    service.append_entry("timeout", "30").unwrap();
 
     assert_eq!(
-        ed.finish(),
-        "[service]\r\nendpoint=unix:///tmp/service.sock   ; retained\r\nflag=enabled\r\nuntouched : value\r\ntimeout=30\r\n"
+        editor.finish(),
+        "[service]\r\nendpoint=unix:///tmp/service.sock   ; retained\r\nflag=enabled\r\n\
+         untouched : value\r\ntimeout=30\r\n"
     );
 }
 
 #[test]
 fn exact_separator_spacing_applies_to_updates_and_insertions() {
-    let options = EditOptions {
-        separator_spacing: SeparatorSpacing::exact("\t", "  "),
-    };
-    let ed = Editor::with_edit_options("[service]\nendpoint: old\n", &options);
+    let exact = spacing(SeparatorSpacing::exact("\t", "  ").unwrap());
+    let mut editor = Editor::new("[service]\nendpoint: old\n", &plain(), &exact).unwrap();
 
-    ed.section("service").set("endpoint", "new");
-    ed.section("service")
-        .insert_entry_at_line(1, "timeout", "30");
+    let mut service = editor.section("service").unwrap();
+    service.set("endpoint", "new").unwrap();
+    service.insert_entry(1, "timeout", "30").unwrap();
 
-    assert_eq!(ed.finish(), "[service]\nendpoint\t:  new\ntimeout\t=  30\n");
+    assert_eq!(
+        editor.finish(),
+        "[service]\nendpoint\t:  new\ntimeout\t=  30\n"
+    );
 }

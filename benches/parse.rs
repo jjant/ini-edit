@@ -1,9 +1,22 @@
 #![allow(missing_docs)]
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use ini_edit::ParseOptions;
 use ini_edit::ast::{AstNode, File};
-use ini_edit::editor::Editor;
+use ini_edit::editor::{EditOptions, Editor, SeparatorSpacing};
 
 const GITEA: &str = include_str!("../tests/fixtures/gitea-app.example.ini");
+
+/// An editor over `source`, with every option spelled out.
+fn open(source: &str) -> Editor {
+    let parse_options = ParseOptions {
+        allow_no_value: false,
+        inline_comments: false,
+    };
+    let edit_options = EditOptions {
+        separator_spacing: SeparatorSpacing::Preserve,
+    };
+    Editor::new(source, &parse_options, &edit_options).unwrap()
+}
 
 const SMALL: &str = "\
 [server]
@@ -84,25 +97,31 @@ fn bench_edit(c: &mut Criterion) {
 
     group.bench_function("set_value", |b| {
         b.iter(|| {
-            let ed = Editor::new(black_box(SMALL));
-            ed.section("server").set("port", "9090");
-            black_box(ed.finish());
+            let mut editor = open(black_box(SMALL));
+            editor
+                .section("server")
+                .unwrap()
+                .set("port", "9090")
+                .unwrap();
+            black_box(editor.finish());
         });
     });
 
     group.bench_function("append_entry", |b| {
         b.iter(|| {
-            let ed = Editor::new(black_box(SMALL));
-            ed.section("server").append_entry("timeout", "30");
-            black_box(ed.finish());
+            let mut editor = open(black_box(SMALL));
+            let mut server = editor.section("server").unwrap();
+            server.append_entry("timeout", "30").unwrap();
+            black_box(editor.finish());
         });
     });
 
     group.bench_function("create_section", |b| {
         b.iter(|| {
-            let ed = Editor::new(black_box(SMALL));
-            ed.section("new_section").set("key", "value");
-            black_box(ed.finish());
+            let mut editor = open(black_box(SMALL));
+            let mut section = editor.section_or_insert("new_section").unwrap();
+            section.set("key", "value").unwrap();
+            black_box(editor.finish());
         });
     });
 
@@ -185,9 +204,13 @@ fn bench_compare_edit(c: &mut Criterion) {
     // ini_edit: parse + set + serialize
     group.bench_function("ini_edit/set_value", |b| {
         b.iter(|| {
-            let ed = Editor::new(black_box(SMALL));
-            ed.section("server").set("port", "9090");
-            black_box(ed.finish());
+            let mut editor = open(black_box(SMALL));
+            editor
+                .section("server")
+                .unwrap()
+                .set("port", "9090")
+                .unwrap();
+            black_box(editor.finish());
         });
     });
 

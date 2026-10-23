@@ -54,6 +54,14 @@ impl File {
     pub fn sections(&self) -> impl Iterator<Item = Section> + '_ {
         self.0.children().filter_map(Section::cast)
     }
+
+    /// The line nodes before the first section, after a byte order mark: the preamble's body
+    /// lines, in the order of the editor's body-line positions.
+    pub fn preamble_lines(&self) -> impl Iterator<Item = SyntaxNode> + '_ {
+        self.0
+            .children()
+            .take_while(|node| node.kind() != SyntaxKind::SECTION)
+    }
 }
 
 impl Section {
@@ -77,6 +85,14 @@ impl Section {
     /// Full-line comments in this section (in document order).
     pub fn comment_lines(&self) -> impl Iterator<Item = CommentLine> + '_ {
         self.0.children().filter_map(CommentLine::cast)
+    }
+
+    /// The line nodes after the header: the section's body lines, in the order of the editor's
+    /// body-line positions.
+    pub fn body_lines(&self) -> impl Iterator<Item = SyntaxNode> + '_ {
+        self.0
+            .children()
+            .filter(|node| node.kind() != SyntaxKind::SECTION_HEADER)
     }
 }
 
@@ -390,5 +406,25 @@ mod tests {
         assert!(Value::cast(root.clone()).is_none());
         assert!(CommentLine::cast(root.clone()).is_none());
         assert!(BlankLine::cast(root).is_none());
+    }
+
+    #[test]
+    fn preamble_and_body_lines_are_the_editor_positions() {
+        fn texts(lines: impl Iterator<Item = SyntaxNode>) -> Vec<String> {
+            lines.map(|line| line.text().to_string()).collect()
+        }
+
+        // A byte order mark is not a line, and the preamble ends at the first header.
+        let file = ast("\u{FEFF}g=1\n; c\n[a]\nx=1\n\n[b]\n");
+        assert_eq!(texts(file.preamble_lines()), ["g=1\n", "; c\n"]);
+        let sections: Vec<_> = file.sections().collect();
+        // A header is not a body line; blank lines are.
+        assert_eq!(texts(sections[0].body_lines()), ["x=1\n", "\n"]);
+        assert_eq!(sections[1].body_lines().count(), 0);
+
+        // Without a section, every line is in the preamble.
+        let file = ast("k=v\n\n=bad");
+        assert_eq!(texts(file.preamble_lines()), ["k=v\n", "\n", "=bad"]);
+        assert_eq!(ast("[s]\n").preamble_lines().count(), 0);
     }
 }
