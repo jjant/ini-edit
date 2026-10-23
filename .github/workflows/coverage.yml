@@ -34,7 +34,7 @@ jobs:
         with:
           toolchain: nightly-2026-09-17
           components: llvm-tools-preview
-      - uses: taiki-e/install-action@9114bf4d891761788c546334fd37538eae1bf8b3 # v2.87.16
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
           tool: cargo-llvm-cov@0.9.1
       # One instrumented run feeds both the gate and the Codecov upload.
@@ -80,7 +80,7 @@ jobs:
         with:
           toolchain: nightly-2025-06-01
           components: llvm-tools-preview
-      - uses: taiki-e/install-action@9114bf4d891761788c546334fd37538eae1bf8b3 # v2.87.16
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
           tool: cargo-llvm-cov@0.9.1
       - name: Measure and require 100% MC/DC
