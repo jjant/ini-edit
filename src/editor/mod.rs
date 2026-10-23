@@ -328,6 +328,10 @@
 mod entry;
 mod error;
 mod fragment;
+// The parser checks its trees with it in debug builds; the editor's own
+// checks compare every edit with a reparse instead.
+#[cfg(all(debug_assertions, not(miri)))]
+mod line_nodes;
 mod options;
 mod plan;
 mod section;
@@ -340,6 +344,9 @@ pub use entry::EntryEditor;
 pub use error::EditError;
 pub use options::{EditOptions, SeparatorSpacing, Whitespace};
 pub use section::SectionEditor;
+
+#[cfg(all(debug_assertions, not(miri)))]
+pub(crate) use line_nodes::debug_assert_line_nodes;
 
 use crate::ast::{AstNode, File};
 use crate::syntax_kind::SyntaxNode;
