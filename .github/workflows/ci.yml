@@ -45,9 +45,6 @@ jobs:
       - name: Clippy
         run: cargo clippy --locked --all-targets --all-features -- --deny warnings
 
-      - name: Build all targets
-        run: cargo build --locked --all-targets --all-features
-
       - name: Test debug configuration
         run: cargo test --locked --all-targets --all-features
 
@@ -87,8 +84,9 @@ jobs:
         with:
           toolchain: 1.85.0
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - run: cargo build --locked --all-targets --all-features
       - run: cargo test --locked --all-targets --all-features
+      # --all-targets builds every target but runs no doctests.
+      - run: cargo test --locked --doc --all-features
 
   platforms:
     name: ${{ matrix.os }}
@@ -107,6 +105,34 @@ jobs:
           toolchain: stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: cargo test --locked --all-targets --all-features
+      # --all-targets builds every target but runs no doctests.
+      - run: cargo test --locked --doc --all-features
+
+  # On i686, usize and pointers are 32 bits wide. This job runs the whole suite
+  # there natively: the runner's 64-bit kernel runs 32-bit programs, and
+  # gcc-multilib provides the 32-bit C library and GCC files to link them.
+  i686:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+          targets: i686-unknown-linux-gnu
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: Install the 32-bit C library and GCC support
+        # GitHub asks to refresh the package index first: the one in the image
+        # can name package versions that the mirrors no longer serve.
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends gcc-multilib
+      - name: Test on 32-bit x86
+        run: cargo test --locked --target i686-unknown-linux-gnu --all-targets --all-features
+      - name: Test documentation on 32-bit x86
+        run: cargo test --locked --target i686-unknown-linux-gnu --doc --all-features
 
   # The other jobs test the repository; this one tests the crate that
   # `cargo publish` uploads, the sources that users, distribution packagers,
@@ -197,6 +223,14 @@ jobs:
           toolchain: stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: Exhaustive inputs and large documents
+        env:
+          # Release speed with the checks of a debug build, which a plain
+          # release build compiles out: debug_assert!, code under
+          # cfg(debug_assertions), and arithmetic overflow checks. The
+          # scaling probe below keeps the release profile as it ships, so
+          # that its timings measure the shipped code.
+          CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS: "true"
+          CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS: "true"
         run: |
           cargo test --locked --release --test exhaustive_parser --test stress \
             -- --include-ignored
@@ -212,6 +246,40 @@ jobs:
           path: target/scaling-report.json
           if-no-files-found: ignore
           retention-days: 14
+
+  # AddressSanitizer and LeakSanitizer over the whole suite. The fuzz job runs
+  # only its targets' oracles under them; this job runs every test, doctests
+  # included.
+  sanitizers:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      # Replaces the workflow's RUSTFLAGS, so it repeats --deny warnings.
+      RUSTFLAGS: --deny warnings -Zsanitizer=address
+      # rustdoc compiles the doctests and reads only RUSTDOCFLAGS. Without the
+      # flag, they fail to link against the instrumented library.
+      RUSTDOCFLAGS: -Zsanitizer=address
+      # detect_leaks=1 runs LeakSanitizer as each test binary exits. That is
+      # the default on Linux; stating it keeps the job from relying on it.
+      # allow_addr2line=1 lets a report name source lines through binutils
+      # when llvm-symbolizer is not installed.
+      ASAN_OPTIONS: detect_leaks=1:allow_addr2line=1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          # -Zsanitizer is unstable; Miri and the fuzz job use this nightly too.
+          toolchain: nightly-2026-09-17
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      # Both steps need --target: with it, RUSTFLAGS reach only the code under
+      # test, not the build scripts and proc macros that run during the build.
+      # rustc refuses to build a proc macro with a sanitizer.
+      - name: Every test target under AddressSanitizer and LeakSanitizer
+        run: cargo test --locked --target x86_64-unknown-linux-gnu --all-targets --all-features
+      - name: Documentation tests under AddressSanitizer and LeakSanitizer
+        run: cargo test --locked --target x86_64-unknown-linux-gnu --doc --all-features
 
   miri-strict:
     runs-on: ubuntu-24.04
@@ -230,6 +298,16 @@ jobs:
           cargo miri test --locked --lib lexer::tests::
           cargo miri test --locked --test exhaustive_parser \
             lexer_and_diagnostic_contracts -- --exact
+      - name: The same tests on a 32-bit and on a big-endian target
+        # Miri runs the code as compiled for the target: usize and pointers
+        # are 32 bits wide on i686, and s390x stores integers big-endian. It
+        # builds each target's standard library from rust-src itself.
+        run: |
+          for target in i686-unknown-linux-gnu s390x-unknown-linux-gnu; do
+            cargo miri test --locked --target "$target" --lib lexer::tests::
+            cargo miri test --locked --target "$target" --test exhaustive_parser \
+              lexer_and_diagnostic_contracts -- --exact
+          done
 
   miri:
     name: miri (${{ matrix.partition }}/${{ strategy.job-total }})
@@ -556,8 +634,10 @@ jobs:
       - check
       - msrv
       - platforms
+      - i686
       - package
       - extended-tests
+      - sanitizers
       - miri-strict
       - miri
       - dependencies
