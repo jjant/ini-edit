@@ -206,9 +206,11 @@ CI restores the learned corpus, then adds deterministic boundary cases,
 real-world fixtures, and generated model seeds without deleting existing
 inputs. Successful and failing campaigns on `main` save their corpus for
 future runs; pull requests consume that cache but do not update the main
-corpus. GitHub may evict caches, so the reproducible seeds remain useful.
-Crash and timeout inputs are uploaded separately and retained for 14 days,
-which is why reproducers must be committed.
+corpus. The cache key depends on no file, so dependency and lockfile updates
+keep the learned corpus. GitHub may evict caches, so the reproducible seeds
+remain useful.
+Crash and timeout inputs are uploaded separately and retained for 90 days,
+which is still finite: that is why reproducers must be committed.
 
 Each fuzz input has a 10-second timeout and each target has a 1 GiB RSS limit.
 Input lengths are bounded independently: 16,384 bytes for the original three
@@ -218,11 +220,11 @@ inputs (libFuzzer reads every corpus directory but adds inputs to the first):
 
 ```sh
 python3 .github/scripts/seed_fuzz_corpus.py
-cargo +nightly fuzz run generated_edits fuzz/corpus/generated_edits \
+cargo +nightly-2026-09-17 fuzz run generated_edits fuzz/corpus/generated_edits \
   tests/fuzz_regressions/generated_edits -- \
   -max_len=4096 -max_total_time=120 -timeout=10 -rss_limit_mb=1024
 # Replay a downloaded crash/timeout artifact:
-cargo +nightly fuzz run generated_edits path/to/reproducer
+cargo +nightly-2026-09-17 fuzz run generated_edits path/to/reproducer
 ```
 
 ## As-delivered and dynamic checks
@@ -252,8 +254,8 @@ cargo +nightly-2026-09-17 miri test --test exhaustive_parser \
   lexer_and_diagnostic_contracts -- --exact
 ```
 
-Clippy, rustdoc, `cargo audit`, and
-`cargo deny` cover static analysis, advisories, yanked packages, licenses,
+Clippy, rustdoc, and `cargo deny` cover static analysis, advisories
+(including unsound and unmaintained crates), yanked packages, licenses,
 duplicate dependencies, and unexpected dependency sources.
 
 The full matrix also runs every Sunday. Scheduled fuzzing gives each target 15
@@ -278,3 +280,9 @@ Before release, all required GitHub checks must be green:
 6. Full mutation test.
 7. All five fuzz targets.
 8. Bounded exhaustive, large-input, and CPU/memory scaling tests.
+9. A `fuzz/Cargo.lock` that matches the release version. `fuzz/` is a
+   separate workspace, so the version bump does not reach its lockfile. The
+   Release PR workflow commits
+   `cargo update --manifest-path fuzz/Cargo.toml --package ini-edit` to the
+   release pull request every time it opens or rewrites it. If that step
+   fails, run the command and commit `fuzz/Cargo.lock` by hand.

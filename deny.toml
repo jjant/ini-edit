@@ -3,6 +3,14 @@ all-features = true
 
 [advisories]
 ignore = []
+# Vulnerability and notice advisories are always errors. These three make
+# every other finding of `cargo audit --deny warnings` an error as well, for
+# direct and transitive dependencies alike, so CI runs only cargo-deny. They
+# are set even where they match today's defaults, because no cargo-audit step
+# would catch a narrower default in a later cargo-deny.
+yanked = "deny"
+unmaintained = "all"
+unsound = "all"
 
 [licenses]
 allow = [
@@ -12,7 +20,12 @@ allow = [
 confidence-threshold = 0.8
 
 [bans]
-multiple-versions = "warn"
+# Two versions of one normal dependency fail, because users of the crate
+# compile both. Dev-dependencies only build this repository's tests and
+# tools, so they are exempt; they resolve two versions each of getrandom and
+# wit-bindgen today.
+multiple-versions = "deny"
+multiple-versions-include-dev = false
 wildcards = "deny"
 highlight = "all"
 
