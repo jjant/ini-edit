@@ -1,44 +1,204 @@
-//! The oracles behind the fuzz targets, run by ordinary `cargo test`.
+//! The oracles behind the fuzz targets, run by ordinary `cargo test`, and the editor's other
+//! oracles.
 //!
 //! Every fuzz target is a thin wrapper around a `check(&[u8])` oracle in
 //! `tests/support/`. These tests run each oracle over a fixed sweep and over
 //! every committed fuzz input, like SQLite's fuzzcheck.
 //! `tests/fuzz_regressions/<target>/` holds the `cargo fuzz cmin` corpus and
 //! every crash or timeout reproducer, so past findings are checked on every
-//! platform and toolchain.
+//! platform and toolchain. The hostile-input oracle and the random walk check
+//! the editor's guarantees over generated input.
+//!
+//! Four extended tests are `#[ignore]`d: the reload triples, the full two- and
+//! three-piece hostile products, and a 60,000-seed walk. No CI job runs them
+//! yet; until one does, run them by hand, which takes under two minutes:
+//! `cargo test --release --test fuzz_regressions -- --ignored`.
 //!
 //! The tests share one binary because cargo-mutants rebuilds every test
 //! binary for every mutant.
 
+#[path = "support/editor_inputs.rs"]
+mod editor_inputs;
 #[path = "support/editor_ops.rs"]
 mod editor_ops;
 #[path = "support/editor_reparse.rs"]
 mod editor_reparse;
 #[path = "support/editor_stateful.rs"]
 mod editor_stateful;
+#[path = "support/editor_walk.rs"]
+mod editor_walk;
 #[path = "support/generated_edits.rs"]
 mod generated_edits;
 #[path = "support/round_trip.rs"]
 mod round_trip;
 
-/// Metamorphic testing of editing with and without a save/reload between steps.
-#[test]
-fn editing_is_independent_of_save_and_reload_boundaries() {
+use ini_edit::ParseOptions;
+use ini_edit::editor::{EditOptions, Editor, SeparatorSpacing};
+
+/// Every operation sequence of `length` over every source, with and without a save and reload
+/// between steps.
+fn reload_sequences(length: u32) {
     let sources = u8::try_from(editor_reparse::SOURCES.len()).unwrap();
+    let kinds = u32::from(editor_reparse::OPERATION_KINDS);
     for source in 0..sources {
-        for first in 0..editor_reparse::OPERATION_KINDS {
-            for second in 0..editor_reparse::OPERATION_KINDS {
-                for third in 0..editor_reparse::OPERATION_KINDS {
-                    editor_reparse::check(&[source, first, second, third]);
-                }
+        for sequence in 0..kinds.pow(length) {
+            let mut data = vec![source];
+            let mut rest = sequence;
+            for _ in 0..length {
+                data.push(u8::try_from(rest % kinds).unwrap());
+                rest /= kinds;
             }
+            editor_reparse::check(&data);
         }
     }
 }
 
-/// Longer edit sequences checked against a model that tracks entry identity.
+/// Metamorphic testing of editing with and without a save/reload between steps: every pair of
+/// operations on every source.
 #[test]
-fn retained_handles_and_duplicate_keys_follow_the_model() {
+fn editing_is_independent_of_save_and_reload_boundaries() {
+    reload_sequences(2);
+}
+
+/// Every triple of operations on every source.
+#[test]
+#[ignore = "extended; run by hand: cargo test --release --test fuzz_regressions -- --ignored"]
+fn editing_is_independent_of_save_and_reload_boundaries_for_triples() {
+    reload_sequences(3);
+}
+
+fn options(allow_no_value: bool, inline_comments: bool) -> ParseOptions {
+    ParseOptions {
+        allow_no_value,
+        inline_comments,
+    }
+}
+
+/// Hostile strings of up to two pieces: the editor accepts exactly what a reader reads back.
+#[test]
+fn hostile_input_is_refused_exactly_when_a_reader_would_not_read_it_back() {
+    let pieces = ["", " ", "\n", "\r", "=", "[", ";", "\\", "\u{FEFF}", "a"];
+    let documents = [
+        "[s]\na=1\nb=2\n",
+        "[s]\ra=1\n\n",
+        "[s]\na=C:\\x\\",
+        "",
+        "g=1 ; c\n",
+    ];
+    let options = [options(false, false), options(true, true)];
+    let counts = editor_inputs::run(
+        2,
+        &pieces,
+        &documents,
+        &options,
+        &[SeparatorSpacing::Preserve],
+    );
+    assert_eq!(counts.cases, 8_736);
+    assert_eq!(
+        (
+            counts.false_accepts,
+            counts.false_rejects,
+            counts.byte_mismatches
+        ),
+        (0, 0, 0),
+        "{counts:?}"
+    );
+}
+
+/// The full products of the hostile pieces, at every site of every document.
+fn hostile_products(count: usize) {
+    let options = [
+        options(false, false),
+        options(true, false),
+        options(false, true),
+        options(true, true),
+    ];
+    let spacings = [
+        SeparatorSpacing::Preserve,
+        SeparatorSpacing::Compact,
+        SeparatorSpacing::exact("\t", "  ").unwrap(),
+    ];
+    let counts = editor_inputs::run(
+        count,
+        &editor_inputs::PIECES,
+        &editor_inputs::DOCUMENTS,
+        &options,
+        &spacings,
+    );
+    eprintln!("{counts:?}");
+    assert_eq!(
+        (
+            counts.false_accepts,
+            counts.false_rejects,
+            counts.byte_mismatches
+        ),
+        (0, 0, 0),
+        "{counts:?}"
+    );
+}
+
+#[test]
+#[ignore = "extended; run by hand: cargo test --release --test fuzz_regressions -- --ignored"]
+fn hostile_input_products_of_two_pieces() {
+    hostile_products(2);
+}
+
+#[test]
+#[ignore = "extended; run by hand: cargo test --release --test fuzz_regressions -- --ignored"]
+fn hostile_input_products_of_three_pieces() {
+    hostile_products(3);
+}
+
+/// A random walk of 300 documents with 12 steps each.
+#[test]
+fn random_edits_keep_every_guarantee() {
+    let [succeeded, refused, missed] = editor_walk::walk(300, 12);
+    // The walk reaches both outcomes.
+    assert!(succeeded > 0, "{succeeded} {refused} {missed}");
+    assert!(refused > 0, "{succeeded} {refused} {missed}");
+}
+
+#[test]
+#[ignore = "extended; run by hand: cargo test --release --test fuzz_regressions -- --ignored"]
+fn random_edits_keep_every_guarantee_over_many_seeds() {
+    let [succeeded, refused, missed] = editor_walk::walk(60_000, 12);
+    eprintln!("succeeded {succeeded}, refused {refused}, no target {missed}");
+    assert!(succeeded > 0);
+    assert!(refused > 0);
+}
+
+/// Every read through every kind of handle agrees with the file: lookups by key find the first
+/// of duplicate keys, in the preamble, in duplicate sections and in a nameless one.
+#[test]
+fn every_read_agrees_with_the_file() {
+    let source = "a=1\nb=2\na=3\n[s]\nk=1\n; c\nk=2\n[s]\nk=3\nk=4\n[]\nx=1\n";
+    let edit_options = EditOptions {
+        separator_spacing: SeparatorSpacing::Preserve,
+    };
+    let mut editor = Editor::new(source, &options(false, false), &edit_options).unwrap();
+    let targets = [
+        editor_ops::Target::Preamble,
+        editor_ops::Target::Name("s".to_owned()),
+        editor_ops::Target::Index(1),
+        editor_ops::Target::Index(2),
+    ];
+    for target in &targets {
+        for index in 0..4 {
+            let read = editor_ops::Operation::Read { index };
+            let outcome = editor_ops::step(&mut editor, target, &read);
+            assert!(
+                matches!(outcome, Ok(editor_ops::Value::Reads(_))),
+                "{target:?} {index}: {outcome:?}"
+            );
+        }
+    }
+    assert_eq!(editor.finish(), source);
+}
+
+/// Longer edit sequences, hostile keys and values among them, checked against a model that
+/// tracks entry identity.
+#[test]
+fn duplicate_keys_and_refused_input_follow_the_identity_model() {
     for flags in 0u8..8 {
         for spacing in 0u8..3 {
             let mut state = u64::from(flags) * 7 + u64::from(spacing) + 1;

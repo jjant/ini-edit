@@ -22,9 +22,11 @@ exclude = [
     "/fuzz/",
     "/tests/fuzz_regressions/",
     "/tests/fuzz_regressions.rs",
+    "/tests/support/editor_inputs.rs",
     "/tests/support/editor_ops.rs",
     "/tests/support/editor_reparse.rs",
     "/tests/support/editor_stateful.rs",
+    "/tests/support/editor_walk.rs",
     "/tests/support/generated_edits.rs",
     "/.release-plz.toml",
     "/.secretsignore",
@@ -54,3 +56,23 @@ ini_core = "0.2.0"
 [[bench]]
 name = "parse"
 harness = false
+
+# The editor's oracles parse thousands of small documents, and a debug build
+# reparses the whole document after every edit to check that its tree equals a
+# parse of its text. Optimizing rowan, the tree library, and its dependencies
+# makes those debug runs about four times faster. This crate stays unoptimized,
+# with debug assertions and overflow checks, so tests still exercise them.
+[profile.dev.package.rowan]
+opt-level = 3
+
+[profile.dev.package.countme]
+opt-level = 3
+
+[profile.dev.package.hashbrown]
+opt-level = 3
+
+[profile.dev.package.rustc-hash]
+opt-level = 3
+
+[profile.dev.package.text-size]
+opt-level = 3

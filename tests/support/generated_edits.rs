@@ -2,7 +2,7 @@
 //! expected values or text ranges. Keep every unchanged byte in the reference.
 
 use ini_edit::ast::{AstNode, File};
-use ini_edit::editor::{EditOptions, Editor, SeparatorSpacing};
+use ini_edit::editor::{EditError, EditOptions, Editor, SectionEditor, SeparatorSpacing};
 use ini_edit::{ParseOptions, parse_with};
 
 type Contents = Vec<(String, Option<String>)>;
@@ -138,6 +138,11 @@ impl Section {
 
     /// Append an entry after the last line that is not blank, as
     /// `append_entry` does, completing an unterminated line first.
+    ///
+    /// The entry's line break is the document's line ending, except before an
+    /// LF blank line in a CR document, where a CR would read together with
+    /// that LF: there it is CRLF (rule T2). Generated values never end in CR,
+    /// so no CR before the break widens it (rule T1).
     fn append(&mut self, key: &str, value: &str, spacing: &SeparatorSpacing, ending: &str) {
         let position = self
             .lines
@@ -163,6 +168,17 @@ impl Section {
             SeparatorSpacing::Preserve => (" ", " "),
             SeparatorSpacing::Compact => ("", ""),
             SeparatorSpacing::Exact { before, after } => (before.as_str(), after.as_str()),
+        };
+        let next_starts_with_lf = match self.lines.get(position) {
+            Some(Line::Trivia(text)) => text.starts_with('\n'),
+            // Entries start with their indentation or key; the next header, with
+            // its indentation or `[`.
+            Some(Line::Entry(_)) | None => false,
+        };
+        let ending = if ending == "\r" && next_starts_with_lf {
+            "\r\n"
+        } else {
+            ending
         };
         let entry = Entry {
             indent: String::new(),
@@ -379,51 +395,41 @@ struct Edit<'a> {
     spacing: &'a SeparatorSpacing,
 }
 
-fn apply(editor: &Editor, expected: &mut Document, edit: &Edit<'_>) {
+fn apply(editor: &mut Editor, expected: &mut Document, edit: &Edit<'_>) {
     let ending = expected.line_ending();
     let section = &mut expected.sections[edit.section];
     let name = section.name.as_deref().unwrap();
-    let actual = editor.section(name);
+    let mut actual = editor.section(name).unwrap();
     let index = section.entries()[edit.position];
     let key = section.entry(index).key.clone();
-    let mut handles = actual.entries_mut();
-    assert_eq!(handles.len(), section.entries().len());
+    assert_eq!(actual.entry_count(), section.entries().len());
     match edit.operation % OPERATIONS {
         0 => {
-            actual.set(&key, edit.replacement_value);
+            actual.set(&key, edit.replacement_value).unwrap();
             let first = section.first_key(&key);
             section
                 .entry_mut(first)
                 .assign(edit.replacement_value, edit.spacing);
         }
         1 => {
-            handles[edit.position].set_value(edit.replacement_value);
+            let mut entry = actual.entry_at(edit.position).unwrap();
+            entry.set_value(edit.replacement_value).unwrap();
             section
                 .entry_mut(index)
                 .assign(edit.replacement_value, edit.spacing);
         }
-        2 => {
-            let allowed = key == edit.replacement_key
-                || !section
-                    .entries()
-                    .iter()
-                    .any(|&i| section.entry(i).key == edit.replacement_key);
-            assert_eq!(actual.rename_key(&key, edit.replacement_key), allowed);
-            if allowed {
-                let first = section.first_key(&key);
-                section.entry_mut(first).key = edit.replacement_key.into();
-            }
-        }
+        2 => rename(&mut actual, section, &key, edit.replacement_key),
         3 => {
-            handles[edit.position].set_key(edit.replacement_key);
+            let mut entry = actual.entry_at(edit.position).unwrap();
+            entry.set_key(edit.replacement_key).unwrap();
             section.entry_mut(index).key = edit.replacement_key.into();
         }
         4 => {
-            assert!(actual.remove_entry(&key));
+            assert_eq!(actual.remove_entry(&key), Ok(true));
             section.lines.remove(section.first_key(&key));
         }
         5 => {
-            handles.remove(edit.position).remove();
+            actual.entry_at(edit.position).unwrap().remove().unwrap();
             section.lines.remove(index);
         }
         6 => {
@@ -431,9 +437,9 @@ fn apply(editor: &Editor, expected: &mut Document, edit: &Edit<'_>) {
             expected.sections.remove(edit.section);
         }
         7 => {
-            // Generated values never end in CR, so the new line simply uses
-            // the document's line ending.
-            actual.append_entry(edit.replacement_key, edit.replacement_value);
+            actual
+                .append_entry(edit.replacement_key, edit.replacement_value)
+                .unwrap();
             section.append(
                 edit.replacement_key,
                 edit.replacement_value,
@@ -441,17 +447,109 @@ fn apply(editor: &Editor, expected: &mut Document, edit: &Edit<'_>) {
                 ending,
             );
         }
-        _ => {
-            actual.append_raw_lines(&[]);
-            actual.insert_raw_lines_at(usize::MAX, &[]);
-            actual.remove_lines(usize::MAX..usize::MAX);
-        }
+        _ => empty_edits(&mut actual),
     }
-    expected.separate_blank_lines();
+    // Removals keep every byte, also between a CR line break and an LF blank
+    // line (rule D), so the model's text needs no repair after the edit.
+}
+
+/// Rename the first entry keyed `key` to `replacement_key`, in the editor and
+/// in the model, unless another entry already has `replacement_key`.
+fn rename(actual: &mut SectionEditor<'_>, section: &mut Section, key: &str, replacement_key: &str) {
+    let collides = key != replacement_key
+        && section
+            .entries()
+            .iter()
+            .any(|&i| section.entry(i).key == replacement_key);
+    let outcome = if collides {
+        Err(EditError::DuplicateKey {
+            key: replacement_key.into(),
+        })
+    } else {
+        Ok(true)
+    };
+    assert_eq!(actual.rename_key(key, replacement_key), outcome);
+    if outcome == Ok(true) {
+        let first = section.first_key(key);
+        section.entry_mut(first).key = replacement_key.into();
+    }
+}
+
+/// Empty edits change nothing; one position past the end is an error.
+fn empty_edits(actual: &mut SectionEditor<'_>) {
+    let end = actual.body_line_count();
+    actual.append_body_lines(&[]).unwrap();
+    actual.insert_body_lines(end, &[]).unwrap();
+    actual.remove_body_lines(end..end).unwrap();
+    let position = actual.insert_body_lines(end + 1, &[]);
+    assert!(matches!(
+        position,
+        Err(EditError::PositionOutOfRange { .. })
+    ));
+    let range = actual.remove_body_lines(end + 1..end + 1);
+    assert!(matches!(range, Err(EditError::RangeOutOfRange { .. })));
 }
 
 /// Number of distinct edit operations selected by the first input byte.
 pub const OPERATIONS: u8 = 9;
+
+/// The parse and edit options that the input selects, read in input order: a
+/// spacing style, the option flags, then `Exact` spacing if the style is 2.
+fn options_and_spacing(bytes: &mut Bytes<'_>) -> (ParseOptions, SeparatorSpacing) {
+    let style = bytes.next() % 3;
+    let flags = bytes.next();
+    let options = ParseOptions {
+        allow_no_value: flags & 1 != 0,
+        inline_comments: flags & 2 != 0,
+    };
+    let spacing = match style {
+        0 => SeparatorSpacing::Preserve,
+        1 => SeparatorSpacing::Compact,
+        _ => SeparatorSpacing::exact(&bytes.space(), &bytes.space()).unwrap(),
+    };
+    (options, spacing)
+}
+
+/// The generated text parses without errors to the model's meaning.
+fn assert_parses_to(text: &str, options: &ParseOptions, expected: &Document) -> ini_edit::Parse {
+    let parsed = parse_with(text, options);
+    assert!(
+        parsed.errors().is_empty(),
+        "{text:?}: {:?}",
+        parsed.errors()
+    );
+    assert_eq!(
+        read(&File::cast(parsed.syntax()).unwrap()),
+        expected.meaning(),
+        "{text:?}"
+    );
+    parsed
+}
+
+/// After the edit, the output is the model's text byte for byte, the live tree
+/// and a reparse both have the model's meaning and the same green tree, and the
+/// snapshot taken before the edit still reads the original text.
+fn assert_edited(
+    editor: &Editor,
+    expected: &Document,
+    original: &str,
+    snapshot: &File,
+    operation: u8,
+) {
+    let output = editor.finish();
+    assert_eq!(
+        output,
+        expected.render(),
+        "operation={operation} source={original:?}"
+    );
+    assert_eq!(read(&editor.file()), expected.meaning());
+    let reparsed = assert_parses_to(&output, editor.parse_options(), expected);
+    assert_eq!(
+        editor.file().syntax().green().into_owned(),
+        *reparsed.green()
+    );
+    assert_eq!(snapshot.syntax().text().to_string(), original);
+}
 
 /// Generate a whole document and compare edits against independent text and
 /// meaning. Input size, line counts, word lengths, and continuations are bounded.
@@ -463,30 +561,10 @@ pub fn check(input: &[u8]) {
     let operation = bytes.next();
     let section_selector = usize::from(bytes.next());
     let entry_selector = usize::from(bytes.next());
-    let style = bytes.next() % 3;
-    let flags = bytes.next();
-    let options = ParseOptions {
-        allow_no_value: flags & 1 != 0,
-        inline_comments: flags & 2 != 0,
-    };
-    let spacing = match style {
-        0 => SeparatorSpacing::Preserve,
-        1 => SeparatorSpacing::Compact,
-        _ => SeparatorSpacing::exact(bytes.space(), bytes.space()),
-    };
+    let (options, spacing) = options_and_spacing(&mut bytes);
     let mut expected = generate(&mut bytes, &options);
     let original = expected.render();
-    let parsed = parse_with(&original, &options);
-    assert!(
-        parsed.errors().is_empty(),
-        "{original:?}: {:?}",
-        parsed.errors()
-    );
-    assert_eq!(
-        read(&File::cast(parsed.syntax()).unwrap()),
-        expected.meaning(),
-        "{original:?}"
-    );
+    assert_parses_to(&original, &options, &expected);
     let selected = 1 + section_selector % (expected.sections.len() - 1);
     let name = expected.sections[selected].name.clone();
     // Named APIs intentionally address the first matching duplicate section.
@@ -506,16 +584,17 @@ pub fn check(input: &[u8]) {
         bytes.word("renamed")
     };
     let replacement_value = bytes.value();
-    let editor = Editor::with_options(
+    let mut editor = Editor::new(
         &original,
         &options,
         &EditOptions {
             separator_spacing: spacing.clone(),
         },
-    );
+    )
+    .unwrap();
     let snapshot = editor.file();
     apply(
-        &editor,
+        &mut editor,
         &mut expected,
         &Edit {
             operation,
@@ -526,26 +605,5 @@ pub fn check(input: &[u8]) {
             spacing: &spacing,
         },
     );
-    let output = editor.finish();
-    assert_eq!(
-        output,
-        expected.render(),
-        "operation={operation} source={original:?}"
-    );
-    assert_eq!(read(&editor.file()), expected.meaning());
-    let reparsed = parse_with(&output, &options);
-    assert!(
-        reparsed.errors().is_empty(),
-        "{output:?}: {:?}",
-        reparsed.errors()
-    );
-    assert_eq!(
-        read(&File::cast(reparsed.syntax()).unwrap()),
-        expected.meaning()
-    );
-    assert_eq!(
-        editor.file().syntax().green().into_owned(),
-        *reparsed.green()
-    );
-    assert_eq!(snapshot.syntax().text().to_string(), original);
+    assert_edited(&editor, &expected, &original, &snapshot, operation);
 }

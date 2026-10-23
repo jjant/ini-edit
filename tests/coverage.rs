@@ -3,7 +3,7 @@
 use ini_edit::ast::{
     AstNode, BlankLine, CommentLine, Entry, File, Key, Section, SectionHeader, Value,
 };
-use ini_edit::editor::Editor;
+use ini_edit::editor::{EditError, EditOptions, Editor, SeparatorSpacing};
 use ini_edit::lexer::{lex, lex_with};
 use ini_edit::{IniLang, ParseError, ParseOptions, SyntaxKind, SyntaxNode, parse, parse_with};
 use rowan::Language;
@@ -238,39 +238,68 @@ fn ast_separator_decision_table() {
     assert!(!entries[2].uses_colon());
 }
 
+/// An editor with every option spelled out.
+fn open(source: &str, allow_no_value: bool) -> Editor {
+    let parse_options = ParseOptions {
+        allow_no_value,
+        inline_comments: false,
+    };
+    let edit_options = EditOptions {
+        separator_spacing: SeparatorSpacing::Preserve,
+    };
+    Editor::new(source, &parse_options, &edit_options).unwrap()
+}
+
 #[test]
 fn editor_boundary_decision_table() {
-    let editor = Editor::new("global = true\n\n");
-    editor.section("new").append_entry("key", "value");
+    let mut editor = open("global = true\n\n", false);
+    let mut section = editor.section_or_insert("new").unwrap();
+    section.append_entry("key", "value").unwrap();
     assert_eq!(editor.finish(), "global = true\n\n[new]\nkey = value\n");
 
-    let editor = Editor::new("[s]\r\n");
+    // Each element is one line without its terminator; the editor writes the terminators.
+    let mut editor = open("[s]\r\n", false);
+    let lines = ["lf\n", "crlf\r\n", "cr\r", "unterminated"];
+    let result = editor.section("s").unwrap().append_body_lines(&lines);
+    let refused = EditError::InvalidLine {
+        index: 0,
+        line: "lf\n".into(),
+    };
+    assert_eq!(result, Err(refused));
+    let lines = ["lf", "crlf", "cr", "unterminated"];
     editor
         .section("s")
-        .append_raw_lines(&["lf\n", "crlf\r\n", "cr\r", "unterminated"]);
-    assert_eq!(editor.finish(), "[s]\r\nlf\ncrlf\r\ncr\runterminated\r\n");
+        .unwrap()
+        .append_body_lines(&lines)
+        .unwrap();
+    assert_eq!(
+        editor.finish(),
+        "[s]\r\nlf\r\ncrlf\r\ncr\r\nunterminated\r\n"
+    );
 
-    let editor = Editor::new("[s]\na: 1\n");
-    editor.section("s").set("a", "2");
+    let mut editor = open("[s]\na: 1\n", false);
+    editor.section("s").unwrap().set("a", "2").unwrap();
     assert_eq!(editor.finish(), "[s]\na: 2\n");
 
-    let editor = Editor::with_parse_options(
-        "[s]\nflag\n",
-        &ParseOptions {
-            allow_no_value: true,
-            ..Default::default()
-        },
-    );
-    editor.section("s").set("flag", "on");
+    let mut editor = open("[s]\nflag\n", true);
+    editor.section("s").unwrap().set("flag", "on").unwrap();
     assert_eq!(editor.finish(), "[s]\nflag = on\n");
 
-    let editor = Editor::new("[s]\na = 1\nb = 2\n");
-    let reversed_start = 3;
-    let reversed_end = 1;
+    // A reversed range is an error; an empty one removes nothing.
+    let mut editor = open("[s]\na = 1\nb = 2\n", false);
+    let reversed = std::ops::Range { start: 2, end: 1 };
+    let result = editor.section("s").unwrap().remove_body_lines(reversed);
+    let refused = EditError::RangeOutOfRange {
+        start: 2,
+        end: 1,
+        body_line_count: 2,
+    };
+    assert_eq!(result, Err(refused));
     editor
         .section("s")
-        .remove_lines(reversed_start..reversed_end);
-    editor.section("s").remove_lines(2..2);
+        .unwrap()
+        .remove_body_lines(1..1)
+        .unwrap();
     assert_eq!(editor.finish(), "[s]\na = 1\nb = 2\n");
 }
 
