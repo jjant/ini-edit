@@ -195,7 +195,7 @@ fn steps(random: &mut Random) -> Vec<(Target, Operation)> {
 
 /// Walk `seeds` random documents for `steps` random operations each, and return how many calls
 /// succeeded, were refused, or found no target.
-pub fn walk(seeds: u64, steps: usize) -> [u64; 3] {
+pub(crate) fn walk(seeds: u64, steps: usize) -> [u64; 3] {
     let spacings = [
         SeparatorSpacing::Preserve,
         SeparatorSpacing::Compact,

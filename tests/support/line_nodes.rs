@@ -8,7 +8,7 @@ use ini_edit::{SyntaxElement, SyntaxKind, SyntaxNode};
 /// every line must be a single node owning exactly its terminator. Only a
 /// leading BOM may be a loose token. Line breaks occur only as `NEWLINE`
 /// tokens and, after a continuation backslash, inside `VALUE_TEXT`.
-pub fn check(source: &str, root: &SyntaxNode) {
+pub(super) fn check(source: &str, root: &SyntaxNode) {
     let mut lines = Vec::new();
     for (index, element) in root.children_with_tokens().enumerate() {
         match element.as_node() {

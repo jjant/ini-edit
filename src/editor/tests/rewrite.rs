@@ -154,7 +154,7 @@ fn the_value_policy_refuses_a_final_backslash_everywhere() {
     for (source, parse) in [
         // As the unterminated last line, and before a kept comment, a reader would read it back.
         ("[s]\npath=old", options(false, false)),
-        ("[s]\npath = old ; note\nnext=2\n", inline.clone()),
+        ("[s]\npath = old ; note\nnext=2\n", inline),
         ("[s]\npath=old\nnext=2\n", options(false, false)),
     ] {
         for value in ["C:\\dir\\", "a \\ \t", "x \\\ny\\"] {

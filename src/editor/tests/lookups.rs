@@ -162,7 +162,12 @@ fn the_limit_stays_below_isize_max_on_32_bit_targets() {
 #[should_panic(expected = "assertion failed: len_max <= LEN_MAX")]
 fn a_limit_above_the_editor_s_is_a_programmer_error() {
     let parse = options(false, false);
-    let _ = Editor::with_len_max("", &parse, &EditOptions::default(), LEN_MAX + 1);
+    drop(Editor::with_len_max(
+        "",
+        &parse,
+        &EditOptions::default(),
+        LEN_MAX + 1,
+    ));
 }
 
 #[test]
@@ -189,7 +194,7 @@ fn sizes_are_checked_exactly_at_the_limit() {
 #[test]
 #[should_panic(expected = "assertion failed: removed <= len")]
 fn removing_more_than_the_document_is_a_programmer_error() {
-    let _ = open("k=v").check_len(4, 0);
+    drop(open("k=v").check_len(4, 0));
 }
 
 #[test]

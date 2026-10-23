@@ -9,7 +9,7 @@ use ini_edit::editor::{EditOptions, Editor, SeparatorSpacing};
 
 use crate::editor_ops::{self, Operation, Target};
 
-pub const SOURCES: [&str; 12] = [
+pub(crate) const SOURCES: [&str; 12] = [
     "",
     "[a]",
     "[a]\nx=0",
@@ -26,7 +26,7 @@ pub const SOURCES: [&str; 12] = [
     "\u{FEFF}k=1\n",
 ];
 /// Number of distinct operations; an operation byte selects one modulo this.
-pub const OPERATION_KINDS: u8 = 25;
+pub(crate) const OPERATION_KINDS: u8 = 25;
 /// Later operations are ignored, which bounds the work per input.
 const OPERATIONS_MAX: usize = 64;
 
@@ -187,7 +187,7 @@ fn refused_steps(kind: u8) -> Vec<(Target, Operation)> {
 }
 
 /// The first byte selects one of [`SOURCES`]; each later byte is an operation.
-pub fn check(data: &[u8]) {
+pub(crate) fn check(data: &[u8]) {
     let Some((&source, operations)) = data.split_first() else {
         return;
     };
@@ -204,7 +204,7 @@ pub fn check(data: &[u8]) {
     for &operation in &operations[..operations.len().min(OPERATIONS_MAX)] {
         for (target, step) in steps(operation) {
             // The step checks every guarantee itself; its outcome only reports what happened.
-            let _ = editor_ops::step(&mut live, &target, &step);
+            drop(editor_ops::step(&mut live, &target, &step));
         }
     }
 }

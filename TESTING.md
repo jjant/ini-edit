@@ -99,8 +99,8 @@ coverage run, mutation run, and fuzz build checks them.
 - Regression tests preserve every previously discovered bug.
 - An independent ordered-entry model exhausts short edit sequences and checks
   both the live AST and the reparsed output after every operation. Following
-  [TigerStyle's paired assertions](https://github.com/tigerbeetle/tigerbeetle/blob/main/docs/TIGER_STYLE.md),
-  successful serialization alone is not evidence that edits preserved meaning.
+  [TigerStyle's paired assertions][TigerStyle], successful serialization alone
+  is not evidence that edits preserved meaning.
 - Mutation testing requires zero surviving source mutations. A mutation that
   stops a lexer or parser loop from advancing fails that loop's progress
   assertion at once (see [Assertions](#assertions)), so a timeout in the lexer
@@ -433,6 +433,35 @@ cargo +nightly-2026-09-17 fuzz run generated_edits fuzz/corpus/generated_edits \
 cargo +nightly-2026-09-17 fuzz run generated_edits path/to/reproducer
 ```
 
+## Style limits
+
+[TigerStyle]'s limits are checked mechanically, so no review has to count:
+
+- Clippy runs `all` and `pedantic` plus the extra lints in `Cargo.toml`, with
+  `--deny warnings`, on the crate and on the fuzz crate, a separate workspace
+  that repeats the `[lints]` tables. `clippy.toml` caps a function at 70 lines
+  of code and 4 arguments, and `src/lib.rs` refuses one-letter names in the
+  library and its unit tests. An exception is an `#[expect]` with a reason, so
+  it fails once it is no longer needed. The two on `mod parser` in `src/lib.rs`
+  wait for the parser work in flight. Until it moves them onto their items,
+  each covers all of `src/parser.rs`, so a new instance there passes too.
+- `tests/style.rs`, part of every `cargo test`, caps every line of the Rust,
+  TOML, YAML and Markdown files at 100 columns and every function at 70
+  physical lines, comments and blank lines included. It reads only the paths
+  in its `ROOTS` list, so a vendored dependency, a nested clone or scratch
+  notes never fail it: add a new top-level file there. It skips the listed
+  paths that the published crate leaves out, so it passes there too. It skips
+  `CHANGELOG.md`, which release-plz writes; fixtures, snapshots and fuzz
+  inputs; Markdown table rows and link definitions; and lines that
+  cargo-mutants has mutated, so that it never counts a mutant as caught.
+  `LONG_FUNCTIONS` lists the functions of files that another change is
+  rewriting; an entry that is no longer needed fails. The function scan does
+  not lex Rust: a line in a multi-line string that starts with `}` at the
+  function's indentation ends it early, so the function is measured short.
+- Doctests compile with `deny(warnings)`. When a new toolchain adds a warning
+  to an example, `cargo test --doc` fails on stable or on the MSRV: fix the
+  example in the pull request that sees it, instead of allowing the warning.
+
 ## As-delivered and dynamic checks
 
 Coverage is a meta-test of the test suite, not a substitute for testing the
@@ -580,9 +609,10 @@ wait for it. On a pull request, `required` is the one check that stands for
 all the others. No branch rule requires it yet, so wait for it to pass before
 merging.
 
-1. Stable debug, stable release, doctests, rustdoc, Clippy, and formatting
-   (`check`), the stable tests and doctests on macOS and Windows (`macos-26`
-   and `windows-2025`), and on 32-bit Linux (`i686`).
+1. Stable debug, stable release, doctests, rustdoc, and Clippy and formatting
+   of the crate and of the fuzz crate (`check`), the stable tests and doctests
+   on macOS and Windows (`macos-26` and `windows-2025`), and on 32-bit Linux
+   (`i686`).
 2. MSRV tests and doctests (`msrv`).
 3. 100% functions, instantiations, lines, regions, branches, and MC/DC
    (`coverage / branches (100%)` and `coverage / MC/DC (100%)`).
@@ -606,3 +636,5 @@ merging.
 10. The package check (`package`): the crate ships every tracked file except
     the repository-only ones, and its tests and doctests pass when run from
     the extracted `.crate` file.
+
+[TigerStyle]: https://github.com/tigerbeetle/tigerbeetle/blob/main/docs/TIGER_STYLE.md

@@ -23,7 +23,7 @@ pub struct SectionEditor<'e> {
 
 impl<'e> SectionEditor<'e> {
     /// A handle to `container` of `editor`.
-    pub(super) fn new(editor: &'e mut Editor, container: Container) -> SectionEditor<'e> {
+    pub(super) fn new(editor: &'e mut Editor, container: Container) -> Self {
         if let Container::Section(section) = &container {
             assert_eq!(section.kind(), SyntaxKind::SECTION);
             assert!(section.parent().is_some_and(|root| root == editor.root));

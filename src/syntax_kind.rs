@@ -5,7 +5,10 @@ use rowan::Language;
 /// Discriminant for every leaf and node in the INI syntax tree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u16)]
-#[allow(non_camel_case_types)]
+#[expect(
+    non_camel_case_types,
+    reason = "rowan's convention: kinds are named like constants"
+)]
 pub enum SyntaxKind {
     /// Spaces and tabs (never includes newlines).
     WHITESPACE = 0,
@@ -116,7 +119,7 @@ const _: () = assert!(
 
 impl From<SyntaxKind> for rowan::SyntaxKind {
     fn from(kind: SyntaxKind) -> Self {
-        rowan::SyntaxKind(kind as u16)
+        Self(kind as u16)
     }
 }
 

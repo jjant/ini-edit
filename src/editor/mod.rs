@@ -254,22 +254,22 @@
 //! use ini_edit::ParseOptions;
 //! use ini_edit::editor::{EditError, EditOptions, Editor, SeparatorSpacing};
 //!
-//! let src = "root = true\n[server]\nport = 8080\n[db]\nurl = x\n[s]\na = 1\nb = 2\nc = 3\n";
+//! let source = "root = true\n[server]\nport = 8080\n[db]\nurl = x\n[s]\na = 1\nb = 2\nc = 3\n";
 //! let parse_options = ParseOptions { allow_no_value: false, inline_comments: false };
 //! let edit_options = EditOptions { separator_spacing: SeparatorSpacing::Preserve };
-//! let mut editor = Editor::new(src, &parse_options, &edit_options)?;
+//! let mut editor = Editor::new(source, &parse_options, &edit_options)?;
 //! let mut server = editor.section_or_insert("server")?;
 //! server.set("port", "9090")?;
 //! server.append_entry("timeout", "30")?;
 //! if let Some(mut db) = editor.section("db") {           // a lookup never creates
 //!     db.rename_key("url", "dsn")?;                      // Ok(false) if absent
 //! }
-//! let mut s = editor.section_or_insert("s")?;
-//! let end = s.body_line_count();
-//! s.insert_body_lines(end, &["; x"])?;                   // no clamping
-//! s.remove_body_lines(0..2)?;                            // body lines: 0.4's 1..3
-//! for index in 0..s.entry_count() {
-//!     let mut entry = s.entry_at(index).expect("index < entry_count");
+//! let mut section = editor.section_or_insert("s")?;
+//! let end = section.body_line_count();
+//! section.insert_body_lines(end, &["; x"])?;             // no clamping
+//! section.remove_body_lines(0..2)?;                      // body lines: 0.4's 1..3
+//! for index in 0..section.entry_count() {
+//!     let mut entry = section.entry_at(index).expect("index < entry_count");
 //!     let key = format!("k{}", entry.index());
 //!     entry.set_key(&key)?;
 //! }
@@ -283,32 +283,36 @@
 //!
 //! The calls, mapped:
 //!
-//! - `Editor::new(s)`, `with_parse_options`, `with_edit_options`, `with_options`: one constructor,
-//!   `Editor::new(s, &parse_options, &edit_options)?`.
-//! - `ed.section(n)`, which created a missing section: `ed.section_or_insert(n)?` creates;
-//!   `ed.section(n)` looks up and returns an `Option`.
-//! - `ed.section("")`: `ed.preamble()`; `""` is not a section name.
-//! - `s.set`, `s.append_entry`, `e.set_key`, `e.set_value`, `e.remove()`: add `?`.
-//! - `s.insert_entry_at_line(0, k, v)`: `s.insert_entry(0, k, v)?`. With `n >= 1`:
-//!   `s.insert_entry(p, k, v)?`, where `p` is one past the body position of the `n`-th entry or
-//!   comment; past the last one, `s.append_entry(k, v)?`.
-//! - `s.remove_entry(k)` and `s.rename_key(a, b)` return `Result<bool, EditError>`; a rename
-//!   collision is `Err(DuplicateKey)` instead of `false`.
-//! - `s.entries_mut()`: `for j in 0..s.entry_count() { let mut e = s.entry_at(j).unwrap(); … }`,
-//!   in reverse to remove.
+//! - `Editor::new(source)`, `with_parse_options`, `with_edit_options`, `with_options`: one
+//!   constructor, `Editor::new(source, &parse_options, &edit_options)?`.
+//! - `editor.section(name)`, which created a missing section: `editor.section_or_insert(name)?`
+//!   creates; `editor.section(name)` looks up and returns an `Option`.
+//! - `editor.section("")`: `editor.preamble()`; `""` is not a section name.
+//! - `section.set`, `section.append_entry`, `entry.set_key`, `entry.set_value`, `entry.remove()`:
+//!   add `?`.
+//! - `section.insert_entry_at_line(line, key, value)` with `line == 0`:
+//!   `section.insert_entry(0, key, value)?`. With `line >= 1`:
+//!   `section.insert_entry(position, key, value)?`, where `position` is one past the body position
+//!   of the `line`-th entry or comment; past the last one, `section.append_entry(key, value)?`.
+//! - `section.remove_entry(key)` and `section.rename_key(old_key, new_key)` return
+//!   `Result<bool, EditError>`; a rename collision is `Err(DuplicateKey)` instead of `false`.
+//! - `section.entries_mut()`: a loop over `0..section.entry_count()` that takes each entry with
+//!   `section.entry_at(index)`, as in the example above; in reverse to remove.
 //! - `EntryEditor::index()`, a snapshot: `index()`, computed from the tree; `body_line()` is
 //!   new. `EntryEditor::key()` returns `String`.
-//! - `s.append_raw_lines(&["a", "b\n"])`: `s.append_body_lines(&["a", "b"])?`, one line per
-//!   element, without terminators.
-//! - `s.insert_raw_lines_at(i, ls)` with `i >= 1`: `s.insert_body_lines(i - 1, ls)?`. With
-//!   `i == 0`, above the header: insert at the end of the previous container,
-//!   `prev.insert_body_lines(prev.body_line_count(), ls)?`. With `usize::MAX`:
-//!   `let end = s.body_line_count(); s.insert_body_lines(end, ls)?`.
-//! - `s.remove_lines(a..b)` with `a >= 1`: `s.remove_body_lines(a - 1..b - 1)?`. With `a == 0`,
-//!   which removed the header: `s.remove()` for the section, or
-//!   `s.remove_body_lines(0..b - 1)?` for the body. With `usize::MAX` as the end:
-//!   `let end = s.body_line_count(); s.remove_body_lines(a - 1..end)?`. A reversed range, a no-op
-//!   in 0.4, is `Err(RangeOutOfRange)`.
+//! - `section.append_raw_lines(&["a", "b\n"])`: `section.append_body_lines(&["a", "b"])?`, one
+//!   line per element, without terminators.
+//! - `section.insert_raw_lines_at(index, lines)` with `index >= 1`:
+//!   `section.insert_body_lines(index - 1, lines)?`. With `index == 0`, above the header: insert
+//!   at the end of the previous container,
+//!   `previous.insert_body_lines(previous.body_line_count(), lines)?`. With `usize::MAX`:
+//!   `let end = section.body_line_count(); section.insert_body_lines(end, lines)?`.
+//! - `section.remove_lines(start..end)` with `start >= 1`:
+//!   `section.remove_body_lines(start - 1..end - 1)?`. With `start == 0`, which removed the
+//!   header: `section.remove()` for the section, or `section.remove_body_lines(0..end - 1)?` for
+//!   the body. With `usize::MAX` as the end:
+//!   `let count = section.body_line_count(); section.remove_body_lines(start - 1..count)?`. A
+//!   reversed range, a no-op in 0.4, is `Err(RangeOutOfRange)`.
 //! - `SeparatorSpacing::exact("\t", " ")`: add `?`; the `Exact` fields are [`Whitespace`].
 //! - Retained or detached handles: re-acquire a handle after other edits, and read through
 //!   `handle.editor()`.
@@ -419,10 +423,10 @@ impl Editor {
         source: &str,
         parse_options: &ParseOptions,
         edit_options: &EditOptions,
-    ) -> Result<Editor, EditError> {
+    ) -> Result<Self, EditError> {
         // Only unit tests of the limit use a smaller one. No test can reach the error, which
         // needs a 4 GiB source, so the check runs inside `inspect` rather than after a `?`.
-        Editor::with_len_max(source, parse_options, edit_options, LEN_MAX)
+        Self::with_len_max(source, parse_options, edit_options, LEN_MAX)
             .inspect(|editor| assert_eq!(editor.len_max, LEN_MAX))
     }
 
@@ -432,7 +436,7 @@ impl Editor {
         parse_options: &ParseOptions,
         edit_options: &EditOptions,
         len_max: usize,
-    ) -> Result<Editor, EditError> {
+    ) -> Result<Self, EditError> {
         assert!(len_max <= LEN_MAX);
         if source.len() > len_max {
             return Err(EditError::DocumentTooLarge {
@@ -443,7 +447,7 @@ impl Editor {
         let root = parse_with(source, parse_options)
             .syntax()
             .clone_for_update();
-        let editor = Editor {
+        let editor = Self {
             root,
             parse_options: parse_options.clone(),
             edit_options: edit_options.clone(),

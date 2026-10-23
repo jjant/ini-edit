@@ -1,4 +1,10 @@
-#![allow(missing_docs)]
+//! Parse, traversal and edit benchmarks, and comparisons with other INI crates.
+
+#![expect(
+    missing_docs,
+    reason = "criterion_group! defines a public function without documentation"
+)]
+
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use ini_edit::ParseOptions;
 use ini_edit::ast::{AstNode, File};

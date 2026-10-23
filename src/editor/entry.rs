@@ -22,7 +22,7 @@ pub struct EntryEditor<'s> {
 
 impl<'s> EntryEditor<'s> {
     /// A handle to `node`, an `ENTRY` in `editor`'s tree.
-    pub(super) fn new(editor: &'s mut Editor, node: SyntaxNode) -> EntryEditor<'s> {
+    pub(super) fn new(editor: &'s mut Editor, node: SyntaxNode) -> Self {
         assert_eq!(node.kind(), SyntaxKind::ENTRY);
         assert!(
             node.ancestors()
