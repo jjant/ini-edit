@@ -92,3 +92,15 @@ opt-level = 3
 
 [profile.dev.package.text-size]
 opt-level = 3
+
+# The extended tests: release speed with the checks of a debug build, which a
+# plain release build compiles out: debug_assert!, code under
+# cfg(debug_assertions) (among it the editor's reparse after every edit), and
+# arithmetic overflow checks. CI's extended-tests job runs the ignored tests
+# with `cargo test --profile release-checked`. It builds into
+# target/release-checked, so it leaves release builds, such as the scaling
+# probe, untouched.
+[profile.release-checked]
+inherits = "release"
+debug-assertions = true
+overflow-checks = true

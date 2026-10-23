@@ -4,7 +4,19 @@ import argparse
 import hashlib
 from pathlib import Path
 
-TARGETS = ("round_trip", "editor", "editor_reparse", "editor_stateful", "generated_edits")
+TARGETS = (
+    "round_trip",
+    "editor",
+    "editor_reparse",
+    "editor_stateful",
+    "generated_edits",
+    "inputs",
+)
+# tests/support/editor_inputs.rs PIECES: the hostile strings of the normal and extended tests.
+PIECES = (
+    *("", " ", "\t", "\n", "\r", "\r\n", "=", ":"),
+    *("[", "]", ";", "#", "\\", "\ufeff", "a", "b"),
+)
 REPO = Path(__file__).resolve().parents[2]
 
 
@@ -45,6 +57,19 @@ def seed_corpus(root):
         data[3] = seed // operations % 3
         data[4] = seed // (operations * 3) % 4
         add("generated_edits", data)
+    # tests/support/editor_inputs.rs check: a selector byte (parser options in bits 0 and 1,
+    # spacing in the rest, modulo 3) and a document byte, then the text and, for Exact spacing,
+    # the whitespace before and after the separator, separated by 0xFF bytes. Every piece goes
+    # into every document. The selector steps with both, so that each document and each piece
+    # gets all 12 selectors: every option set with every spacing.
+    documents = 14  # tests/support/editor_inputs.rs DOCUMENTS
+    for document in range(documents):
+        for index, piece in enumerate(PIECES):
+            selector = (document + index) % 12
+            data = bytearray((selector, document)) + piece.encode()
+            if selector >> 2 == 2:
+                data += b"\xff\t\xff  "
+            add("inputs", data)
 
 
 if __name__ == "__main__":

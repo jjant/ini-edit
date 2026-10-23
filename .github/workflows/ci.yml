@@ -236,18 +236,25 @@ jobs:
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      # The two test steps use the release-checked profile of Cargo.toml:
+      # release speed with the checks of a debug build, which a plain release
+      # build compiles out: debug_assert!, code under cfg(debug_assertions)
+      # such as the editor's reparse after every edit, and arithmetic
+      # overflow checks. The scaling probe below keeps the release profile as
+      # it ships, so that its timings measure the shipped code.
       - name: Exhaustive inputs and large documents
-        env:
-          # Release speed with the checks of a debug build, which a plain
-          # release build compiles out: debug_assert!, code under
-          # cfg(debug_assertions), and arithmetic overflow checks. The
-          # scaling probe below keeps the release profile as it ships, so
-          # that its timings measure the shipped code.
-          CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS: "true"
-          CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS: "true"
         run: |
-          cargo test --locked --release --test exhaustive_parser --test stress \
-            -- --include-ignored
+          cargo test --locked --profile release-checked \
+            --test exhaustive_parser --test stress -- --include-ignored
+      - name: Extended editor oracles
+        # Only the ignored tests: the check job runs the others. On four
+        # threads of a developer machine they take about two minutes, almost
+        # all of it the three-piece hostile products (TESTING.md lists each
+        # test). The job's other steps take about six minutes on CI, so the
+        # job fits its 15 minutes even on a runner three times as slow.
+        run: |
+          cargo test --locked --profile release-checked --test fuzz_regressions \
+            -- --ignored
       - name: Build isolated scaling probe
         run: cargo build --locked --release --example scaling_probe
       - name: Check CPU and peak-memory growth
@@ -474,13 +481,13 @@ jobs:
   fuzz:
     runs-on: ubuntu-24.04
     # Scheduled runs, and pushes whose version is not released yet, fuzz each
-    # of the five targets for 15 minutes; the longest observed run took 76
-    # minutes including the builds.
-    timeout-minutes: 100
+    # of the six targets for 15 minutes. With five targets, the longest
+    # observed run took 76 minutes including the builds; the sixth adds 15.
+    timeout-minutes: 120
     env:
       # The only list of fuzz targets in this file. A step below checks it
       # against fuzz/Cargo.toml, so a new target cannot be skipped silently.
-      FUZZ_TARGETS: round_trip editor editor_reparse editor_stateful generated_edits
+      FUZZ_TARGETS: round_trip editor editor_reparse editor_stateful generated_edits inputs
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -602,6 +609,8 @@ jobs:
               max_len=515
             elif [ "$target" = generated_edits ]; then
               max_len=4096
+            elif [ "$target" = inputs ]; then
+              max_len=256
             fi
             cargo fuzz run \
               --target x86_64-unknown-linux-gnu "$target" -- \

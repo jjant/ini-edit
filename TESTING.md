@@ -108,12 +108,12 @@ coverage run, mutation run, and fuzz build checks them.
   CI prints caught mutations as well as timeouts and publishes a count table
   in the job summary. Without `--caught`, cargo-mutants hides ordinary test
   failures, which can make a healthy run appear to consist only of timeouts.
-- Five libFuzzer targets independently stress round trips and
-  arbitrary editor operation sequences: every public method of `Editor`,
-  `SectionEditor`, and `EntryEditor` with arbitrary strings, positions, and
-  ranges, each call checked for C1, C2, C3, and the
-  same result, text, and tree on an editor reopened before it, plus the
-  identity property of empty insertions.
+- Six libFuzzer targets independently stress round trips, arbitrary editor
+  input (see the hostile-input oracle below), and arbitrary editor operation
+  sequences: every public method of `Editor`, `SectionEditor`, and
+  `EntryEditor` with arbitrary strings, positions, and ranges, each call
+  checked for C1, C2, C3, and the same result, text, and tree on an editor
+  reopened before it, plus the identity property of empty insertions.
   `cargo fuzz` builds them with AddressSanitizer, debug assertions, and
   overflow checks, and libFuzzer checks for leaks with LeakSanitizer.
   The round-trip target also requires every line, including malformed ones,
@@ -149,8 +149,21 @@ coverage run, mutation run, and fuzz build checks them.
   string of up to two of ten pieces, in five documents, under two option sets.
   `#[ignore]` tests run every string of up to two, and of up to three, of all
   16 pieces, in 14 documents, under every option set and spacing (see below).
+  The `inputs` fuzz target writes one arbitrary string of up to 256 bytes at
+  every site of one of those documents, under fuzzed parser options and
+  spacing; fuzzed `Exact` whitespace must be refused exactly when it is more
+  than spaces and tabs.
   A random walk applies hostile operations to hostile documents with the same
-  per-call checks as the editor fuzz target.
+  per-call checks as the editor fuzz target: 300 documents of 12 steps in
+  normal tests, and 60,000 in an `#[ignore]` test.
+- The grammar the `editor` module documents for keys, values, section names,
+  and separator spacing is also written as plain predicates, one per sentence
+  of the documentation, which a test requires to be there verbatim. For every
+  string of up to two of the 16 pieces and `λ` (272 strings), under all four
+  option sets, each predicate must agree with what `append_entry` (key and
+  value), `set` (value), `section_or_insert` (name), and `Whitespace::new`
+  accept, so the documentation and the behavior cannot drift apart. An
+  `#[ignore]` test does the same for up to three pieces (4,336 strings).
 - A generated-document model constructs source text and expected meaning
   together, without parsing to obtain the expected result. It varies section
   and key names, duplicates, Unicode, BOMs, separators, indentation, comments,
@@ -179,31 +192,31 @@ coverage run, mutation run, and fuzz build checks them.
 - Stable tests and doctests run on Linux, macOS, and Windows, and on 32-bit
   Linux.
 
-The bounded exhaustive test, the corruption shards, and the large-input tests
-are ignored in ordinary test runs and mutation testing; the corruption sample
-runs in both. The `extended-tests` CI job runs them explicitly in release mode
-and saves the CPU/memory measurements as an artifact. The tests keep the
-checks of a debug build, which a plain release build compiles out:
-`debug_assert!`, code under `cfg(debug_assertions)`, and arithmetic overflow
-checks. A failed check panics and fails its test. The scaling probe is built
-with the release profile as it ships, so that its timings measure the shipped
-code:
+The bounded exhaustive test, the corruption shards, the large-input tests,
+and the editor's extended oracles are ignored in ordinary test runs and
+mutation testing; the corruption sample runs in both. The `extended-tests` CI
+job runs them explicitly and saves the CPU/memory measurements as an artifact.
+It builds them with the `release-checked` profile of `Cargo.toml`: release
+speed with the checks of a debug build, which a plain release build compiles
+out: `debug_assert!`, code under `cfg(debug_assertions)` (among it the
+editor's reparse after every edit), and arithmetic overflow checks. A failed
+check panics and fails its test. The scaling probe is built with the release
+profile as it ships, so that its timings measure the shipped code:
 
 ```sh
-CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS=true \
-  cargo test --release --test exhaustive_parser --test stress -- --include-ignored
+cargo test --profile release-checked --test exhaustive_parser --test stress -- --include-ignored
+cargo test --profile release-checked --test fuzz_regressions -- --ignored
 cargo build --release --example scaling_probe
 python3 .github/scripts/check_scaling.py
 ```
 
-The editor's extended oracles in `tests/fuzz_regressions.rs` are ignored too:
-the reload triples, the full two- and three-piece hostile-input products, and
-a random walk over 60,000 seeds. No CI job runs them yet, so run them by hand
-before changing the editor; together they take under two minutes:
-
-```sh
-cargo test --release --test fuzz_regressions -- --ignored
-```
+The editor's extended oracles in `tests/fuzz_regressions.rs` are the reload
+triples (187,500 sequences), the full two- and three-piece hostile-input
+products (391,680 and 5,850,720 cases), a random walk over 60,000 seeds of 12
+steps, and the grammar over three pieces. Run alone with that profile on a
+developer machine on 2026-10-23, they took 19, 9, 128, 17, and 0.6 seconds. On
+four test threads, `--test fuzz_regressions -- --ignored` therefore takes about
+as long as the three-piece products. Run them before changing the editor.
 
 The corruption test runs as eight tests, `corruption::shard_0` through
 `corruption::shard_7`. Each one corrupts every eighth line of every fixture, so
@@ -268,10 +281,11 @@ Which of them a run checks depends on its build; the tiers are listed below.
 Every build checks the always-on `assert!`s. Debug test runs, coverage,
 cargo-mutants and the fuzz targets also check the `debug_assert!`s and the
 O(document) checks, and Miri checks all but the O(document) ones. The
-`extended-tests` CI job runs the bounded exhaustive inputs, the corruption
-shards and the large-input tests in plain `--release`, so there they check
-only the always-on tier. The last item below shows how to run them with the
-others.
+`extended-tests` CI job builds the bounded exhaustive inputs, the corruption
+shards, the large-input tests and the editor's extended oracles with the
+`release-checked` profile, so it checks every tier at release speed. A plain
+`--release` build, such as the `check` job's release test run, checks only the
+always-on tier. The last item below shows the extended commands.
 
 `parse_with` pairs its postconditions with the lexer's checks: every token is
 consumed once, and the offsets and the tree cover exactly the input. In debug
@@ -294,9 +308,10 @@ edit they make.
 - Checks that read the document again, such as summing the token lengths,
   scanning each token for line breaks, or comparing the tree's text with the
   input, are compiled only under `#[cfg(all(debug_assertions, not(miri)))]`.
-  Debug tests, coverage, cargo-mutants and cargo-fuzz (which enables debug
-  assertions by default) run them. Miri looks for undefined behavior, not
-  logic errors, and skipping them keeps its run time from multiplying.
+  Debug tests, coverage, cargo-mutants, cargo-fuzz (which enables debug
+  assertions by default) and builds with the `release-checked` profile run
+  them. Miri looks for undefined behavior, not logic errors, and skipping them
+  keeps its run time from multiplying.
 - Every loop that consumes input has a fixed upper bound or asserts that each
   iteration advances, so a step that stops advancing panics at once instead of
   hanging.
@@ -329,13 +344,14 @@ edit they make.
   can cause gets a `# Panics` section instead.
 - A predicate that lexes caller text lexes it in a mid-document position, so
   that the leading-BOM rule cannot apply to it.
-- `--release` compiles out the debug-only checks. To run the exhaustive,
-  corruption and large-input suites with them at release speed:
+- `--release` compiles out the debug-only checks. The `release-checked`
+  profile of `Cargo.toml` keeps them and the overflow checks at release speed.
+  The `extended-tests` job runs the exhaustive, corruption and large-input
+  suites and the editor's extended oracles with it:
 
   ```sh
-  CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true \
-  CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS=true \
-    cargo test --release --test exhaustive_parser --test stress -- --include-ignored
+  cargo test --profile release-checked --test exhaustive_parser --test stress -- --include-ignored
+  cargo test --profile release-checked --test fuzz_regressions -- --ignored
   ```
 
 ## Fuzz corpus and reproducibility
@@ -346,8 +362,8 @@ timeout reproducer. Like SQLite's fuzzcheck, `tests/fuzz_regressions.rs` runs
 each file through its target's oracle in every `cargo test`, so past findings
 are checked on every platform and on the MSRV without nightly or libFuzzer.
 An input fails if it panics or runs for more than 10 seconds, the timeout CI
-fuzzes with, and the failure names the input file. The current 3,732 inputs
-(155 KiB) replay in a few seconds in a debug build. The test also fails if a
+fuzzes with, and the failure names the input file. The current 4,799 inputs
+(168 KiB) replay in a few seconds in a debug build. The test also fails if a
 fuzz target lacks committed inputs or a replay test. The same test binary runs
 the fixed sweeps of the shared oracles, because cargo-mutants rebuilds every
 test binary for every mutant. The published package excludes the inputs, this
@@ -383,7 +399,7 @@ stops before deleting anything if the merge fails or keeps no input:
 ```sh
 (
   set -eu
-  target=editor_stateful max_len=515 # 4096 for generated_edits, else 16384
+  target=editor_stateful max_len=515 # see the table of input lengths below
   committed=tests/fuzz_regressions/$target learned=fuzz/corpus/$target
   inputs=$(mktemp -d) merged=$(mktemp -d)
   trap 'rm -r "$inputs" "$merged"' EXIT
@@ -405,7 +421,7 @@ stops before deleting anything if the merge fails or keeps no input:
 ```
 
 `.gitattributes` marks these files `binary`. Under the repository's
-`text=auto eol=lf` default, Git would rewrite CRLF line endings in 17 of the
+`text=auto eol=lf` default, Git would rewrite CRLF line endings in 27 of the
 current inputs.
 
 CI restores the learned corpus, then adds deterministic boundary cases,
@@ -419,10 +435,17 @@ Crash and timeout inputs are uploaded separately and retained for 90 days,
 which is still finite: that is why reproducers must be committed.
 
 Each fuzz input has a 10-second timeout and each target has a 1 GiB RSS limit.
-Input lengths are bounded independently: 16,384 bytes for the original three
-targets, 515 bytes for the stateful model, and 4,096 bytes for the
-generated-document model. Local reproduction, also starting from the committed
-inputs (libFuzzer reads every corpus directory but adds inputs to the first):
+Input lengths are bounded per target (`-max_len`):
+
+| Target | Input | Bytes at most |
+|---|---|---:|
+| `round_trip`, `editor`, `editor_reparse` | a document or an operation sequence | 16,384 |
+| `editor_stateful` | 3 header bytes and 128 operations of 4 bytes | 515 |
+| `generated_edits` | selector bytes, then the bytes that generate a document | 4,096 |
+| `inputs` | 2 selector bytes and up to three strings | 256 |
+
+Local reproduction, also starting from the committed inputs (libFuzzer reads
+every corpus directory but adds inputs to the first):
 
 ```sh
 python3 .github/scripts/seed_fuzz_corpus.py
@@ -594,7 +617,7 @@ crates.io already has it, and creates the tag after the upload.
 Until that tag exists, every push to `main` fuzzes each target for 15 minutes,
 as on Sundays, instead of 60 seconds. The 15-minute campaigns of item 7
 therefore run on the commit that `release` publishes, and the release waits
-for them: it starts about 80 minutes after the merge, when `fuzz` ends.
+for them: it starts about 95 minutes after the merge, when `fuzz` ends.
 
 A failed or cancelled job stops the release. If a job failed for a reason
 outside the commit, such as a flaky runner, re-running the failed jobs of that
@@ -622,11 +645,11 @@ merging.
    suite under AddressSanitizer and LeakSanitizer (`sanitizers`).
 5. Dependency audit and policy checks (`dependencies`).
 6. Full mutation test (`mutation (1/4)` through `mutation (4/4)`).
-7. All five fuzz targets (`fuzz`), for 15 minutes each on the published
+7. All six fuzz targets (`fuzz`), for 15 minutes each on the published
    commit, as on Sundays.
-8. Bounded exhaustive, fixture corruption, and large-input tests with debug
-   assertions and overflow checks, and CPU/memory scaling tests
-   (`extended-tests`).
+8. Bounded exhaustive, fixture corruption, and large-input tests and the
+   editor's extended oracles, with debug assertions and overflow checks, and
+   CPU/memory scaling tests (`extended-tests`).
 9. A `fuzz/Cargo.lock` that matches the release version (`check`). `fuzz/` is
    a separate workspace, so the version bump does not reach its lockfile. The
    Release PR workflow commits
