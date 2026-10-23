@@ -26,24 +26,28 @@ CI requires these thresholds; exact counts grow as production code changes:
 | Branches | 100% |
 | MC/DC conditions | 100% |
 
-LLVM's MC/DC instrumentation is currently tied to
-`nightly-2025-06-01`. The other source and branch measurements use
-`nightly-2026-09-17`. Compiler versions produce slightly different region
+MC/DC is measured on `nightly-2025-08-08`, the one toolchain that CI pins
+besides the minimum supported Rust version: rustc removed its MC/DC
+instrumentation on that day
+([rust-lang/rust#144999](https://github.com/rust-lang/rust/pull/144999)), so
+no later nightly can measure it. The other source and branch measurements use
+the latest nightly. Compiler versions produce slightly different region
 counts, so CI requires 100% independently in each report.
 
 `cargo llvm-cov --lib` builds every dev-dependency for the library's unit
 tests, so the MC/DC job compiles them all with that 2025 nightly. Every
 dev-dependency, and every update of one, must build there as well as on the
-minimum supported Rust version. Criterion's zerocopy did not: it uses AVX-512
-types that the nightly had not stabilized yet, so the benchmark has a std-only
+minimum supported Rust version. Criterion's zerocopy did not build on
+nightly-2025-06-01, the MC/DC nightly at the time: it used AVX-512 types that
+this nightly had not stabilized yet, so the benchmark now has a std-only
 harness.
 
 Run the same measurements locally:
 
 ```sh
-cargo +nightly-2026-09-17 llvm-cov --lib --all-features
-cargo +nightly-2026-09-17 llvm-cov --lib --all-features --branch
-cargo +nightly-2025-06-01 llvm-cov --lib --all-features --mcdc
+cargo +nightly llvm-cov --lib --all-features
+cargo +nightly llvm-cov --lib --all-features --branch
+cargo +nightly-2025-08-08 llvm-cov --lib --all-features --mcdc
 ```
 
 Before switching between the two nightlies, delete `target/llvm-cov-target`
@@ -482,11 +486,11 @@ every corpus directory but adds inputs to the first):
 
 ```sh
 python3 .github/scripts/seed_fuzz_corpus.py
-cargo +nightly-2026-09-17 fuzz run generated_edits fuzz/corpus/generated_edits \
+cargo +nightly fuzz run generated_edits fuzz/corpus/generated_edits \
   tests/fuzz_regressions/generated_edits -- \
   -max_len=4096 -max_total_time=120 -timeout=10 -rss_limit_mb=1024
 # Replay a downloaded crash/timeout artifact:
-cargo +nightly-2026-09-17 fuzz run generated_edits path/to/reproducer
+cargo +nightly fuzz run generated_edits path/to/reproducer
 ```
 
 ## Style limits
@@ -562,10 +566,10 @@ cargo test --locked --target-dir target --doc --all-features
 ```
 
 The `sanitizers` job runs the complete suite and the doctests under
-AddressSanitizer and LeakSanitizer (`-Zsanitizer=address` on
-`nightly-2026-09-17`). AddressSanitizer stops a test binary at the first
-out-of-bounds or use-after-free access in the instrumented code, `rowan`'s
-unsafe code included. LeakSanitizer fails a test binary that exits with memory
+AddressSanitizer and LeakSanitizer (`-Zsanitizer=address` on the latest
+nightly). AddressSanitizer stops a test binary at the first out-of-bounds or
+use-after-free access in the instrumented code, `rowan`'s unsafe code
+included. LeakSanitizer fails a test binary that exits with memory
 nothing can reach any more, such as a `rowan` tree that a forgotten handle
 keeps alive. The fuzz targets already run under both, but only with the
 oracles in `tests/support/`; this job adds every other test, among them the
@@ -587,8 +591,8 @@ source lines through binutils when `llvm-symbolizer` is not installed:
 (
   export RUSTFLAGS=-Zsanitizer=address RUSTDOCFLAGS=-Zsanitizer=address
   export ASAN_OPTIONS=detect_leaks=1:allow_addr2line=1
-  cargo +nightly-2026-09-17 test --target x86_64-unknown-linux-gnu --all-targets --all-features
-  cargo +nightly-2026-09-17 test --target x86_64-unknown-linux-gnu --doc --all-features
+  cargo +nightly test --target x86_64-unknown-linux-gnu --all-targets --all-features
+  cargo +nightly test --target x86_64-unknown-linux-gnu --doc --all-features
 )
 ```
 
@@ -617,8 +621,8 @@ add`:
 
 ```sh
 for target in x86_64-unknown-linux-gnu i686-unknown-linux-gnu s390x-unknown-linux-gnu; do
-  cargo +nightly-2026-09-17 miri test --target "$target" --lib lexer::tests::
-  cargo +nightly-2026-09-17 miri test --target "$target" --test exhaustive_parser \
+  cargo +nightly miri test --target "$target" --lib lexer::tests::
+  cargo +nightly miri test --target "$target" --test exhaustive_parser \
     lexer_and_diagnostic_contracts -- --exact
 done
 ```
@@ -668,8 +672,8 @@ merging.
 
 1. Stable debug, stable release, doctests, rustdoc, and Clippy and formatting
    of the crate and of the fuzz crate (`check`), the stable tests and doctests
-   on macOS and Windows (`macos-26` and `windows-2025`), and on 32-bit Linux
-   (`i686`).
+   on macOS and Windows (`macos-latest` and `windows-latest`), and on 32-bit
+   Linux (`i686`).
 2. MSRV tests and doctests (`msrv`).
 3. 100% functions, instantiations, lines, regions, branches, and MC/DC
    (`coverage / branches (100%)` and `coverage / MC/DC (100%)`).

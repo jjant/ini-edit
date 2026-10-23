@@ -17,24 +17,26 @@ concurrency:
 
 jobs:
   release-pr:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           # Neither release-plz nor the step after it pushes with git (both
           # commit through the GitHub API), so the checkout token need not
           # stay in .git/config.
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+      - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
-      # v0.5.140 runs release-plz 0.3.170, which opened the 0.4.0 release PR.
+      # Without a version input, the action installs the release-plz that its
+      # newest v0.5 release names: 0.4.0 on 2026-10-23. release-plz 0.3.170
+      # opened the ini-edit 0.4.0 release pull request.
       # Preparing a crates.io release needs no registry token, so none is
       # passed to this job.
       - id: release-plz
-        uses: release-plz/action@18641b6c63063cc5ff8786ebf69cd57e8541bae1 # v0.5.140
+        uses: release-plz/action@v0.5
         with:
           command: release-pr
         env:

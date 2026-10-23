@@ -22,22 +22,27 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: --deny warnings
 
-# Every action is pinned to a full commit SHA; Dependabot proposes updates.
-# Runner images are pinned to what the -latest labels resolved to on
-# 2026-10-18 (ubuntu-24.04, macos-26, windows-2025).
+# Actions, tools, runner images and toolchains float, so every new release
+# reaches CI without a pull request: each action follows its major tag
+# (dtolnay/rust-toolchain its master branch, as its README asks when
+# `toolchain:` is set), each tool installs its newest release, runners use the
+# -latest images, and the toolchains are stable and nightly. A new lint,
+# nightly or tool can therefore turn a run red; docs/standards.md accepts that.
+# Two toolchains stay fixed: the msrv job's, which Cargo.toml's rust-version
+# sets, and the MC/DC job's in coverage.yml, the last nightly with MC/DC.
 jobs:
   check:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+      - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
           components: clippy, rustfmt
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: Swatinem/rust-cache@v2
 
       - name: Format check
         run: cargo fmt --all --check
@@ -86,17 +91,36 @@ jobs:
           cargo clippy --locked --manifest-path fuzz/Cargo.toml --all-targets -- \
             --deny warnings
 
+  # The oldest compiler that Cargo.toml's rust-version admits, read from there
+  # so that ci.yml does not repeat it. README.md, CONTRIBUTING.md and
+  # fuzz/Cargo.toml state the version too; update them with it.
   msrv:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+      - name: Read rust-version from Cargo.toml
+        id: msrv
+        # The runner image's own cargo reads the manifest; --no-deps resolves
+        # no dependency.
+        shell: bash
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 \
+            | jq --exit-status --raw-output \
+              '.packages[] | select(.name == "ini-edit") | .rust_version')
+          # A rust-version such as 1.85 admits 1.85.0, but rustup's 1.85 is the
+          # newest 1.85.x release, so a version without a patch number gets .0.
+          if [[ "$version" =~ ^[0-9]+\.[0-9]+$ ]]; then
+            version="$version.0"
+          fi
+          echo "Minimum supported Rust version: $version"
+          echo "toolchain=$version" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.85.0
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+          toolchain: ${{ steps.msrv.outputs.toolchain }}
+      - uses: Swatinem/rust-cache@v2
       - run: cargo test --locked --all-targets --all-features
       # --all-targets builds every target but runs no doctests.
       - run: cargo test --locked --doc --all-features
@@ -108,15 +132,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-26, windows-2025]
+        os: [macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+      - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: Swatinem/rust-cache@v2
       - run: cargo test --locked --all-targets --all-features
       # --all-targets builds every target but runs no doctests.
       - run: cargo test --locked --doc --all-features
@@ -125,17 +149,17 @@ jobs:
   # there natively: the runner's 64-bit kernel runs 32-bit programs, and
   # gcc-multilib provides the 32-bit C library and GCC files to link them.
   i686:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+      - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
           targets: i686-unknown-linux-gnu
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: Swatinem/rust-cache@v2
       - name: Install the 32-bit C library and GCC support
         # GitHub asks to refresh the package index first: the one in the image
         # can name package versions that the mirrors no longer serve.
@@ -152,13 +176,13 @@ jobs:
   # and crater runs test. It fails if a test stops shipping or ships without
   # a file it reads.
   package:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+      - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
       - name: Ship every tracked file except the repository-only ones
@@ -226,16 +250,16 @@ jobs:
           cargo test --locked --doc --all-features
 
   extended-tests:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+      - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: Swatinem/rust-cache@v2
       # The two test steps use the release-checked profile of Cargo.toml:
       # release speed with the checks of a debug build, which a plain release
       # build compiles out: debug_assert!, code under cfg(debug_assertions)
@@ -261,7 +285,7 @@ jobs:
         run: python3 .github/scripts/check_scaling.py
       - name: Preserve scaling measurements
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@v7
         with:
           name: input-scaling-${{ github.run_id }}-${{ github.run_attempt }}
           path: target/scaling-report.json
@@ -272,7 +296,7 @@ jobs:
   # only its targets' oracles under them; this job runs every test, doctests
   # included.
   sanitizers:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
       # Replaces the workflow's RUSTFLAGS, so it repeats --deny warnings.
@@ -286,14 +310,14 @@ jobs:
       # when llvm-symbolizer is not installed.
       ASAN_OPTIONS: detect_leaks=1:allow_addr2line=1
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+      - uses: dtolnay/rust-toolchain@master
         with:
-          # -Zsanitizer is unstable; Miri and the fuzz job use this nightly too.
-          toolchain: nightly-2026-09-17
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+          # -Zsanitizer is unstable, so this job needs a nightly.
+          toolchain: nightly
+      - uses: Swatinem/rust-cache@v2
       # Both steps need --target: with it, RUSTFLAGS reach only the code under
       # test, not the build scripts and proc macros that run during the build.
       # rustc refuses to build a proc macro with a sanitizer.
@@ -303,17 +327,17 @@ jobs:
         run: cargo test --locked --target x86_64-unknown-linux-gnu --doc --all-features
 
   miri-strict:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+      - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2026-09-17
+          toolchain: nightly
           components: miri, rust-src
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: Swatinem/rust-cache@v2
       - name: Lexer and diagnostics with borrow checking enabled
         run: |
           cargo miri test --locked --lib lexer::tests::
@@ -332,7 +356,7 @@ jobs:
 
   miri:
     name: miri (${{ matrix.partition }}/${{ strategy.job-total }})
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     # `cargo miri test` ran the 203 library tests one at a time in a single
     # process: 31.9 minutes on 2026-10-18 and up to 40 minutes before. nextest
     # gives each test its own Miri process and runs one per CPU, four on this
@@ -352,17 +376,17 @@ jobs:
       # Keep all other Miri checks enabled until rowan ships a fix.
       MIRIFLAGS: -Zmiri-disable-stacked-borrows
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+      - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2026-09-17
+          toolchain: nightly
           components: miri, rust-src
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - uses: taiki-e/install-action@9114bf4d891761788c546334fd37538eae1bf8b3 # v2.87.16
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
         with:
-          tool: cargo-nextest@0.9.145
+          tool: cargo-nextest
       - name: Library tests in this partition
         env:
           # Taken from the matrix itself, so every leg divides by the same
@@ -380,18 +404,18 @@ jobs:
             --partition "hash:$((PARTITION_INDEX + 1))/$PARTITION_COUNT"
 
   dependencies:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+      - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
-      - uses: taiki-e/install-action@9114bf4d891761788c546334fd37538eae1bf8b3 # v2.87.16
+      - uses: taiki-e/install-action@v2
         with:
-          tool: cargo-deny@0.20.2
+          tool: cargo-deny
       # deny.toml makes yanked crates and unsound or unmaintained advisories
       # errors, which covers everything `cargo audit --deny warnings` checked.
       - name: Advisories, yanked crates, licenses, duplicate dependencies, and sources
@@ -399,7 +423,7 @@ jobs:
 
   mutation:
     name: mutation (${{ matrix.shard }}/${{ strategy.job-total }})
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     # Unsharded, mutation testing took 19.8 minutes at the median and 24.7 at
     # most over the last 60 runs, depending on runner load. Every shard repeats
     # the setup and the 14-second baseline. Replaying the per-mutant times of
@@ -413,16 +437,16 @@ jobs:
         # The values only name the shards; the mutation step numbers them.
         shard: [1, 2, 3, 4]
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+      - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
-      - uses: taiki-e/install-action@9114bf4d891761788c546334fd37538eae1bf8b3 # v2.87.16
+      - uses: taiki-e/install-action@v2
         with:
-          tool: cargo-mutants@27.1.0,cargo-nextest@0.9.145
+          tool: cargo-mutants,cargo-nextest
       - name: Require no surviving mutation in this shard
         shell: bash
         env:
@@ -479,7 +503,7 @@ jobs:
           fi
 
   fuzz:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     # Scheduled runs, and pushes whose version is not released yet, fuzz each
     # of the six targets for 15 minutes. With five targets, the longest
     # observed run took 76 minutes including the builds; the sixth adds 15.
@@ -489,16 +513,16 @@ jobs:
       # against fuzz/Cargo.toml, so a new target cannot be skipped silently.
       FUZZ_TARGETS: round_trip editor editor_reparse editor_stateful generated_edits inputs
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+      - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2026-09-17
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - uses: taiki-e/install-action@9114bf4d891761788c546334fd37538eae1bf8b3 # v2.87.16
+          toolchain: nightly
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
         with:
-          tool: cargo-fuzz@0.13.2
+          tool: cargo-fuzz
       - name: Require FUZZ_TARGETS to name every fuzz target
         shell: bash
         run: |
@@ -521,7 +545,7 @@ jobs:
           fi
       - name: Restore learned fuzz corpus
         id: restore-corpus
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache/restore@v6
         with:
           path: fuzz/corpus
           # Corpus files are raw inputs that stay valid when dependencies
@@ -620,7 +644,7 @@ jobs:
           exit "$status"
       - name: Preserve crashes and timeout reproducers
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@v7
         with:
           name: fuzz-failures-${{ github.run_id }}-${{ github.run_attempt }}
           path: fuzz/artifacts
@@ -632,7 +656,7 @@ jobs:
           && github.ref == 'refs/heads/main'
           && github.event_name != 'pull_request'
           && steps.restore-corpus.outputs.cache-primary-key != ''
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache/save@v6
         with:
           path: fuzz/corpus
           key: ${{ steps.restore-corpus.outputs.cache-primary-key }}
@@ -667,12 +691,12 @@ jobs:
       - mutation
       - fuzz
       - coverage
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
       NEEDS: ${{ toJSON(needs) }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Require every other job to be a gate or the release
@@ -754,7 +778,7 @@ jobs:
     if: >-
       needs.required.result == 'success' && github.event_name == 'push'
       && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     # release-plz pushes tags and creates GitHub releases through the GitHub
     # API with the RELEASE_PLZ_TOKEN personal access token, so the automatic
@@ -767,17 +791,19 @@ jobs:
       group: publish
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           # release-plz does not push with git (tags are unsigned), so the
           # checkout token need not stay in .git/config.
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+      - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
-      # v0.5.140 runs release-plz 0.3.170, which published 0.4.0.
-      - uses: release-plz/action@18641b6c63063cc5ff8786ebf69cd57e8541bae1 # v0.5.140
+      # Without a version input, the action installs the release-plz that its
+      # newest v0.5 release names: 0.4.0 on 2026-10-23. release-plz 0.3.170
+      # published ini-edit 0.4.0.
+      - uses: release-plz/action@v0.5
         with:
           command: release
         env:

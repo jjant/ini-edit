@@ -22,8 +22,7 @@ confidence-threshold = 0.8
 [bans]
 # Two versions of one normal dependency fail, because users of the crate
 # compile both. Dev-dependencies only build this repository's tests and
-# tools, so they are exempt; they resolve two versions each of getrandom and
-# wit-bindgen today.
+# tools, so they are exempt; they resolve two versions of getrandom today.
 multiple-versions = "deny"
 multiple-versions-include-dev = false
 wildcards = "deny"

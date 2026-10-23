@@ -24,19 +24,19 @@ env:
 jobs:
   branch:
     name: branches (100%)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+      - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2026-09-17
+          toolchain: nightly
           components: llvm-tools-preview
-      - uses: taiki-e/install-action@9114bf4d891761788c546334fd37538eae1bf8b3 # v2.87.16
+      - uses: taiki-e/install-action@v2
         with:
-          tool: cargo-llvm-cov@0.9.1
+          tool: cargo-llvm-cov
       # One instrumented run feeds both the gate and the Codecov upload.
       - name: Measure production source with branch coverage
         run: |
@@ -59,7 +59,7 @@ jobs:
             | all(. == 100)
           ' branch-coverage.json
       - name: Upload to Codecov
-        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: lcov.info
@@ -70,19 +70,23 @@ jobs:
 
   mcdc:
     name: MC/DC (100%)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+      - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2025-06-01
+          # Pinned because nothing newer can measure MC/DC: rustc removed its
+          # MC/DC instrumentation (rust-lang/rust#144999), and this is the last
+          # nightly that has it. Every dev-dependency must build here too,
+          # since `cargo llvm-cov --lib` compiles them all.
+          toolchain: nightly-2025-08-08
           components: llvm-tools-preview
-      - uses: taiki-e/install-action@9114bf4d891761788c546334fd37538eae1bf8b3 # v2.87.16
+      - uses: taiki-e/install-action@v2
         with:
-          tool: cargo-llvm-cov@0.9.1
+          tool: cargo-llvm-cov
       - name: Measure and require 100% MC/DC
         run: |
           cargo llvm-cov clean --workspace

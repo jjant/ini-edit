@@ -64,6 +64,10 @@ rowan = "0.16"
 
 # rust-ini and configparser are independent parsers: the differential tests
 # compare ini-edit's values with theirs, and the benchmark times all three.
+# Each requirement is a caret range from a release that the tests and the
+# benchmark work with; older ones, such as rust-ini 0.21.0 and configparser
+# 3.0.0, lack APIs they call. Cargo.lock records the newest releases, and
+# `cargo update` moves it.
 [dev-dependencies]
 insta = "1"
 rust-ini = "0.21.3"
