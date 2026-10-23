@@ -18,7 +18,10 @@ updates:
         patterns: ["*"]
 
   # fuzz/ is a separate workspace with its own lockfile. The msrv job rejects
-  # updates that need a newer compiler than rust-version.
+  # / updates that need a newer compiler than rust-version; /fuzz updates only
+  # have to build on the fuzz job's pinned nightly. A / update that raises a
+  # normal dependency's requirement in Cargo.toml can leave fuzz/Cargo.lock
+  # stale; CI then says how to refresh it.
   - package-ecosystem: cargo
     directories: ["/", "/fuzz"]
     schedule:

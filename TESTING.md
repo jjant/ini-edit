@@ -205,3 +205,9 @@ Before release, all required GitHub checks must be green:
 6. Full mutation test.
 7. All five fuzz targets.
 8. Bounded exhaustive, large-input, and CPU/memory scaling tests.
+9. A `fuzz/Cargo.lock` that matches the release version. `fuzz/` is a
+   separate workspace, so the version bump does not reach its lockfile. The
+   Release PR workflow commits
+   `cargo update --manifest-path fuzz/Cargo.toml --package ini-edit` to the
+   release pull request every time it opens or rewrites it. If that step
+   fails, run the command and commit `fuzz/Cargo.lock` by hand.
