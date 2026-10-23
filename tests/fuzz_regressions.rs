@@ -159,13 +159,13 @@ fn hostile_input_products_of_three_pieces() {
 #[test]
 fn the_hostile_input_reference_finds_an_existing_section() {
     let document = "[s]\na=1\nb=2\n";
-    let reference = editor_inputs::reference(
+    let reference = editor_inputs::reference(editor_inputs::Case {
         document,
-        &options(false, false),
-        &SeparatorSpacing::Preserve,
-        editor_inputs::Site::Section,
-        "s",
-    );
+        options: &options(false, false),
+        spacing: &SeparatorSpacing::Preserve,
+        site: editor_inputs::Site::Section,
+        text: "s",
+    });
     assert_eq!(reference, Some((true, document.to_owned())));
 }
 

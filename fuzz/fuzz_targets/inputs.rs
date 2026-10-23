@@ -1,3 +1,6 @@
+//! Arbitrary keys, values, section names, spacing and raw lines against the bidirectional
+//! reference: the oracle in `tests/support/editor_inputs.rs`.
+
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;

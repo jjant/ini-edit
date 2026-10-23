@@ -232,17 +232,17 @@ fn gaps(spacing: &SeparatorSpacing) -> (&str, &str) {
 /// One case of the product: `text` written at `site` of `document`, read with `options`, with
 /// new entries written with `spacing`.
 #[derive(Clone, Copy, Debug)]
-struct Case<'case> {
-    document: &'case str,
-    options: &'case ParseOptions,
-    spacing: &'case SeparatorSpacing,
-    site: Site,
-    text: &'case str,
+pub(crate) struct Case<'case> {
+    pub(crate) document: &'case str,
+    pub(crate) options: &'case ParseOptions,
+    pub(crate) spacing: &'case SeparatorSpacing,
+    pub(crate) site: Site,
+    pub(crate) text: &'case str,
 }
 
 /// Whether the edit of `case` is representable, and the reference's text; `None` when the site
 /// does not apply to the document.
-fn reference(case: Case<'_>) -> Option<(bool, String)> {
+pub(crate) fn reference(case: Case<'_>) -> Option<(bool, String)> {
     let Case {
         document,
         options,
@@ -735,7 +735,7 @@ const FIELD_SEPARATOR: u8 = 0xFF;
 /// One document per input, not all 14: the fuzzer checks as many cases per second either way,
 /// but it steers each string to the documents where it finds new behavior, and each committed
 /// input replays in a fourteenth of the time.
-pub fn check(data: &[u8]) {
+pub(crate) fn check(data: &[u8]) {
     let selector = data.first().copied().unwrap_or(0);
     let document = DOCUMENTS[usize::from(data.get(1).copied().unwrap_or(0)) % DOCUMENTS.len()];
     let mut fields = data
@@ -760,7 +760,14 @@ pub fn check(data: &[u8]) {
     };
     let mut counts = Counts::default();
     for site in SITES {
-        check_case(document, &options, &spacing, site, &text, &mut counts);
+        let case = Case {
+            document,
+            options: &options,
+            spacing: &spacing,
+            site,
+            text: &text,
+        };
+        check_case(case, &mut counts);
     }
     assert_eq!(
         (
