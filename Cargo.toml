@@ -21,7 +21,7 @@ all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 
 [dependencies]
-rowan = "0.16"
+rowan = "0.17"
 
 [dev-dependencies]
 insta = "1"
