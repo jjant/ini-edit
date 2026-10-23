@@ -40,6 +40,15 @@ RUSTFLAGS='--cfg no_zerocopy_simd_x86_avx12_1_89_0' \
   cargo +nightly-2025-06-01 llvm-cov --lib --all-features --mcdc
 ```
 
+Before switching between the two nightlies, delete `target/llvm-cov-target`
+or run `cargo llvm-cov clean` without `--workspace`. The two nightlies' cargo
+put the instrumented test binary in different directories, so
+`cargo llvm-cov clean --workspace`, and the partial clean that every
+`cargo llvm-cov` run starts with, leave the other nightly's binary in place.
+The report then also counts that binary's copy of the code, which never ran,
+and falls below 100%. CI is not affected, because each job starts from a clean
+checkout.
+
 ## Independent test layers
 
 - Unit tests cover internal lexer, parser, AST, and editor invariants.
@@ -79,8 +88,10 @@ RUSTFLAGS='--cfg no_zerocopy_simd_x86_avx12_1_89_0' \
   both the live AST and the reparsed output after every operation. Following
   [TigerStyle's paired assertions](https://github.com/tigerbeetle/tigerbeetle/blob/main/docs/TIGER_STYLE.md),
   successful serialization alone is not evidence that edits preserved meaning.
-- Mutation testing requires zero surviving source mutations. Mutations that
-  destroy lexer/parser progress are detected by a strict timeout.
+- Mutation testing requires zero surviving source mutations. A mutation that
+  stops a lexer or parser loop from advancing fails that loop's progress
+  assertion at once (see [Assertions](#assertions)), so a timeout in the lexer
+  or parser points to a loop without one and is worth investigating.
   CI prints caught mutations as well as timeouts and publishes a count table
   in the job summary. Without `--caught`, cargo-mutants hides ordinary test
   failures, which can make a healthy run appear to consist only of timeouts.
@@ -176,6 +187,90 @@ Distinct-entry measurements use 65,536, 131,072, and 262,144 entries. Smaller
 CI runners and produced a false alarm on the same source tree. The larger
 window checks sustained growth with the same ratio bound; other workload
 families use 16,384, 32,768, and 65,536 units.
+
+## Assertions
+
+The lexer and the parser check their own invariants, following TigerStyle
+("assert all function arguments and return values, pre/postconditions and
+invariants") and SQLite's use of `assert()` for "function preconditions and
+postconditions and loop invariants". A broken invariant panics where it is
+detected; it never gets a silent fallback. These assertions play the role of
+SQLite's `ALWAYS()` and `NEVER()`, on top of what each test layer's own oracle
+compares.
+
+Which of them a run checks depends on its build; the tiers are listed below.
+Every build checks the always-on `assert!`s. Debug test runs, coverage,
+cargo-mutants and the fuzz targets also check the `debug_assert!`s and the
+O(document) checks, and Miri checks all but the O(document) ones. The
+`extended-tests` CI job runs the bounded exhaustive inputs, the corruption
+shards and the large-input tests in plain `--release`, so there they check
+only the always-on tier. The last item below shows how to run them with the
+others.
+
+`parse_with` pairs its postconditions with the lexer's checks: every token is
+consumed once, and the offsets and the tree cover exactly the input. In debug
+builds it also runs `debug_assert_line_nodes`, which checks that every
+physical line is one node owning only its own line break; `Editor::finish`
+and `Editor::file` check the same invariant on the edited tree. Between
+those, the stateful and generated-edit models compare the live green tree
+with a fresh parse after every edit, which implies the invariant for every
+edit they make.
+
+- O(1) checks use `assert!` and stay on in release builds: loop progress,
+  non-empty tokens, the shape of tokens and lines, and the postconditions of
+  `parse_with`.
+- On the per-line or per-token hot path, a check that only restates what is
+  already established uses `debug_assert!`: the first character a line was
+  dispatched on, whitespace that was just eaten, or, in `Parser::bump`, the
+  non-empty token that the lexer's always-on check guarantees. As `assert!`,
+  the lexer's five such checks cost about 15% of release lexing time on short
+  lines, and the parser's token check 2% to 9% of parse time.
+- Checks that read the document again, such as summing the token lengths,
+  scanning each token for line breaks, or comparing the tree's text with the
+  input, are compiled only under `#[cfg(all(debug_assertions, not(miri)))]`.
+  Debug tests, coverage, cargo-mutants and cargo-fuzz (which enables debug
+  assertions by default) run them. Miri looks for undefined behavior, not
+  logic errors, and skipping them keeps its run time from multiplying.
+- Every loop that consumes input has a fixed upper bound or asserts that each
+  iteration advances, so a step that stops advancing panics at once instead of
+  hanging.
+- Assertion conditions contain no `&&` or `||`. Coverage counts each operand
+  as a branch, and the failing side never runs. Split `assert!(a && b)` into
+  `assert!(a); assert!(b);`, and write an implication as
+  `if !a { assert!(b); }`, whose arms ordinary inputs both exercise.
+- Runtime assertions carry no message. The MC/DC toolchain counts a message,
+  even a string literal, as a region that runs only on failure. A comment
+  above the assertion explains it; `assert!` reports its condition and
+  `assert_eq!` both values. A message is fine where a `should_panic` test trips
+  the assertion, as in `kind_from_raw`.
+- Assertions stay inline, never in a helper fn. The helper's "replace with
+  ()" mutant would delete the check, and a helper that wraps a loop step would
+  turn that mutant into a hang.
+- A compile-time proof keeps its whole computation inside `assert!`, because
+  cargo-mutants does not mutate macro arguments: a mutated loop in a `const`
+  block can make the proof vacuous and still compile.
+- A checker fn or a bound counter gets a `#[should_panic(expected = ...)]`
+  test that trips it; otherwise its mutants survive. So does a precondition
+  that a test can break by calling the function directly, so that deleting the
+  assertion fails a test. A test of a debug-only check carries the same `cfg`:
+  `cargo test --release` drops the check, so the test would fail, or would not
+  compile if it calls a debug-only fn.
+- A `should_panic` test that reaches its assertion through a generic fn also
+  runs that fn's other paths. The MC/DC job's llvm-cov reports a generic fn by
+  its best single instantiation, not by the union of its instantiations.
+- A `pub` fn whose assertions check internal invariants carries
+  `#[expect(clippy::missing_panics_doc, reason = ...)]`. A panic that a caller
+  can cause gets a `# Panics` section instead.
+- A predicate that lexes caller text lexes it in a mid-document position, so
+  that the leading-BOM rule cannot apply to it.
+- `--release` compiles out the debug-only checks. To run the exhaustive,
+  corruption and large-input suites with them at release speed:
+
+  ```sh
+  CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true \
+  CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS=true \
+    cargo test --release --test exhaustive_parser --test stress -- --include-ignored
+  ```
 
 ## Fuzz corpus and reproducibility
 

@@ -14,6 +14,10 @@ use crate::syntax_kind::SyntaxKind;
 /// identifies the encoding and is not part of the first line.
 pub(crate) const BOM: &str = "\u{FEFF}";
 
+// The lexer emits the BOM as one token of `BOM.len()` bytes: U+FEFF encoded
+// as UTF-8.
+const _: () = assert!(matches!(BOM.as_bytes(), [0xEF, 0xBB, 0xBF]));
+
 /// A single lexed token — a zero-copy slice of the original input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Token<'a> {
@@ -39,6 +43,10 @@ pub fn lex(input: &str) -> Vec<Token<'_>> {
 /// are not whitespace-adjacent (`a=1;b=2`) or that sit at the value start
 /// (`color = #fff`) remain part of the value.
 #[must_use]
+#[expect(
+    clippy::missing_panics_doc,
+    reason = "the assertions check lexer invariants, which hold for every input"
+)]
 pub fn lex_with(input: &str, inline_comments: bool) -> Vec<Token<'_>> {
     let mut lexer = Lexer {
         rest: input,
@@ -50,8 +58,23 @@ pub fn lex_with(input: &str, inline_comments: bool) -> Vec<Token<'_>> {
         lexer.bump(SyntaxKind::WHITESPACE, BOM.len());
     }
     while !lexer.rest.is_empty() {
+        let rest_len = lexer.rest.len();
         lexer.lex_line();
+        // Every line consumes input, so the loop runs at most `input.len()`
+        // times. `eat_newline` checks that each line ends at its line break.
+        assert!(lexer.rest.len() < rest_len);
     }
+    // The tokens partition the input. Paired with the parser's offset check;
+    // O(n), so debug builds only.
+    #[cfg(all(debug_assertions, not(miri)))]
+    assert_eq!(
+        lexer
+            .tokens
+            .iter()
+            .map(|token| token.text.len())
+            .sum::<usize>(),
+        input.len()
+    );
     lexer.tokens
 }
 
@@ -64,7 +87,16 @@ struct Lexer<'a> {
 
 impl Lexer<'_> {
     fn bump(&mut self, kind: SyntaxKind, len: usize) {
+        // Every token holds at least one byte, which is what makes lexing
+        // progress.
+        assert!(len > 0);
         let (text, rest) = self.rest.split_at(len);
+        // Negative space: only a line break or a continued value holds a line
+        // break. O(token), so debug builds only.
+        #[cfg(all(debug_assertions, not(miri)))]
+        if !matches!(kind, SyntaxKind::NEWLINE | SyntaxKind::VALUE_TEXT) {
+            assert_eq!(line_len(text), len);
+        }
         self.tokens.push(Token { kind, text });
         self.rest = rest;
     }
@@ -78,13 +110,20 @@ impl Lexer<'_> {
         if len > 0 {
             self.bump(SyntaxKind::WHITESPACE, len);
         }
+        // The whole run became one token. This restates the scan above, on
+        // the hottest path, so debug builds only.
+        debug_assert!(!self.rest.starts_with([' ', '\t']));
     }
 
-    /// Consume the line break at the start of the rest, if there is one.
+    /// Consume the line break that ends a line. Every kind of line is lexed
+    /// up to its line break or to the end of the input.
     fn eat_newline(&mut self) {
         let newline_len = line_break_len(self.rest);
         if newline_len > 0 {
             self.bump(SyntaxKind::NEWLINE, newline_len);
+        } else {
+            // A line without a line break is the last line.
+            assert_eq!(self.rest, "");
         }
     }
 
@@ -107,12 +146,18 @@ impl Lexer<'_> {
 
     /// Lex a `;` or `#` comment up to the line break.
     fn lex_comment(&mut self) {
+        // Every caller dispatches on the marker. A restated dispatch, so
+        // debug builds only.
+        debug_assert!(self.rest.starts_with([';', '#']));
         self.bump(SyntaxKind::COMMENT, line_len(self.rest));
     }
 
     /// Lex a `[name]` header line up to its line break, including a trailing
     /// comment or unexpected text.
     fn lex_section_header_line(&mut self) {
+        // `lex_line` dispatches headers on their `[`. A restated dispatch, so
+        // debug builds only.
+        debug_assert!(self.rest.starts_with('['));
         self.bump(SyntaxKind::L_BRACK, 1);
         self.eat_horizontal_whitespace();
 
@@ -131,6 +176,7 @@ impl Lexer<'_> {
             let trailing_whitespace_len = raw_name_len - name_len;
             // Leading horizontal whitespace was consumed above, so a non-empty
             // raw name always contains at least one non-whitespace byte.
+            assert!(name_len > 0);
             self.bump(SyntaxKind::IDENT, name_len);
             if trailing_whitespace_len > 0 {
                 self.bump(SyntaxKind::WHITESPACE, trailing_whitespace_len);
@@ -157,6 +203,9 @@ impl Lexer<'_> {
     /// has no key, so all of it is unexpected text. Blank lines come here too
     /// and produce no token before their line break.
     fn lex_entry_line(&mut self) {
+        // `lex_line` dispatches every other line here, after its indentation.
+        // A restated dispatch, so debug builds only.
+        debug_assert!(!self.rest.starts_with([' ', '\t', ';', '#', '[']));
         let key_len = self
             .rest
             .bytes()
@@ -201,6 +250,9 @@ impl Lexer<'_> {
     /// the value, then its trailing whitespace or inline comment.
     fn lex_value(&mut self, span_len: usize) {
         let span = &self.rest[..span_len];
+        // Whitespace immediately after the separator was already consumed.
+        // This restates the caller, so debug builds only.
+        debug_assert!(!span.starts_with([' ', '\t']));
 
         // When inline comments are enabled, a whitespace-preceded `;`/`#`
         // marker on the final physical line ends the value and starts a
@@ -213,7 +265,12 @@ impl Lexer<'_> {
 
         if let Some((value_len, whitespace_len)) = inline_comment {
             // find_inline_comment only returns a marker after a non-empty
-            // value and a non-empty run of horizontal whitespace.
+            // value and the whole run of horizontal whitespace before it, and
+            // the comment starts with that marker.
+            assert!(value_len > 0);
+            assert!(whitespace_len > 0);
+            assert!(!span[..value_len].ends_with([' ', '\t']));
+            assert!(value_len + whitespace_len < span_len);
             let comment_len = span_len - value_len - whitespace_len;
             self.bump(SyntaxKind::VALUE_TEXT, value_len);
             self.bump(SyntaxKind::WHITESPACE, whitespace_len);
@@ -222,8 +279,9 @@ impl Lexer<'_> {
             // Separate trailing whitespace from the last line of the value.
             let value_len = span.trim_end_matches([' ', '\t']).len();
             let trailing_whitespace_len = span_len - value_len;
-            // Whitespace immediately after the separator was already
-            // consumed, so a non-empty span cannot trim to empty.
+            // The span starts with a non-whitespace byte, so it cannot trim to
+            // empty.
+            assert!(value_len > 0);
             self.bump(SyntaxKind::VALUE_TEXT, value_len);
             if trailing_whitespace_len > 0 {
                 self.bump(SyntaxKind::WHITESPACE, trailing_whitespace_len);
@@ -251,7 +309,11 @@ fn value_span_len(text: &str) -> usize {
         if line.trim_end_matches([' ', '\t']).ends_with('\\') {
             // The line break is part of the value, which continues on the
             // next line.
-            value_end = line_break_start + line_break_len(&text[line_break_start..]);
+            let next_line_start = line_break_start + line_break_len(&text[line_break_start..]);
+            // A continued line holds at least its backslash, so the loop runs
+            // at most `text.len()` times.
+            assert!(next_line_start > value_end);
+            value_end = next_line_start;
         } else {
             return line_break_start;
         }
@@ -280,11 +342,13 @@ fn find_inline_comment(span: &str) -> Option<(usize, usize)> {
 
     let mut index = final_line_start;
     while index < bytes.len() {
+        let step_start = index;
         if bytes[index] == b' ' || bytes[index] == b'\t' {
             let whitespace_start = index;
-            while index < bytes.len() && (bytes[index] == b' ' || bytes[index] == b'\t') {
-                index += 1;
-            }
+            index += bytes[index..]
+                .iter()
+                .take_while(|&&byte| byte == b' ' || byte == b'\t')
+                .count();
             if index < bytes.len()
                 && (bytes[index] == b';' || bytes[index] == b'#')
                 && whitespace_start > final_line_start
@@ -294,6 +358,8 @@ fn find_inline_comment(span: &str) -> Option<(usize, usize)> {
         } else {
             index += 1;
         }
+        // Every step advances, so the scan takes at most `bytes.len()` steps.
+        assert!(index > step_start);
     }
     None
 }
@@ -844,5 +910,63 @@ mod tests {
         ] {
             assert_eq!(value_span_len(text), len, "{text:?}");
         }
+    }
+
+    // The tests below call a lexing step in a state that its callers never
+    // create. Each step panics instead of emitting a wrong token.
+
+    fn lexer_at(rest: &str) -> Lexer<'_> {
+        Lexer {
+            rest,
+            tokens: Vec::new(),
+            inline_comments: false,
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "assertion failed: len > 0")]
+    fn bump_rejects_an_empty_token() {
+        lexer_at("key").bump(IDENT, 0);
+    }
+
+    #[test]
+    #[cfg(all(debug_assertions, not(miri)))]
+    #[should_panic(expected = "left: 3\n right: 9")]
+    fn bump_rejects_a_line_break_inside_a_token() {
+        lexer_at("key\nnext=").bump(IDENT, 9);
+    }
+
+    #[test]
+    #[should_panic(expected = "left: \"junk\"\n right: \"\"")]
+    fn eat_newline_rejects_a_line_lexed_short_of_its_line_break() {
+        lexer_at("junk").eat_newline();
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "assertion failed: self.rest.starts_with([';', '#'])")]
+    fn lex_comment_requires_a_comment_marker() {
+        lexer_at("key").lex_comment();
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "assertion failed: self.rest.starts_with('[')")]
+    fn lex_section_header_line_requires_a_bracket() {
+        lexer_at("name]").lex_section_header_line();
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "assertion failed: !self.rest.starts_with(")]
+    fn lex_entry_line_requires_the_indentation_to_be_eaten() {
+        lexer_at(" key=value").lex_entry_line();
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "assertion failed: !span.starts_with(")]
+    fn lex_value_requires_the_separator_whitespace_to_be_eaten() {
+        lexer_at(" value").lex_value(" value".len());
     }
 }
