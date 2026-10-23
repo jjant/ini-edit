@@ -145,11 +145,12 @@ impl Language for IniLang {
     }
 }
 
-/// A node in the INI syntax tree.
+/// A node in the INI syntax tree: a cursor, which is not `Send` or `Sync`
+/// ([Threads](crate#threads)).
 pub type SyntaxNode = rowan::SyntaxNode<IniLang>;
-/// A token (leaf) in the INI syntax tree.
+/// A token (leaf) in the INI syntax tree: a cursor, which is not `Send` or `Sync`.
 pub type SyntaxToken = rowan::SyntaxToken<IniLang>;
-/// Either a node or a token.
+/// Either a node or a token: a cursor, which is not `Send` or `Sync`.
 pub type SyntaxElement = rowan::SyntaxElement<IniLang>;
 
 #[cfg(test)]

@@ -32,6 +32,9 @@ on [rowan](https://crates.io/crates/rowan).
 - **Typed AST** — `File`, `Section`, `Entry`, `Key`, `Value` wrappers with ergonomic accessors
 - **Full CST** — every whitespace character, comment, and line ending is in the tree
 - **Zero unsafe** — `#![deny(unsafe_code)]`
+- **Thread-safe documents** — `Parse` and `Editor` are `Send` and `Sync`: move one to another
+  thread, or share it between threads that read it. Syntax-tree cursors (`SyntaxNode`, `File`,
+  `Section`, ...) are neither, so each thread builds its own
 
 ## Quick start
 
@@ -156,11 +159,11 @@ The minimum supported Rust version is **1.85.0**.
 ## Testing
 
 The crate requires 100% function, instantiation, line, region, branch, and
-MC/DC coverage, plus mutation testing, fuzzing, Miri, debug/release, MSRV, and
-dependency-policy checks. Independent edit models check meaning and unchanged
-bytes; exhaustive small inputs and large-input scaling tests extend the
-boundary coverage. See [TESTING.md](TESTING.md), including the current upstream
-limitation on full-suite Miri borrow checking.
+MC/DC coverage, plus mutation testing, fuzzing, Miri, ThreadSanitizer,
+debug/release, MSRV, and dependency-policy checks. Independent edit models
+check meaning and unchanged bytes; exhaustive small inputs and large-input
+scaling tests extend the boundary coverage. See [TESTING.md](TESTING.md),
+including the current upstream limitation on full-suite Miri borrow checking.
 
 ## License
 

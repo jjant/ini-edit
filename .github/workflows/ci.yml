@@ -326,6 +326,39 @@ jobs:
       - name: Documentation tests under AddressSanitizer and LeakSanitizer
         run: cargo test --locked --target x86_64-unknown-linux-gnu --doc --all-features
 
+  # ThreadSanitizer over tests/threads.rs, whose threads share and move
+  # editors, parses, handles and trees, and over the library's unit tests.
+  # The process exits with status 66 after the tests if it reported a data
+  # race, which fails the step.
+  thread-sanitizer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # Replaces the workflow's RUSTFLAGS, so it repeats --deny warnings.
+      RUSTFLAGS: --deny warnings -Zsanitizer=thread
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          # -Zsanitizer and -Zbuild-std are unstable, so this job needs a
+          # nightly; -Zbuild-std compiles the standard library from rust-src.
+          toolchain: nightly
+          components: rust-src
+      - uses: Swatinem/rust-cache@v2
+      # -Zbuild-std rebuilds the standard library with the sanitizer: rustc
+      # refuses to link code built with -Zsanitizer=thread against the
+      # precompiled one ("mixing -Zsanitizer will cause an ABI mismatch"),
+      # and ThreadSanitizer sees only the atomics of instrumented code, such
+      # as those of std's Arc, Barrier and scoped threads. --target keeps
+      # RUSTFLAGS away from build scripts and proc macros, and -Zbuild-std
+      # requires it.
+      - name: Thread tests and library unit tests under ThreadSanitizer
+        run: |
+          cargo test --locked -Zbuild-std --target x86_64-unknown-linux-gnu --all-features \
+            --lib --test threads
+
   miri-strict:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -686,6 +719,7 @@ jobs:
       - package
       - extended-tests
       - sanitizers
+      - thread-sanitizer
       - miri-strict
       - miri
       - dependencies

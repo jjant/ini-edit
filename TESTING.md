@@ -615,6 +615,45 @@ source lines through binutils when `llvm-symbolizer` is not installed:
 )
 ```
 
+The `thread-sanitizer` job plays the part of SQLite's `threadtest3`, its
+stress test for threads that use SQLite at the same time. `tests/threads.rs`
+relies on the promises of the crate documentation's Threads section: an editor
+moves to another thread and is edited there; eight threads share one editor
+and one parse, read both, clone the parse and parse the text again; eight
+threads walk a snapshot of a tree while another thread edits the editor whose
+new trees share the snapshot's untouched nodes, and the last of them to let go
+frees it; section and entry handles move to another thread and are shared by
+eight; and eight threads edit editors of their own. Every result must equal
+the same work done in one thread.
+
+The job runs that binary and the library's unit tests under ThreadSanitizer
+(`-Zsanitizer=thread` on the latest nightly), which reports two accesses to
+the same memory from different threads, at least one a write, that no
+synchronization orders, whether in this crate, in `rowan` or in the standard
+library. A test binary in which it reports a race exits with status 66 after
+its tests, which fails the step. `-Zbuild-std` rebuilds the standard library
+with the sanitizer: `rustc` refuses to link sanitized code with the
+precompiled one, and ThreadSanitizer sees only the atomics of instrumented
+code. It does not model memory fences, so the standard library's `Arc`,
+rebuilt with it, orders the free after the last decrement with an acquire load
+instead, and `rowan`'s `Arc` (`arc.rs`) does so in every build: neither needs
+a suppression, and the job has none. On 2026-10-23, with the nightly of
+2026-10-22, it reported no race; the 296 unit tests took 28 seconds under it
+on eight test threads, and `tests/threads.rs` a tenth of a second. To run the
+job locally:
+
+```sh
+rustup component add rust-src --toolchain nightly
+RUSTFLAGS=-Zsanitizer=thread cargo +nightly test -Zbuild-std \
+  --target x86_64-unknown-linux-gnu --all-features --lib --test threads
+```
+
+The promises themselves are pinned at compile time. The first test in
+`tests/threads.rs` requires every one of `Send`, `Sync`, `UnwindSafe` and
+`RefUnwindSafe` that a public type has, so it fails to build without one, and
+`src/auto_traits.rs` has a `compile_fail` doctest for every one that a type
+lacks, so a change that adds or removes one fails a test.
+
 Miri runs all lexer unit tests and independent lexer/diagnostic contracts with
 borrow checking enabled. These tests do not construct `rowan` trees. They run
 on x86_64, on 32-bit `i686-unknown-linux-gnu`, and on big-endian
@@ -658,12 +697,14 @@ The full matrix also runs every Sunday. Scheduled fuzzing gives each target 15
 minutes instead of the short pull-request smoke-test budget, and so does every
 push to `main` whose version is not released yet (see the release checklist).
 
-Allocation-failure, filesystem I/O-failure, crash-recovery, and concurrency
-tests from SQLite's strategy do not map directly to this crate: `ini-edit`
-performs no persistent I/O, owns no allocator abstraction, and exposes no
-shared mutable state. An `Editor` is `Send` and `Sync`, so one unit test
-reads an editor from two threads and edits it in a third while the old tree
-is walked; under Miri, the data-race detector checks rowan's atomic reference
+Allocation-failure, filesystem I/O-failure, and crash-recovery tests from
+SQLite's strategy do not map directly to this crate: `ini-edit` performs no
+persistent I/O, owns no allocator abstraction, and exposes no shared mutable
+state. It starts no thread and holds no lock, so there is no mutex to assert
+held, as SQLite's mutex asserts do; what threads share is `rowan`'s green
+trees, which the `thread-sanitizer` job above checks. One unit test also reads
+an editor from two threads and edits it in a third while the old tree is
+walked; under Miri, the data-race detector checks rowan's atomic reference
 counts there. Fuzzing malformed text and mutation sequences is the relevant
 anomaly-testing layer here.
 
@@ -705,8 +746,9 @@ merging.
    (`coverage / branches (100%)` and `coverage / MC/DC (100%)`).
 4. Full-suite Miri with the documented upstream workaround (`miri (1/4)`
    through `miri (4/4)`), strict Miri for lexer and diagnostic contracts on
-   x86_64, 32-bit i686, and big-endian s390x (`miri-strict`), and the complete
-   suite under AddressSanitizer and LeakSanitizer (`sanitizers`).
+   x86_64, 32-bit i686, and big-endian s390x (`miri-strict`), the complete
+   suite under AddressSanitizer and LeakSanitizer (`sanitizers`), and the
+   thread tests and unit tests under ThreadSanitizer (`thread-sanitizer`).
 5. Dependency audit and policy checks (`dependencies`).
 6. Full mutation test (`mutation (1/4)` through `mutation (4/4)`).
 7. All six fuzz targets (`fuzz`), for 15 minutes each on the published
