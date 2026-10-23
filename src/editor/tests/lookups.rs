@@ -1,7 +1,6 @@
 //! Lookups, reads, counts and the size limit.
 
 use super::support::{atomic, in_section, open, open_with, open_with_len_max, options, spacing};
-use crate::MAX_INPUT_LEN;
 use crate::ast::AstNode;
 use crate::editor::{EditError, EditOptions, Editor, LEN_MAX, SeparatorSpacing};
 use crate::syntax_kind::SyntaxKind;
@@ -147,7 +146,16 @@ fn the_constructor_refuses_documents_past_the_limit() {
 #[cfg(target_pointer_width = "64")]
 fn the_limit_is_one_byte_below_the_parser_s_on_64_bit_targets() {
     // One byte stays free for the line break in front of every fragment the editor parses.
-    assert_eq!(LEN_MAX, MAX_INPUT_LEN - 1);
+    assert_eq!(LEN_MAX, crate::MAX_INPUT_LEN - 1);
+}
+
+#[test]
+#[cfg(target_pointer_width = "32")]
+fn the_limit_stays_below_isize_max_on_32_bit_targets() {
+    // A `String` cannot exceed `isize::MAX` bytes, which is less than the parser's limit here.
+    let isize_max = usize::try_from(isize::MAX).expect("isize::MAX is positive");
+    assert!(isize_max < crate::MAX_INPUT_LEN);
+    assert_eq!(LEN_MAX, isize_max - 1);
 }
 
 #[test]
