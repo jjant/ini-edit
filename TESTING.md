@@ -87,6 +87,8 @@ RUSTFLAGS='--cfg no_zerocopy_simd_x86_avx12_1_89_0' \
 - Five libFuzzer targets independently stress round trips and
   arbitrary editor operation sequences, including reuse of section handles
   after deleting their headers and the identity property of empty insertions.
+  `cargo fuzz` builds them with AddressSanitizer, debug assertions, and
+  overflow checks, and libFuzzer checks for leaks with LeakSanitizer.
   The round-trip target also requires every physical line, including
   malformed ones, to be exactly one node that owns only its own terminator,
   because editor line indices address those nodes. Its diagnostics must
@@ -135,15 +137,22 @@ RUSTFLAGS='--cfg no_zerocopy_simd_x86_avx12_1_89_0' \
   process measures CPU time and peak RSS for growing entry lists, errors,
   continuations, and values. Broad growth bounds catch gross superlinear
   regressions; they are not a proof of complexity or an absolute latency SLA.
-- Stable tests run on Linux, macOS, and Windows.
+- Stable tests and doctests run on Linux, macOS, and Windows, and on 32-bit
+  Linux.
 
 The bounded exhaustive test, the corruption shards, and the large-input tests
 are ignored in ordinary test runs and mutation testing; the corruption sample
 runs in both. The `extended-tests` CI job runs them explicitly in release mode
-and saves the CPU/memory measurements as an artifact:
+and saves the CPU/memory measurements as an artifact. The tests keep the
+checks of a debug build, which a plain release build compiles out:
+`debug_assert!`, code under `cfg(debug_assertions)`, and arithmetic overflow
+checks. A failed check panics and fails its test. The scaling probe is built
+with the release profile as it ships, so that its timings measure the shipped
+code:
 
 ```sh
-cargo test --release --test exhaustive_parser --test stress -- --include-ignored
+CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS=true \
+  cargo test --release --test exhaustive_parser --test stress -- --include-ignored
 cargo build --release --example scaling_probe
 python3 .github/scripts/check_scaling.py
 ```
@@ -267,7 +276,20 @@ cargo +nightly-2026-09-17 fuzz run generated_edits path/to/reproducer
 
 Coverage is a meta-test of the test suite, not a substitute for testing the
 shipping configuration. CI separately runs the complete suite on stable Rust
-in debug and release modes and on the minimum supported Rust version.
+in debug and release modes, on the minimum supported Rust version, and on
+macOS and Windows. `cargo test --all-targets` runs no doctests, so each of
+these jobs also runs `cargo test --doc`.
+
+The `i686` job runs the complete suite and the doctests natively on 32-bit x86
+Linux, where `usize` and pointers are 32 bits wide. To run it on Debian or
+Ubuntu:
+
+```sh
+sudo apt-get install gcc-multilib
+rustup target add i686-unknown-linux-gnu
+cargo test --target i686-unknown-linux-gnu --all-targets --all-features
+cargo test --target i686-unknown-linux-gnu --doc --all-features
+```
 
 The `package` job tests the crate that `cargo publish` uploads rather than the
 repository. First it compares the crate's file list with the repository: the
@@ -292,8 +314,45 @@ cargo test --locked --target-dir target --all-targets --all-features
 cargo test --locked --target-dir target --doc --all-features
 ```
 
+The `sanitizers` job runs the complete suite and the doctests under
+AddressSanitizer and LeakSanitizer (`-Zsanitizer=address` on
+`nightly-2026-09-17`). AddressSanitizer stops a test binary at the first
+out-of-bounds or use-after-free access in the instrumented code, `rowan`'s
+unsafe code included. LeakSanitizer fails a test binary that exits with memory
+nothing can reach any more, such as a `rowan` tree that a forgotten handle
+keeps alive. The fuzz targets already run under both, but only with the
+oracles in `tests/support/`; this job adds every other test, among them the
+unit, snapshot, real-world, differential, and editor tests.
+
+Neither job rebuilds the standard library with the sanitizer (`-Zbuild-std`).
+Generic code such as `Vec<T>` is compiled with the crate and checked; the
+precompiled rest is checked only through the calls that AddressSanitizer
+intercepts, such as `malloc`, `free`, and `memcpy`. AddressSanitizer checks no
+aliasing rules either, so it does not replace the Stacked Borrows checks that
+are disabled below.
+
+To run the job locally, pass `--target`: with it, `RUSTFLAGS` reach only the
+code under test and not the proc macros of the dev-dependencies, which `rustc`
+refuses to build with a sanitizer. `allow_addr2line=1` lets a report name
+source lines through binutils when `llvm-symbolizer` is not installed:
+
+```sh
+(
+  export RUSTFLAGS=-Zsanitizer=address RUSTDOCFLAGS=-Zsanitizer=address
+  export ASAN_OPTIONS=detect_leaks=1:allow_addr2line=1
+  cargo +nightly-2026-09-17 test --target x86_64-unknown-linux-gnu --all-targets --all-features
+  cargo +nightly-2026-09-17 test --target x86_64-unknown-linux-gnu --doc --all-features
+)
+```
+
 Miri runs all lexer unit tests and independent lexer/diagnostic contracts with
-borrow checking enabled. These tests do not construct `rowan` trees.
+borrow checking enabled. These tests do not construct `rowan` trees. They run
+on x86_64, on 32-bit `i686-unknown-linux-gnu`, and on big-endian
+`s390x-unknown-linux-gnu`: Miri runs the code as compiled for the target it is
+given, so neither target needs its hardware. Running the whole library on each
+of them would repeat the full-library Miri run below once per target, so the
+native `i686` job checks 32-bit for the whole suite, and big-endian runs only
+the lexer and its contracts.
 
 The full library suite also runs under Miri, with its Stacked Borrows
 provenance model temporarily disabled because `rowan 0.16.1` triggers the
@@ -305,12 +364,16 @@ Other default Miri checks remain enabled. A compatibility investigation on
 the `rowan` types exposed by this crate's public API. Full borrow checking
 therefore remains an explicit limitation, not a passing guarantee.
 
-Recheck the strict paths locally without `MIRIFLAGS` overrides:
+Recheck the strict paths locally without `MIRIFLAGS` overrides. Miri builds
+each target's standard library itself, so the targets need no `rustup target
+add`:
 
 ```sh
-cargo +nightly-2026-09-17 miri test --lib lexer::tests::
-cargo +nightly-2026-09-17 miri test --test exhaustive_parser \
-  lexer_and_diagnostic_contracts -- --exact
+for target in x86_64-unknown-linux-gnu i686-unknown-linux-gnu s390x-unknown-linux-gnu; do
+  cargo +nightly-2026-09-17 miri test --target "$target" --lib lexer::tests::
+  cargo +nightly-2026-09-17 miri test --target "$target" --test exhaustive_parser \
+    lexer_and_diagnostic_contracts -- --exact
+done
 ```
 
 Clippy, rustdoc, and `cargo deny` cover static analysis, advisories
@@ -357,20 +420,22 @@ all the others. No branch rule requires it yet, so wait for it to pass before
 merging.
 
 1. Stable debug, stable release, doctests, rustdoc, Clippy, and formatting
-   (`check`), and the stable tests on macOS and Windows (`macos-26` and
-   `windows-2025`).
-2. MSRV (`msrv`).
+   (`check`), the stable tests and doctests on macOS and Windows (`macos-26`
+   and `windows-2025`), and on 32-bit Linux (`i686`).
+2. MSRV tests and doctests (`msrv`).
 3. 100% functions, instantiations, lines, regions, branches, and MC/DC
    (`coverage / branches (100%)` and `coverage / MC/DC (100%)`).
 4. Full-suite Miri with the documented upstream workaround (`miri (1/4)`
-   through `miri (4/4)`), plus strict Miri for lexer and diagnostic contracts
-   (`miri-strict`).
+   through `miri (4/4)`), strict Miri for lexer and diagnostic contracts on
+   x86_64, 32-bit i686, and big-endian s390x (`miri-strict`), and the complete
+   suite under AddressSanitizer and LeakSanitizer (`sanitizers`).
 5. Dependency audit and policy checks (`dependencies`).
 6. Full mutation test (`mutation (1/4)` through `mutation (4/4)`).
 7. All five fuzz targets (`fuzz`), for 15 minutes each on the published
    commit, as on Sundays.
-8. Bounded exhaustive, fixture corruption, large-input, and CPU/memory scaling
-   tests (`extended-tests`).
+8. Bounded exhaustive, fixture corruption, and large-input tests with debug
+   assertions and overflow checks, and CPU/memory scaling tests
+   (`extended-tests`).
 9. A `fuzz/Cargo.lock` that matches the release version (`check`). `fuzz/` is
    a separate workspace, so the version bump does not reach its lockfile. The
    Release PR workflow commits
