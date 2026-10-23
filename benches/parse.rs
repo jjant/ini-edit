@@ -15,10 +15,11 @@
 // TigerStyle: names are not abbreviated, here as in the library.
 #![warn(clippy::min_ident_chars)]
 
+use std::fmt::Write;
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
-use ini_edit::ast::{AstNode, File};
+use ini_edit::ast::{AstNode, Entry, File};
 use ini_edit::editor::{EditOptions, Editor, SeparatorSpacing};
 use ini_edit::{Parse, ParseOptions};
 
@@ -128,6 +129,7 @@ fn main() {
     bench_malformed(&mut runner);
     bench_round_trip(&mut runner);
     bench_ast_traversal(&mut runner);
+    bench_lookup(&mut runner);
     bench_edit(&mut runner);
     bench_compare_parse(&mut runner);
     bench_compare_edit(&mut runner);
@@ -166,6 +168,51 @@ fn bench_ast_traversal(runner: &mut Runner) {
             }
         }
         key_bytes
+    });
+    runner.case("ast_traversal/gitea_every_accessor", || {
+        read_every_accessor(&gitea)
+    });
+    let sections = parse(&document(200, 50));
+    runner.case("ast_traversal/200x50_every_accessor", || {
+        read_every_accessor(&sections)
+    });
+}
+
+/// The bytes of every section name, key, value, inline comment and comment line of `parse`, and
+/// the number of entries with a colon, all read through the AST.
+fn read_every_accessor(parse: &Parse) -> usize {
+    let file = File::cast(parse.syntax()).unwrap();
+    let entry_bytes = |entry: Entry| {
+        let text = [entry.key(), entry.value(), entry.inline_comment()];
+        let bytes: usize = text.iter().flatten().map(String::len).sum();
+        bytes + usize::from(entry.uses_colon())
+    };
+    let mut bytes: usize = file.preamble_entries().map(entry_bytes).sum();
+    for section in file.sections() {
+        bytes += section.name().map_or(0, |name| name.len());
+        bytes += section.entries().map(entry_bytes).sum::<usize>();
+        let comments = section.comment_lines().filter_map(|comment| comment.text());
+        bytes += comments.map(|text| text.len()).sum::<usize>();
+    }
+    bytes
+}
+
+// The editor finds a section by its name and an entry by its key.
+fn bench_lookup(runner: &mut Runner) {
+    let source = document(200, 50);
+    let mut editor = open(&source);
+    let names: Vec<String> = (0..200)
+        .step_by(10)
+        .map(|section| format!("s{section}"))
+        .collect();
+    runner.case("lookup/200x50_every_tenth_section_last_key", || {
+        let mut value_bytes = 0;
+        for name in &names {
+            let mut section = editor.section(black_box(name)).unwrap();
+            let entry = section.entry(black_box("key49")).unwrap();
+            value_bytes += entry.value().map_or(0, |value| value.len());
+        }
+        value_bytes
     });
 }
 
@@ -227,6 +274,20 @@ fn bench_compare_edit(runner: &mut Runner) {
         let options = configparser::ini::WriteOptions::new_with_params(false, 4, 0);
         config.pretty_writes(&options)
     });
+}
+
+/// `sections` sections named `s0`, `s1` and so on, each with a comment line and then `entries`
+/// entries keyed `key0`, `key1` and so on, and a blank line after them.
+fn document(sections: usize, entries: usize) -> String {
+    let mut text = String::new();
+    for section in 0..sections {
+        writeln!(text, "[s{section}]\n; settings of s{section}").unwrap();
+        for entry in 0..entries {
+            writeln!(text, "key{entry} = value {entry} ; note").unwrap();
+        }
+        text.push('\n');
+    }
+    text
 }
 
 /// ini-edit's parse of `source`.

@@ -2,8 +2,20 @@
 //!
 //! Each wrapper checks the node's `SyntaxKind` at runtime via `cast`.
 //! Accessors return `Option` because the tree may be malformed.
+//!
+//! The accessors read a node's children from its green node, the immutable data under the cursor.
+//! rowan's child iterators build a cursor for every child they step over. Here the string and
+//! `bool` accessors build none, and the node and token accessors build one for each child they
+//! return. The exception is a tree with several empty siblings at one offset, which no parser
+//! makes: reaching one of them before the last walks a cursor over every child before it. The line
+//! iterators, [`File::preamble_lines`] and [`Section::body_lines`], return almost every child node
+//! and use rowan's iterator.
 
-use crate::syntax_kind::{SyntaxKind, SyntaxNode, SyntaxToken};
+use std::iter::Enumerate;
+
+use rowan::{Children, GreenNodeData, GreenTokenData, Language, NodeOrToken, TextRange, TextSize};
+
+use crate::syntax_kind::{IniLang, SyntaxElement, SyntaxKind, SyntaxNode, SyntaxToken};
 
 /// Trait for typed wrappers over `SyntaxNode`.
 pub trait AstNode: Sized {
@@ -47,12 +59,12 @@ ast_node!(/// A blank line (whitespace and/or a newline).
 impl File {
     /// Entries before any `[section]` header.
     pub fn preamble_entries(&self) -> impl Iterator<Item = Entry> + '_ {
-        self.0.children().filter_map(Entry::cast)
+        child_nodes(&self.0, SyntaxKind::ENTRY).map(Entry)
     }
 
     /// All sections in document order.
     pub fn sections(&self) -> impl Iterator<Item = Section> + '_ {
-        self.0.children().filter_map(Section::cast)
+        child_nodes(&self.0, SyntaxKind::SECTION).map(Section)
     }
 
     /// The line nodes before the first section, after a byte order mark: the preamble's body
@@ -68,23 +80,25 @@ impl Section {
     /// The section header node.
     #[must_use]
     pub fn header(&self) -> Option<SectionHeader> {
-        self.0.children().find_map(SectionHeader::cast)
+        child_nodes(&self.0, SyntaxKind::SECTION_HEADER)
+            .next()
+            .map(SectionHeader)
     }
 
     /// The section name.
     #[must_use]
     pub fn name(&self) -> Option<String> {
-        self.header()?.name()
+        section_name(self.0.green()).map(str::to_owned)
     }
 
     /// Entries in this section.
     pub fn entries(&self) -> impl Iterator<Item = Entry> + '_ {
-        self.0.children().filter_map(Entry::cast)
+        child_nodes(&self.0, SyntaxKind::ENTRY).map(Entry)
     }
 
     /// Full-line comments in this section (in document order).
     pub fn comment_lines(&self) -> impl Iterator<Item = CommentLine> + '_ {
-        self.0.children().filter_map(CommentLine::cast)
+        child_nodes(&self.0, SyntaxKind::COMMENT_LINE).map(CommentLine)
     }
 
     /// The line nodes after the header: the section's body lines, in the order of the editor's
@@ -100,16 +114,13 @@ impl SectionHeader {
     /// The IDENT token between the brackets.
     #[must_use]
     pub fn name_token(&self) -> Option<SyntaxToken> {
-        self.0
-            .children_with_tokens()
-            .filter_map(rowan::NodeOrToken::into_token)
-            .find(|token| token.kind() == SyntaxKind::IDENT)
+        child_token(&self.0, SyntaxKind::IDENT)
     }
 
     /// The section name as a string.
     #[must_use]
     pub fn name(&self) -> Option<String> {
-        self.name_token().map(|token| token.text().to_string())
+        token_text(self.0.green(), SyntaxKind::IDENT).map(str::to_owned)
     }
 }
 
@@ -117,45 +128,39 @@ impl Entry {
     /// The KEY node.
     #[must_use]
     pub fn key_node(&self) -> Option<Key> {
-        self.0.children().find_map(Key::cast)
+        child_nodes(&self.0, SyntaxKind::KEY).next().map(Key)
     }
 
     /// The key text.
     #[must_use]
     pub fn key(&self) -> Option<String> {
-        self.key_node()?.text()
+        entry_key(self.0.green()).map(str::to_owned)
     }
 
     /// The VALUE node.
     #[must_use]
     pub fn value_node(&self) -> Option<Value> {
-        self.0.children().find_map(Value::cast)
+        child_nodes(&self.0, SyntaxKind::VALUE).next().map(Value)
     }
 
     /// The value text. Returns `Some("")` for empty values (`key =`),
     /// `None` for bare keys without a separator (`key` alone).
     #[must_use]
     pub fn value(&self) -> Option<String> {
+        let entry = self.0.green();
         // A bare key has no EQ or COLON token, unlike an empty value (`key =`).
-        let has_separator = self
-            .0
-            .children_with_tokens()
-            .filter_map(rowan::NodeOrToken::into_token)
-            .any(|token| token.kind() == SyntaxKind::EQ || token.kind() == SyntaxKind::COLON);
-        if !has_separator {
+        if !has_token(entry, &[SyntaxKind::EQ, SyntaxKind::COLON]) {
             return None;
         }
-        self.value_node()
-            .map(|value| value.text().unwrap_or_default())
+        let value = child_node(entry, SyntaxKind::VALUE)?;
+        let text = token_text(value, SyntaxKind::VALUE_TEXT).unwrap_or_default();
+        Some(text.to_owned())
     }
 
     /// True if the separator is `:` rather than `=`.
     #[must_use]
     pub fn uses_colon(&self) -> bool {
-        self.0
-            .children_with_tokens()
-            .filter_map(rowan::NodeOrToken::into_token)
-            .any(|token| token.kind() == SyntaxKind::COLON)
+        has_token(self.0.green(), &[SyntaxKind::COLON])
     }
 
     /// The trailing inline comment (e.g. `; note`), including its leading
@@ -167,11 +172,7 @@ impl Entry {
     /// this returns `None`.
     #[must_use]
     pub fn inline_comment(&self) -> Option<String> {
-        self.0
-            .children_with_tokens()
-            .filter_map(rowan::NodeOrToken::into_token)
-            .find(|token| token.kind() == SyntaxKind::COMMENT)
-            .map(|token| token.text().to_string())
+        token_text(self.0.green(), SyntaxKind::COMMENT).map(str::to_owned)
     }
 }
 
@@ -179,16 +180,13 @@ impl Key {
     /// The underlying IDENT token.
     #[must_use]
     pub fn token(&self) -> Option<SyntaxToken> {
-        self.0
-            .children_with_tokens()
-            .filter_map(rowan::NodeOrToken::into_token)
-            .find(|token| token.kind() == SyntaxKind::IDENT)
+        child_token(&self.0, SyntaxKind::IDENT)
     }
 
     /// The key as a string.
     #[must_use]
     pub fn text(&self) -> Option<String> {
-        self.token().map(|token| token.text().to_string())
+        token_text(self.0.green(), SyntaxKind::IDENT).map(str::to_owned)
     }
 }
 
@@ -196,16 +194,13 @@ impl Value {
     /// The underlying `VALUE_TEXT` token.
     #[must_use]
     pub fn token(&self) -> Option<SyntaxToken> {
-        self.0
-            .children_with_tokens()
-            .filter_map(rowan::NodeOrToken::into_token)
-            .find(|token| token.kind() == SyntaxKind::VALUE_TEXT)
+        child_token(&self.0, SyntaxKind::VALUE_TEXT)
     }
 
     /// The value text, or `None` for empty values (`key =`).
     #[must_use]
     pub fn text(&self) -> Option<String> {
-        self.token().map(|token| token.text().to_string())
+        token_text(self.0.green(), SyntaxKind::VALUE_TEXT).map(str::to_owned)
     }
 }
 
@@ -213,17 +208,157 @@ impl CommentLine {
     /// The `COMMENT` token (including its leading `;`/`#` marker).
     #[must_use]
     pub fn token(&self) -> Option<SyntaxToken> {
-        self.0
-            .children_with_tokens()
-            .filter_map(rowan::NodeOrToken::into_token)
-            .find(|token| token.kind() == SyntaxKind::COMMENT)
+        child_token(&self.0, SyntaxKind::COMMENT)
     }
 
     /// The comment text, including its leading `;`/`#` marker.
     #[must_use]
     pub fn text(&self) -> Option<String> {
-        self.token().map(|token| token.text().to_string())
+        token_text(self.0.green(), SyntaxKind::COMMENT).map(str::to_owned)
     }
+}
+
+/// The name of a `SECTION`, read from its green node as [`Section::name`] reads it: the first
+/// `IDENT` token of its first `SECTION_HEADER` child.
+pub(crate) fn section_name(section: &GreenNodeData) -> Option<&str> {
+    assert_eq!(node_kind(section), SyntaxKind::SECTION);
+    let header = child_node(section, SyntaxKind::SECTION_HEADER)?;
+    token_text(header, SyntaxKind::IDENT)
+}
+
+/// The key of an `ENTRY`, read from its green node as [`Entry::key`] reads it: the first `IDENT`
+/// token of its first `KEY` child.
+pub(crate) fn entry_key(entry: &GreenNodeData) -> Option<&str> {
+    assert_eq!(node_kind(entry), SyntaxKind::ENTRY);
+    let key = child_node(entry, SyntaxKind::KEY)?;
+    token_text(key, SyntaxKind::IDENT)
+}
+
+/// The kind of a green node. A raw kind that is not a [`SyntaxKind`] panics, as it does when a
+/// cursor reads it.
+fn node_kind(node: &GreenNodeData) -> SyntaxKind {
+    IniLang::kind_from_raw(node.kind())
+}
+
+/// The kind of a green token, read as [`node_kind`] reads a node's.
+fn token_kind(token: &GreenTokenData) -> SyntaxKind {
+    IniLang::kind_from_raw(token.kind())
+}
+
+/// The first child node of `node` of kind `kind`.
+fn child_node(node: &GreenNodeData, kind: SyntaxKind) -> Option<&GreenNodeData> {
+    node.children()
+        .filter_map(NodeOrToken::into_node)
+        .find(|child| node_kind(child) == kind)
+}
+
+/// The text of the first child token of `node` of kind `kind`.
+fn token_text(node: &GreenNodeData, kind: SyntaxKind) -> Option<&str> {
+    node.children()
+        .filter_map(NodeOrToken::into_token)
+        .find(|token| token_kind(token) == kind)
+        .map(GreenTokenData::text)
+}
+
+/// Whether `node` has a child token of one of `kinds`.
+fn has_token(node: &GreenNodeData, kinds: &[SyntaxKind]) -> bool {
+    node.children()
+        .filter_map(NodeOrToken::into_token)
+        .any(|token| kinds.contains(&token_kind(token)))
+}
+
+/// The child nodes of `parent` of kind `kind`, in order. Only they get cursors.
+fn child_nodes(parent: &SyntaxNode, kind: SyntaxKind) -> ChildNodes<'_> {
+    ChildNodes {
+        parent,
+        kind,
+        children: parent.green().children().enumerate(),
+        start: parent.text_range().start(),
+        previous: None,
+    }
+}
+
+/// The child nodes of one kind of a node, found through its green node.
+struct ChildNodes<'a> {
+    parent: &'a SyntaxNode,
+    kind: SyntaxKind,
+    /// The green children not walked yet, with their indices.
+    children: Enumerate<Children<'a>>,
+    /// Where the next child starts.
+    start: TextSize,
+    /// The child node returned last, unless a child node of another kind followed it.
+    previous: Option<SyntaxNode>,
+}
+
+impl Iterator for ChildNodes<'_> {
+    type Item = SyntaxNode;
+
+    fn next(&mut self) -> Option<SyntaxNode> {
+        for (index, child) in self.children.by_ref() {
+            let range = TextRange::at(self.start, child.text_len());
+            self.start = range.end();
+            // Tokens lie between nodes without separating them: a node's next sibling is a node.
+            let Some(node) = child.into_node() else {
+                continue;
+            };
+            if node_kind(node) != self.kind {
+                self.previous = None;
+                continue;
+            }
+            let cursor = match self.previous.take() {
+                // The child node directly after the one returned last: its next sibling, in O(1).
+                Some(previous) => previous.next_sibling(),
+                None => child_at(self.parent, index, range).into_node(),
+            }
+            .expect("the child is a node");
+            assert_eq!(cursor.index(), index);
+            assert_eq!(cursor.text_range(), range);
+            assert_eq!(cursor.kind(), self.kind);
+            self.previous = Some(cursor.clone());
+            return Some(cursor);
+        }
+        None
+    }
+}
+
+/// The first child token of `parent` of kind `kind`. Only it gets a cursor.
+fn child_token(parent: &SyntaxNode, kind: SyntaxKind) -> Option<SyntaxToken> {
+    let mut start = parent.text_range().start();
+    for (index, child) in parent.green().children().enumerate() {
+        let range = TextRange::at(start, child.text_len());
+        start = range.end();
+        if child
+            .into_token()
+            .is_some_and(|token| token_kind(token) == kind)
+        {
+            let token = child_at(parent, index, range).into_token();
+            let token = token.expect("the child is a token");
+            assert_eq!(token.kind(), kind);
+            return Some(token);
+        }
+    }
+    None
+}
+
+/// The cursor of child `index` of `parent`, which covers `range`.
+fn child_at(parent: &SyntaxNode, index: usize, range: TextRange) -> SyntaxElement {
+    // Siblings are contiguous, so a child with text is the only one that covers its whole range,
+    // and the binary search finds it. For an empty range it finds the last of the empty children
+    // there, such as the empty VALUE of `key =` or of a bare key.
+    let found = parent
+        .child_or_token_at_range(range)
+        .expect("parent has the child");
+    let child = if found.index() == index {
+        found
+    } else {
+        // Only an empty child shares its range with a sibling: the walk counts its way there.
+        assert!(range.is_empty());
+        let child = parent.children_with_tokens().nth(index);
+        child.expect("parent has the child")
+    };
+    assert_eq!(child.index(), index);
+    assert_eq!(child.text_range(), range);
+    child
 }
 
 #[cfg(test)]
@@ -406,6 +541,137 @@ mod tests {
         assert!(Value::cast(root.clone()).is_none());
         assert!(CommentLine::cast(root.clone()).is_none());
         assert!(BlankLine::cast(root).is_none());
+    }
+
+    /// A tree built from `events`: `Some(kind)` with `None` for its text starts a node, `None`
+    /// finishes the last node started, and `Some(kind)` with `Some(text)` is a token.
+    fn tree(events: &[(Option<SyntaxKind>, Option<&str>)]) -> SyntaxNode {
+        let mut builder = rowan::GreenNodeBuilder::new();
+        for &(kind, text) in events {
+            match (kind, text) {
+                (Some(kind), None) => builder.start_node(kind.into()),
+                (Some(kind), Some(text)) => builder.token(kind.into(), text),
+                (None, _) => builder.finish_node(),
+            }
+        }
+        SyntaxNode::new_root(builder.finish())
+    }
+
+    fn start(kind: SyntaxKind) -> (Option<SyntaxKind>, Option<&'static str>) {
+        (Some(kind), None)
+    }
+
+    fn token(kind: SyntaxKind, text: &str) -> (Option<SyntaxKind>, Option<&str>) {
+        (Some(kind), Some(text))
+    }
+
+    const FINISH: (Option<SyntaxKind>, Option<&str>) = (None, None);
+
+    fn indices<T: AstNode>(nodes: impl Iterator<Item = T>) -> Vec<usize> {
+        nodes.map(|node| node.syntax().index()).collect()
+    }
+
+    #[test]
+    fn empty_children_are_found_by_their_index() {
+        use SyntaxKind::{COMMENT_LINE, ROOT, SECTION};
+        // Empty siblings share one range, so only their index tells them apart.
+        let root = tree(&[
+            start(ROOT),
+            start(SECTION),
+            FINISH,
+            start(SECTION),
+            FINISH,
+            start(COMMENT_LINE),
+            FINISH,
+            start(SECTION),
+            FINISH,
+            FINISH,
+        ]);
+        let file = File::cast(root).unwrap();
+        assert_eq!(indices(file.sections()), [0, 1, 3]);
+        for section in file.sections() {
+            assert!(section.syntax().text_range().is_empty());
+        }
+
+        // An empty token, too.
+        let key = tree(&[start(SyntaxKind::KEY), token(SyntaxKind::IDENT, ""), FINISH]);
+        let key = Key::cast(key).unwrap();
+        let ident = key.token().unwrap();
+        assert_eq!(
+            (ident.index(), ident.text_range()),
+            (0, key.syntax().text_range())
+        );
+        assert_eq!(key.text().as_deref(), Some(""));
+
+        // The parser leaves the VALUE of `key =` and of a bare key empty.
+        let file = ast("k =\nb\n");
+        let entries: Vec<_> = file.preamble_entries().collect();
+        let values: Vec<_> = entries.iter().filter_map(Entry::value_node).collect();
+        assert_eq!(indices(values.iter().cloned()), [3, 1]);
+        for value in &values {
+            assert!(value.syntax().text_range().is_empty());
+        }
+    }
+
+    #[test]
+    fn a_separator_without_a_value_node_reads_no_value() {
+        use SyntaxKind::{ENTRY, EQ, IDENT, KEY};
+        let entry = tree(&[
+            start(ENTRY),
+            start(KEY),
+            token(IDENT, "k"),
+            FINISH,
+            token(EQ, "="),
+            FINISH,
+        ]);
+        let entry = Entry::cast(entry).unwrap();
+        assert_eq!(entry.key().as_deref(), Some("k"));
+        assert!(entry.value_node().is_none());
+        assert_eq!(entry.value(), None);
+        assert!(!entry.uses_colon());
+    }
+
+    #[test]
+    fn children_of_a_kind_are_found_across_tokens_and_other_nodes() {
+        use SyntaxKind::{COMMENT, COMMENT_LINE, IDENT, L_BRACK, SECTION_HEADER, WHITESPACE};
+        let section = tree(&[
+            start(SyntaxKind::SECTION),
+            start(COMMENT_LINE),
+            token(COMMENT, "; c"),
+            FINISH,
+            token(WHITESPACE, " "),
+            start(SECTION_HEADER),
+            token(L_BRACK, "["),
+            token(IDENT, "a"),
+            FINISH,
+            token(WHITESPACE, " "),
+            start(COMMENT_LINE),
+            token(COMMENT, "; d"),
+            FINISH,
+            start(COMMENT_LINE),
+            token(COMMENT, "; e"),
+            FINISH,
+            FINISH,
+        ]);
+        let section = Section::cast(section).unwrap();
+        // The header need not be the first child.
+        let header = section.header().unwrap();
+        assert_eq!(header.syntax().index(), 2);
+        assert_eq!(header.syntax().text(), "[a");
+        assert_eq!(section.name().as_deref(), Some("a"));
+        let name = header.name_token().unwrap();
+        assert_eq!((name.index(), name.text()), (1, "a"));
+        // A token between two comment lines, or a header, leaves each found where it is.
+        let comments: Vec<_> = section.comment_lines().collect();
+        assert_eq!(indices(comments.iter().cloned()), [0, 4, 5]);
+        let texts: Vec<_> = comments.iter().filter_map(CommentLine::text).collect();
+        assert_eq!(texts, ["; c", "; d", "; e"]);
+        let ranges: Vec<_> = comments
+            .iter()
+            .map(|comment| comment.syntax().text_range())
+            .collect();
+        let range = |start: u32, end: u32| TextRange::new(start.into(), end.into());
+        assert_eq!(ranges, [range(0, 3), range(7, 10), range(10, 13)]);
     }
 
     #[test]

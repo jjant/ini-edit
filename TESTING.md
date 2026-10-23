@@ -87,6 +87,18 @@ one, and the tests list, for each kind of edit, which nodes it keeps.
   comments stay outside that comparison so expected dialect differences do
   not become false bug reports.
 - Real-world fixtures cover AWS, Git, Gitea, MySQL, PHP, and systemd syntax.
+- The typed AST reads a node's children from its green node, because rowan
+  0.17's child iterators build a cursor for every child they step over. An
+  equivalence oracle, `tests/support/ast_reads.rs`, keeps the accessors'
+  former cursor walks as its reference: every accessor of every node must
+  return the same strings and flags, and the very nodes and tokens (same
+  parent, index, kind, and range). It checks every fixture under all four
+  parser-option combinations, the 1,024 differential documents, every input of
+  the round-trip oracle (the bounded exhaustive inputs and every round-trip
+  fuzz input), and 100,000 random trees that no parser makes: every kind,
+  children in any order, and empty tokens and nodes, which share a range with
+  their empty siblings. The corruption shards leave it out, because it would
+  make their 16 million parses take half as long again.
 - As in SQLite's malformed-database tests, the fixtures are also corrupted one
   change at a time. Every character of every fixture is deleted, replaced by
   each other character of a 14-character alphabet (CR, LF, every delimiter,
