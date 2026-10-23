@@ -155,9 +155,21 @@ jobs:
             lexer_and_diagnostic_contracts -- --exact
 
   miri:
+    name: miri (${{ matrix.partition }}/${{ strategy.job-total }})
     runs-on: ubuntu-24.04
-    # The longest run in the last 60 took 40 minutes, and the time is rising.
-    timeout-minutes: 60
+    # `cargo miri test` ran the 203 library tests one at a time in a single
+    # process: 31.9 minutes on 2026-10-18 and up to 40 minutes before. nextest
+    # gives each test its own Miri process and runs one per CPU, four on this
+    # runner, so a leg takes about as long as its slowest test; the slowest
+    # takes 4.8 minutes. Replaying the 2026-10-18 test times through these
+    # partitions predicts at most 6 minutes per leg, and about 7 on runners as
+    # slow as in the 40-minute run.
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # The values only name the legs; the test step numbers them.
+        partition: [1, 2, 3, 4]
     env:
       # rowan 0.16.1 has an open provenance-model failure upstream:
       # https://github.com/rust-analyzer/rowan/issues/192
@@ -172,7 +184,24 @@ jobs:
           toolchain: nightly-2026-09-17
           components: miri, rust-src
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - run: cargo miri test --locked --lib
+      - uses: taiki-e/install-action@9114bf4d891761788c546334fd37538eae1bf8b3 # v2.87.16
+        with:
+          tool: cargo-nextest@0.9.145
+      - name: Library tests in this partition
+        env:
+          # Taken from the matrix itself, so every leg divides by the same
+          # count and the legs together run each test exactly once.
+          PARTITION_INDEX: ${{ strategy.job-index }}
+          PARTITION_COUNT: ${{ strategy.job-total }}
+        # nextest numbers partitions from 1. Hashing keeps a test in its
+        # partition when other tests are added or removed. --no-fail-fast
+        # runs the rest of the partition after a failure. Each test has its
+        # own Miri process, so undefined behavior in one test no longer stops
+        # the rest, as it did in the single `cargo miri test` process.
+        run: |
+          cargo miri nextest run --locked --lib --no-fail-fast \
+            --test-threads num-cpus \
+            --partition "hash:$((PARTITION_INDEX + 1))/$PARTITION_COUNT"
 
   dependencies:
     runs-on: ubuntu-24.04
@@ -193,10 +222,20 @@ jobs:
         run: cargo deny --locked check advisories bans licenses sources
 
   mutation:
+    name: mutation (${{ matrix.shard }}/${{ strategy.job-total }})
     runs-on: ubuntu-24.04
-    # Over the last 60 runs the suite took 19.8 minutes at the median and
-    # 24.7 minutes at most, depending on runner load.
-    timeout-minutes: 30
+    # Unsharded, mutation testing took 19.8 minutes at the median and 24.7 at
+    # most over the last 60 runs, depending on runner load. Every shard repeats
+    # the setup and the 14-second baseline. Replaying the per-mutant times of
+    # the 2026-10-18 run (474 mutants in 18.0 minutes) through these shards
+    # predicts at most 5 minutes per shard, and about 7 on runners as slow as
+    # in the 24.7-minute run.
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        # The values only name the shards; the mutation step numbers them.
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -208,11 +247,20 @@ jobs:
       - uses: taiki-e/install-action@9114bf4d891761788c546334fd37538eae1bf8b3 # v2.87.16
         with:
           tool: cargo-mutants@27.1.0,cargo-nextest@0.9.145
-      - name: Require no surviving mutation
+      - name: Require no surviving mutation in this shard
         shell: bash
+        env:
+          # Taken from the matrix itself, so every shard divides by the same
+          # count and the shards together test each mutant exactly once.
+          # cargo-mutants numbers shards from 0, as strategy.job-index does.
+          SHARD_INDEX: ${{ strategy.job-index }}
+          SHARD_COUNT: ${{ strategy.job-total }}
         run: |
           mkdir --parents target/mutation-ci
           set +o errexit
+          # Round-robin deals the lexer and parser mutants, which cause most
+          # timeouts, to every shard. The default, slice, would give one shard
+          # 23 of the 39 timeouts.
           cargo mutants \
             --all-features \
             --caught \
@@ -221,6 +269,8 @@ jobs:
             --timeout 30 \
             --cap-lints true \
             --cargo-arg=--locked \
+            --shard "$SHARD_INDEX/$SHARD_COUNT" \
+            --sharding round-robin \
             --output target/mutation-ci
           status=$?
           set -o errexit
@@ -228,7 +278,7 @@ jobs:
           report=target/mutation-ci/mutants.out/outcomes.json
           jq '{total_mutants, caught, timeout, unviable, missed}' "$report"
           {
-            echo "### Mutation testing"
+            echo "### Mutation testing, shard $((SHARD_INDEX + 1)) of $SHARD_COUNT"
             echo
             jq --raw-output '
               ["Outcome", "Count"],
