@@ -96,6 +96,18 @@ coverage run, mutation run, and fuzz build checks them.
   header into a key.
 - Boundary decision tables vary line endings, separators, whitespace, comments,
   malformed input, empty input, unterminated input, and editor indices.
+- As SQLite tests the edges of its defined limits, unit tests check both sides
+  of the input size limit, `MAX_INPUT_LEN` (`u32::MAX` bytes, the range of
+  rowan's `TextSize`). `parse_with` asserts a predicate on the input length
+  before it lexes. Without allocating, tests check that the predicate accepts
+  `MAX_INPUT_LEN` bytes, refuses one byte more, and agrees with rowan's own
+  `TextSize` conversion on both sides. On 32-bit targets no length is past the
+  limit, so only the agreement test runs there. On 64-bit Linux, one more test
+  parses an input one byte past the limit and expects the assertion's
+  message. Linux backs a large zeroed allocation with the shared zero page
+  until it is written, so that 4 GiB input costs about a second of UTF-8
+  validation and a few MiB of memory. The test checks the predicate first, so
+  that a broken predicate fails it at once instead of lexing 4 GiB.
 - Regression tests preserve every previously discovered bug.
 - An independent ordered-entry model exhausts short edit sequences and checks
   both the live AST and the reparsed output after every operation. Following
@@ -283,8 +295,11 @@ with a fresh parse after every edit, which implies the invariant for every
 edit they make.
 
 - O(1) checks use `assert!` and stay on in release builds: loop progress,
-  non-empty tokens, the shape of tokens and lines, and the postconditions of
-  `parse_with`.
+  non-empty tokens, the shape of tokens and lines, and the precondition and
+  postconditions of `parse_with`. The precondition, an input of at most
+  `MAX_INPUT_LEN` bytes, comes before lexing, so a longer input panics at once
+  and the same way in every build. Unchecked, it would be lexed in full before
+  rowan's `u32` lengths overflowed.
 - On the per-line or per-token hot path, a check that only restates what is
   already established uses `debug_assert!`: the first character a line was
   dispatched on, whitespace that was just eaten, or, in `Parser::bump`, the
@@ -308,7 +323,8 @@ edit they make.
   even a string literal, as a region that runs only on failure. A comment
   above the assertion explains it; `assert!` reports its condition and
   `assert_eq!` both values. A message is fine where a `should_panic` test trips
-  the assertion, as in `kind_from_raw`.
+  the assertion, as in `kind_from_raw` and the input size precondition of
+  `parse_with`.
 - Assertions stay inline, never in a helper fn. The helper's "replace with
   ()" mutant would delete the check, and a helper that wraps a loop step would
   turn that mutant into a hang.
