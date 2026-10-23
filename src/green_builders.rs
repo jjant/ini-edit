@@ -13,6 +13,10 @@ use crate::syntax_kind::{SyntaxElement, SyntaxKind, SyntaxNode, SyntaxToken};
 /// A child of a green node.
 type GreenElement = NodeOrToken<GreenNode, GreenToken>;
 
+/// The texts a `NEWLINE` token can hold: one line break, read as the lexer
+/// reads it.
+pub(crate) const LINE_BREAKS: [&str; 3] = ["\n", "\r\n", "\r"];
+
 /// The whitespace written before and after an `=` or `:` separator. An empty
 /// side writes no whitespace token.
 #[derive(Debug, Clone, Copy)]
@@ -55,6 +59,10 @@ pub(crate) fn value_node(text: &str) -> GreenNode {
 /// terminators already follow a CR as a separate line break.
 #[must_use]
 pub(crate) fn newline_after(text: &str, ending: &'static str) -> &'static str {
+    assert!(
+        LINE_BREAKS.contains(&ending),
+        "{ending:?} is not a line break"
+    );
     if ending == "\n" && text.ends_with('\r') {
         "\r\n"
     } else {
@@ -65,6 +73,11 @@ pub(crate) fn newline_after(text: &str, ending: &'static str) -> &'static str {
 /// The tokens of a separator: `separator` with the nonempty sides of `gap`
 /// around it.
 fn separator_children(separator: SyntaxKind, gap: SeparatorGap<'_>) -> Vec<GreenElement> {
+    // Any other kind would be built as a token that reads `=`.
+    assert!(
+        matches!(separator, SyntaxKind::EQ | SyntaxKind::COLON),
+        "{separator:?} is not a separator"
+    );
     let text = if separator == SyntaxKind::COLON {
         ":"
     } else {
@@ -104,6 +117,10 @@ pub(crate) fn entry_node(
 /// entries. In the line-node model the `SECTION_HEADER` owns its terminator.
 #[must_use]
 pub(crate) fn empty_section_node(name: &str, ending: &'static str) -> GreenNode {
+    assert!(
+        LINE_BREAKS.contains(&ending),
+        "{ending:?} is not a line break"
+    );
     let header = green_node(
         SyntaxKind::SECTION_HEADER,
         vec![
@@ -119,6 +136,10 @@ pub(crate) fn empty_section_node(name: &str, ending: &'static str) -> GreenNode 
 /// Build a `BLANK_LINE` node: a single line `ending`.
 #[must_use]
 pub(crate) fn blank_line_node(ending: &'static str) -> GreenNode {
+    assert!(
+        LINE_BREAKS.contains(&ending),
+        "{ending:?} is not a line break"
+    );
     green_node(
         SyntaxKind::BLANK_LINE,
         vec![green_token(SyntaxKind::NEWLINE, ending)],
@@ -130,6 +151,10 @@ pub(crate) fn blank_line_node(ending: &'static str) -> GreenNode {
 /// the line break is its `NEWLINE`. A line without one receives `ending`.
 #[must_use]
 pub(crate) fn raw_line_node(line: &str, ending: &'static str) -> GreenNode {
+    assert!(
+        LINE_BREAKS.contains(&ending),
+        "{ending:?} is not a line break"
+    );
     let (content, newline) = split_line_break(line).unwrap_or((line, ending));
     green_node(
         SyntaxKind::COMMENT_LINE,
@@ -156,6 +181,17 @@ fn split_line_break(line: &str) -> Option<(&str, &str)> {
 /// whitespace before it and the `COMMENT` itself) and a `newline`.
 #[must_use]
 pub(crate) fn comment_line_node(comment_tokens: &[SyntaxToken], newline: &str) -> GreenNode {
+    assert!(
+        comment_tokens
+            .iter()
+            .map(SyntaxToken::kind)
+            .eq([SyntaxKind::WHITESPACE, SyntaxKind::COMMENT]),
+        "an inline comment is its leading whitespace and its COMMENT, not {comment_tokens:?}"
+    );
+    assert!(
+        LINE_BREAKS.contains(&newline),
+        "{newline:?} is not a line break"
+    );
     let mut children: Vec<GreenElement> = comment_tokens
         .iter()
         .map(|token| NodeOrToken::Token(token.green().to_owned()))
@@ -189,6 +225,7 @@ fn detached_token(kind: SyntaxKind, text: &str) -> SyntaxElement {
 /// A loose `NEWLINE` token with the terminator `text`.
 #[must_use]
 pub(crate) fn newline_token(text: &str) -> SyntaxElement {
+    assert!(LINE_BREAKS.contains(&text), "{text:?} is not a line break");
     detached_token(SyntaxKind::NEWLINE, text)
 }
 
@@ -363,5 +400,72 @@ mod tests {
             texts_of(&separator_tokens(SyntaxKind::EQ, compact)),
             [(SyntaxKind::EQ, "=".to_owned())]
         );
+    }
+
+    // Every builder that writes a NEWLINE token asserts that its text is one
+    // line break, and each test below passes one text that is not. The last
+    // two tests break the other contracts of the builders.
+
+    #[test]
+    #[should_panic(expected = "\"\" is not a line break")]
+    fn a_line_ending_must_be_a_line_break() {
+        let _ = newline_after("value", "");
+    }
+
+    #[test]
+    #[should_panic(expected = "\" \" is not a line break")]
+    fn a_new_section_must_end_with_a_line_break() {
+        let _ = empty_section_node("s", " ");
+    }
+
+    #[test]
+    #[should_panic(expected = "\"\\n\\n\" is not a line break")]
+    fn a_blank_line_must_be_one_line_break() {
+        let _ = blank_line_node("\n\n");
+    }
+
+    #[test]
+    #[should_panic(expected = "\"x\" is not a line break")]
+    fn a_raw_line_must_be_completed_with_a_line_break() {
+        let _ = raw_line_node("; raw", "x");
+    }
+
+    #[test]
+    #[should_panic(expected = "\"\\r\\r\" is not a line break")]
+    fn a_newline_token_must_hold_one_line_break() {
+        let _ = newline_token("\r\r");
+    }
+
+    /// The whitespace and `COMMENT` tokens of `k=v ; note`.
+    fn inline_comment_tokens() -> Vec<SyntaxToken> {
+        let options = crate::ParseOptions {
+            inline_comments: true,
+            ..Default::default()
+        };
+        crate::parse_with("k=v ; note", &options)
+            .syntax()
+            .descendants_with_tokens()
+            .filter_map(NodeOrToken::into_token)
+            .skip_while(|token| token.kind() != SyntaxKind::VALUE_TEXT)
+            .skip(1)
+            .collect()
+    }
+
+    #[test]
+    #[should_panic(expected = "\"\" is not a line break")]
+    fn a_moved_inline_comment_must_end_with_a_line_break() {
+        let _ = comment_line_node(&inline_comment_tokens(), "");
+    }
+
+    #[test]
+    #[should_panic(expected = "an inline comment is its leading whitespace and its COMMENT")]
+    fn a_moved_inline_comment_must_keep_its_leading_whitespace() {
+        let _ = comment_line_node(&inline_comment_tokens()[1..], "\n");
+    }
+
+    #[test]
+    #[should_panic(expected = "COMMENT is not a separator")]
+    fn a_separator_must_be_an_equals_sign_or_a_colon() {
+        let _ = separator_tokens(SyntaxKind::COMMENT, SPACED);
     }
 }

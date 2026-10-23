@@ -234,6 +234,15 @@ impl Editor {
     ) -> Self {
         let parse = parse_with(source, parse_options);
         let root = parse.syntax().clone_for_update();
+        #[expect(
+            clippy::missing_panics_doc,
+            reason = "the parser always builds a ROOT node"
+        )]
+        {
+            assert_eq!(root.kind(), SyntaxKind::ROOT);
+        }
+        #[cfg(all(debug_assertions, not(miri)))]
+        debug_assert_line_nodes(&root);
         Self {
             root,
             options: edit_options.clone(),
@@ -268,6 +277,13 @@ impl Editor {
             .is_some_and(|token| token.kind() != SyntaxKind::NEWLINE);
         let index = separator_parent.children_with_tokens().count();
         let mut blank_lines = self.separator_blank_lines();
+        #[expect(
+            clippy::missing_panics_doc,
+            reason = "separator_blank_lines returns 0, 1 or 2"
+        )]
+        {
+            assert!(blank_lines <= 2);
+        }
         if needs_newline && blank_lines != 0 {
             #[expect(
                 clippy::missing_panics_doc,
@@ -335,7 +351,17 @@ impl Editor {
     /// Render the final output.
     #[must_use]
     pub fn finish(&self) -> String {
-        self.root.text().to_string()
+        #[cfg(all(debug_assertions, not(miri)))]
+        debug_assert_line_nodes(&self.root);
+        let text = self.root.text().to_string();
+        #[expect(
+            clippy::missing_panics_doc,
+            reason = "rowan keeps a tree's length equal to the length of its text"
+        )]
+        {
+            assert_eq!(text.len(), usize::from(self.root.text_range().len()));
+        }
+        text
     }
 
     /// A read-only typed view over the editor's current tree.
@@ -364,6 +390,8 @@ impl Editor {
     #[must_use]
     pub fn file(&self) -> File {
         let root = SyntaxNode::new_root(self.root.green().into_owned());
+        #[cfg(all(debug_assertions, not(miri)))]
+        debug_assert_line_nodes(&root);
         #[expect(
             clippy::missing_panics_doc,
             reason = "the editor root is always a ROOT node produced by the parser"
@@ -379,6 +407,167 @@ impl Editor {
         file.sections()
             .find(|section| child_ident_is(section.syntax(), SyntaxKind::SECTION_HEADER, name))
     }
+}
+
+/// Assert the shape that line indices rely on: the document under `root` is a
+/// sequence of line nodes, and each one owns only its own line break.
+///
+/// - The root holds sections and lines, and a section holds only lines.
+/// - The only loose token is a byte order mark at the start of the root.
+/// - A line holds at most one `NEWLINE` token. It is the line's last child,
+///   and it holds one line break.
+/// - A `NEWLINE` token that holds LF does not follow a CR. The lexer reads the
+///   two as one CRLF line break, which joins two lines or takes the CR from
+///   the text before it.
+/// - Only the last line of the document may lack a line break.
+///
+/// Only `NEWLINE` tokens count as line breaks here. Two kinds of token can
+/// hold other line breaks, which the check does not see, except for a final
+/// CR right before an LF `NEWLINE` token: the `VALUE_TEXT` of a value with
+/// continuation lines, and text that the editor writes verbatim. That text is
+/// raw lines and, until keys, values and section names are validated, keys,
+/// values, section names and `Exact` separator whitespace.
+///
+/// The parser builds this shape and every edit must keep it, so the check
+/// runs when an editor is created and whenever its tree is read out. It walks
+/// the whole document, so only native debug builds compile it: tests,
+/// coverage, mutation testing and fuzzing run it. Release builds skip it, and
+/// so does Miri, which looks for undefined behavior rather than logic errors.
+/// Like [`child_ident_is`], the walk reads the green tree, so it creates no
+/// cursor and copies no text, which keeps fuzzing fast.
+#[cfg(all(debug_assertions, not(miri)))]
+pub(crate) fn debug_assert_line_nodes(root: &SyntaxNode) {
+    use crate::syntax_kind::IniLang;
+    use rowan::Language;
+
+    assert_eq!(
+        root.kind(),
+        SyntaxKind::ROOT,
+        "a {:?} node in place of the root",
+        root.kind()
+    );
+    let newline = rowan::SyntaxKind::from(SyntaxKind::NEWLINE);
+    let green = root.green();
+    let mut after_carriage_return = false;
+    let mut previous_is_unterminated = false;
+    for line in line_nodes(&green) {
+        assert!(
+            !previous_is_unterminated,
+            "only the last line may be unterminated"
+        );
+        let kind = IniLang::kind_from_raw(line.kind());
+        assert!(
+            matches!(
+                kind,
+                SyntaxKind::SECTION_HEADER
+                    | SyntaxKind::ENTRY
+                    | SyntaxKind::COMMENT_LINE
+                    | SyntaxKind::BLANK_LINE
+                    | SyntaxKind::ERROR_LINE
+            ),
+            "a {kind:?} node in place of a line"
+        );
+        let newlines = count_line_breaks(line, &mut after_carriage_return);
+        assert!(newlines <= 1, "a line node holds {newlines} line breaks");
+        let terminated = line
+            .children()
+            .last()
+            .and_then(NodeOrToken::into_token)
+            .is_some_and(|last| last.kind() == newline);
+        assert_eq!(
+            newlines,
+            usize::from(terminated),
+            "a line break that is not the last child of its line"
+        );
+        previous_is_unterminated = !terminated;
+    }
+}
+
+/// The number of `NEWLINE` tokens in the green line node `line`. Each one
+/// must hold one line break that does not join a CR before it.
+/// `after_carriage_return` says whether the text before `line` ends in CR. It
+/// is updated to say whether the text through `line` does.
+#[cfg(all(debug_assertions, not(miri)))]
+fn count_line_breaks(line: &rowan::GreenNodeData, after_carriage_return: &mut bool) -> usize {
+    let newline = rowan::SyntaxKind::from(SyntaxKind::NEWLINE);
+    let mut newlines = 0;
+    for token in line_tokens(line) {
+        let text = token.text();
+        if token.kind() == newline {
+            newlines += 1;
+            assert!(
+                green_builders::LINE_BREAKS.contains(&text),
+                "a NEWLINE token that is not one line break: {text:?}"
+            );
+            if *after_carriage_return {
+                assert_ne!(
+                    text, "\n",
+                    "a CR and the LF NEWLINE token after it read as one line break"
+                );
+            }
+        }
+        // An empty token leaves the text before the next one as it was.
+        if !text.is_empty() {
+            *after_carriage_return = text.ends_with('\r');
+        }
+    }
+    newlines
+}
+
+/// The lines of the document whose `ROOT` is the green node `root`, in
+/// document order: the lines outside any section and the lines of each
+/// section. A section holds only nodes, and the only loose token is a byte
+/// order mark at the start of the root.
+#[cfg(all(debug_assertions, not(miri)))]
+fn line_nodes(root: &rowan::GreenNodeData) -> Vec<&rowan::GreenNodeData> {
+    use crate::syntax_kind::IniLang;
+    use rowan::Language;
+
+    let section = rowan::SyntaxKind::from(SyntaxKind::SECTION);
+    let mut lines = Vec::new();
+    for (index, element) in root.children().enumerate() {
+        match element {
+            NodeOrToken::Token(token) => {
+                assert_eq!(index, 0, "a loose token after the start of the document");
+                assert_eq!(
+                    IniLang::kind_from_raw(token.kind()),
+                    SyntaxKind::WHITESPACE,
+                    "a loose token that is not whitespace"
+                );
+                assert_eq!(
+                    token.text(),
+                    "\u{FEFF}",
+                    "a loose token that is not a byte order mark"
+                );
+            }
+            NodeOrToken::Node(node) if node.kind() == section => {
+                for line in node.children() {
+                    let line = line.into_node();
+                    assert!(line.is_some(), "a loose token in a section");
+                    lines.extend(line);
+                }
+            }
+            NodeOrToken::Node(line) => lines.push(line),
+        }
+    }
+    lines
+}
+
+/// The tokens of the green line node `line`, in document order: its own and
+/// those of its KEY and VALUE nodes. Those nodes hold only tokens, so the walk
+/// goes two levels deep and no further.
+#[cfg(all(debug_assertions, not(miri)))]
+fn line_tokens(line: &rowan::GreenNodeData) -> impl Iterator<Item = &rowan::GreenTokenData> {
+    line.children().flat_map(|child| {
+        let nested = child.into_node().into_iter().flat_map(|node| {
+            node.children().map(|grandchild| {
+                grandchild
+                    .into_token()
+                    .expect("the nodes in a line hold only tokens")
+            })
+        });
+        child.into_token().into_iter().chain(nested)
+    })
 }
 
 /// Whether the IDENT token of `node`'s first `child_kind` child reads `text`:
@@ -694,8 +883,15 @@ impl SectionEditor<'_> {
         index: usize,
         build_lines: impl FnOnce(&'static str) -> Vec<SyntaxNode>,
     ) {
+        // The green node counts every child that `splice_children` indexes.
+        let children_before = self.node.green().children().len();
+        assert!(
+            index <= children_before,
+            "an insertion point past the end of the section"
+        );
         let ending = document_line_ending(&self.node);
         let new_lines = build_lines(ending);
+        let line_count = new_lines.len();
         // Repair internal boundaries while the new lines are still detached,
         // so each newline edit only rebuilds that line, not the document.
         for pair in new_lines.windows(2) {
@@ -711,6 +907,11 @@ impl SectionEditor<'_> {
         let last = new_lines.last().cloned().expect("an insertion adds a line");
         self.node
             .splice_children(index..index, new_lines.into_iter().map(Into::into));
+        // The section gains exactly the new lines.
+        assert_eq!(
+            self.node.green().children().len(),
+            children_before + line_count
+        );
         if let Some(previous) = first
             .prev_sibling()
             .filter(|line| !ends_with_line_break(line))
@@ -806,8 +1007,20 @@ impl SectionEditor<'_> {
             SyntaxNode::prev_sibling_or_token,
         );
         let next = removed_lines.last().and_then(SyntaxNode::next_sibling);
+        let children_before = self.node.green().children().len();
+        let removed_count = removed_lines.len();
         for line in removed_lines {
             line.detach();
+        }
+        #[expect(
+            clippy::missing_panics_doc,
+            reason = "the removed lines are children of this section"
+        )]
+        {
+            assert_eq!(
+                self.node.green().children().len() + removed_count,
+                children_before
+            );
         }
         repair_line_boundary(&self.node, previous, next);
     }
@@ -898,6 +1111,7 @@ fn detach_preserving_line_breaks(node: &SyntaxNode) {
     let previous = node.prev_sibling_or_token();
     let next = node.next_sibling();
     node.detach();
+    assert!(node.parent().is_none());
     repair_line_boundary(&parent, previous, next);
 }
 
@@ -907,10 +1121,20 @@ fn detach_preserving_line_breaks(node: &SyntaxNode) {
 fn terminate_line(line: &SyntaxNode, ending: &'static str) {
     let previous_token =
         last_descendant_token(line).expect("a line needing a terminator has content");
+    assert_ne!(
+        previous_token.kind(),
+        SyntaxKind::NEWLINE,
+        "the line already ends with a line break"
+    );
     let newline =
         green_builders::newline_token(green_builders::newline_after(previous_token.text(), ending));
     let end = line.children_with_tokens().count();
     line.splice_children(end..end, vec![newline]);
+    // The new terminator ends the line.
+    assert_eq!(
+        line.last_child_or_token().map(|last| last.kind()),
+        Some(SyntaxKind::NEWLINE)
+    );
 }
 
 /// A handle to a specific entry within a section, for position-targeted
@@ -996,6 +1220,14 @@ fn replace_key(entry: &SyntaxNode, new_key: &str) {
         0..old_count,
         green_builders::detached_children(green_builders::key_node(new_key)),
     );
+    // Reading the key back copies it, so only native debug builds do it.
+    #[cfg(all(debug_assertions, not(miri)))]
+    assert_eq!(
+        Entry::cast(entry.clone())
+            .and_then(|entry_ast| entry_ast.key())
+            .as_deref(),
+        Some(new_key)
+    );
 }
 
 /// Replace the value of an `ENTRY` node in place. An empty `value_text` clears
@@ -1040,6 +1272,10 @@ fn replace_value(entry: &SyntaxNode, value_text: &str, spacing: &SeparatorSpacin
     if value_text.ends_with('\r') {
         preserve_value_carriage_return(entry, &value_node);
     }
+    // The repairs above must leave the value alone. Reading it back copies
+    // it, so only native debug builds do it.
+    #[cfg(all(debug_assertions, not(miri)))]
+    assert_eq!(entry_ast.value().as_deref(), Some(value_text));
 }
 
 /// Replace every token between the KEY and VALUE nodes of `entry` (a
@@ -1063,6 +1299,7 @@ fn replace_separator(entry: &SyntaxNode, separator: SyntaxKind, gap: SeparatorGa
                 .is_some_and(|node| node.kind() == SyntaxKind::VALUE)
         })
         .expect("an ENTRY always has a VALUE node");
+    assert!(key_index < value_index, "an entry's VALUE precedes its KEY");
     let separator_index = key_index + 1;
     for element in &children[separator_index..value_index] {
         element
@@ -1142,7 +1379,20 @@ fn move_inline_comment_before(entry: &SyntaxNode) {
     else {
         return;
     };
-    // Inline comments always follow the VALUE and a whitespace token.
+    assert!(
+        comment_index >= 2,
+        "an inline comment at the start of its entry"
+    );
+    assert_eq!(
+        children[comment_index - 1].kind(),
+        SyntaxKind::WHITESPACE,
+        "an inline comment without whitespace before it"
+    );
+    assert_eq!(
+        children[comment_index - 2].kind(),
+        SyntaxKind::VALUE,
+        "the whitespace before an inline comment does not follow the value"
+    );
     let comment_tokens: Vec<SyntaxToken> = children[comment_index - 1..=comment_index]
         .iter()
         .map(|element| {
@@ -1273,6 +1523,310 @@ mod tests {
         assert_eq!(key.ancestors().count(), MAX_TREE_DEPTH);
         assert_eq!(token_before(&key, None).unwrap().text(), "\u{FEFF}");
         assert_eq!(token_after(&value, None).unwrap().text(), "[");
+    }
+
+    // --- assertions on the shape of the tree ---
+    //
+    // No edit breaks these invariants, so only a test can show that the
+    // assertion guarding each one is live. Each `should_panic` test below
+    // breaks one invariant, in a tree built by hand or in a call that breaks
+    // a helper's contract, and expects that assertion's message.
+
+    type GreenElement = NodeOrToken<rowan::GreenNode, rowan::GreenToken>;
+
+    fn token(kind: SyntaxKind, text: &str) -> GreenElement {
+        NodeOrToken::Token(rowan::GreenToken::new(kind.into(), text))
+    }
+
+    fn node(kind: SyntaxKind, children: Vec<GreenElement>) -> GreenElement {
+        NodeOrToken::Node(rowan::GreenNode::new(kind.into(), children))
+    }
+
+    /// A mutable `ROOT` node holding `children`.
+    fn root_of(children: Vec<GreenElement>) -> SyntaxNode {
+        SyntaxNode::new_root_mut(rowan::GreenNode::new(SyntaxKind::ROOT.into(), children))
+    }
+
+    /// A `COMMENT_LINE` holding `;`, ended by `newline` if it is not empty.
+    #[cfg(all(debug_assertions, not(miri)))]
+    fn comment_line(newline: &str) -> GreenElement {
+        let mut tokens = vec![token(SyntaxKind::COMMENT, ";")];
+        if !newline.is_empty() {
+            tokens.push(token(SyntaxKind::NEWLINE, newline));
+        }
+        node(SyntaxKind::COMMENT_LINE, tokens)
+    }
+
+    /// A `BLANK_LINE` holding only `newline`.
+    #[cfg(all(debug_assertions, not(miri)))]
+    fn blank_line(newline: &str) -> GreenElement {
+        node(
+            SyntaxKind::BLANK_LINE,
+            vec![token(SyntaxKind::NEWLINE, newline)],
+        )
+    }
+
+    /// The line that an empty raw line becomes: an empty `COMMENT` and
+    /// `newline`.
+    #[cfg(all(debug_assertions, not(miri)))]
+    fn empty_raw_line(newline: &str) -> GreenElement {
+        node(
+            SyntaxKind::COMMENT_LINE,
+            vec![
+                token(SyntaxKind::COMMENT, ""),
+                token(SyntaxKind::NEWLINE, newline),
+            ],
+        )
+    }
+
+    #[test]
+    #[cfg(all(debug_assertions, not(miri)))]
+    fn the_line_node_check_accepts_every_shape_the_editor_keeps() {
+        // A byte order mark, lines before the first section, all three
+        // line breaks, a section emptied of every line, a section without a
+        // header and an unterminated last line.
+        let editor = Editor::new("\u{FEFF}k=1\r\n\n[a]\rx=\n[b]\ny=2\n[c]\n; note\nlast");
+        editor.section("b").remove_lines(0..usize::MAX);
+        editor.section("c").remove_lines(0..1);
+        assert_eq!(editor.finish(), "\u{FEFF}k=1\r\n\n[a]\rx=\n; note\nlast");
+        debug_assert_line_nodes(&editor.root);
+        debug_assert_line_nodes(editor.file().syntax());
+        debug_assert_line_nodes(&root_of(Vec::new()));
+        debug_assert_line_nodes(&root_of(vec![token(SyntaxKind::WHITESPACE, "\u{FEFF}")]));
+        // After a CR, a NEWLINE token can hold CR or CRLF, also past an empty
+        // token: `;\r\r\r\n` is three lines.
+        let lines = vec![comment_line("\r"), blank_line("\r"), empty_raw_line("\r\n")];
+        debug_assert_line_nodes(&root_of(lines));
+    }
+
+    #[test]
+    #[cfg(all(debug_assertions, not(miri)))]
+    #[should_panic(expected = "a SECTION node in place of the root")]
+    fn the_line_node_check_starts_at_the_root() {
+        let root = root_of(vec![node(SyntaxKind::SECTION, Vec::new())]);
+        debug_assert_line_nodes(&root.first_child().unwrap());
+    }
+
+    #[test]
+    #[cfg(all(debug_assertions, not(miri)))]
+    #[should_panic(expected = "a loose token after the start of the document")]
+    fn the_line_node_check_rejects_a_loose_token_after_the_first_line() {
+        let byte_order_mark = token(SyntaxKind::WHITESPACE, "\u{FEFF}");
+        debug_assert_line_nodes(&root_of(vec![comment_line("\n"), byte_order_mark]));
+    }
+
+    #[test]
+    #[cfg(all(debug_assertions, not(miri)))]
+    #[should_panic(expected = "a loose token that is not whitespace")]
+    fn the_line_node_check_rejects_a_loose_token_of_another_kind() {
+        debug_assert_line_nodes(&root_of(vec![token(SyntaxKind::COMMENT, "\u{FEFF}")]));
+    }
+
+    #[test]
+    #[cfg(all(debug_assertions, not(miri)))]
+    #[should_panic(expected = "a loose token that is not a byte order mark")]
+    fn the_line_node_check_rejects_loose_whitespace() {
+        debug_assert_line_nodes(&root_of(vec![token(SyntaxKind::WHITESPACE, " ")]));
+    }
+
+    #[test]
+    #[cfg(all(debug_assertions, not(miri)))]
+    #[should_panic(expected = "a loose token in a section")]
+    fn the_line_node_check_rejects_a_loose_token_in_a_section() {
+        let section = node(
+            SyntaxKind::SECTION,
+            vec![comment_line("\n"), token(SyntaxKind::NEWLINE, "\n")],
+        );
+        debug_assert_line_nodes(&root_of(vec![section]));
+    }
+
+    #[test]
+    #[cfg(all(debug_assertions, not(miri)))]
+    #[should_panic(expected = "a KEY node in place of a line")]
+    fn the_line_node_check_rejects_a_node_that_is_not_a_line() {
+        let key = node(SyntaxKind::KEY, vec![token(SyntaxKind::IDENT, "k")]);
+        debug_assert_line_nodes(&root_of(vec![key]));
+    }
+
+    #[test]
+    #[cfg(all(debug_assertions, not(miri)))]
+    #[should_panic(expected = "a line node holds 2 line breaks")]
+    fn the_line_node_check_rejects_a_line_with_two_line_breaks() {
+        let newline = || token(SyntaxKind::NEWLINE, "\n");
+        let blank_line = node(SyntaxKind::BLANK_LINE, vec![newline(), newline()]);
+        debug_assert_line_nodes(&root_of(vec![blank_line]));
+    }
+
+    #[test]
+    #[cfg(all(debug_assertions, not(miri)))]
+    #[should_panic(expected = "a line break that is not the last child of its line")]
+    fn the_line_node_check_rejects_a_line_break_before_the_end_of_its_line() {
+        let line = node(
+            SyntaxKind::COMMENT_LINE,
+            vec![
+                token(SyntaxKind::NEWLINE, "\n"),
+                token(SyntaxKind::COMMENT, ";"),
+            ],
+        );
+        debug_assert_line_nodes(&root_of(vec![line]));
+    }
+
+    #[test]
+    #[cfg(all(debug_assertions, not(miri)))]
+    #[should_panic(expected = "a NEWLINE token that is not one line break")]
+    fn the_line_node_check_rejects_a_newline_token_with_two_line_breaks() {
+        debug_assert_line_nodes(&root_of(vec![comment_line("\n\n")]));
+    }
+
+    #[test]
+    #[cfg(all(debug_assertions, not(miri)))]
+    #[should_panic(expected = "a CR and the LF NEWLINE token after it read as one line break")]
+    fn the_line_node_check_rejects_an_lf_line_break_after_a_cr() {
+        // `;\r\n` reads as one line, not as a comment line and a blank line.
+        debug_assert_line_nodes(&root_of(vec![comment_line("\r"), blank_line("\n")]));
+    }
+
+    #[test]
+    #[cfg(all(debug_assertions, not(miri)))]
+    #[should_panic(expected = "a CR and the LF NEWLINE token after it read as one line break")]
+    fn the_line_node_check_sees_a_cr_past_empty_tokens() {
+        debug_assert_line_nodes(&root_of(vec![comment_line("\r"), empty_raw_line("\n")]));
+    }
+
+    #[test]
+    #[cfg(all(debug_assertions, not(miri)))]
+    #[should_panic(expected = "a CR and the LF NEWLINE token after it read as one line break")]
+    fn the_line_node_check_sees_a_cr_at_the_end_of_a_key() {
+        // `k\r\n` reads as the key `k` and a CRLF line break.
+        let entry = node(
+            SyntaxKind::ENTRY,
+            vec![key("k\r"), token(SyntaxKind::NEWLINE, "\n")],
+        );
+        debug_assert_line_nodes(&root_of(vec![entry]));
+    }
+
+    #[test]
+    #[cfg(all(debug_assertions, not(miri)))]
+    #[should_panic(expected = "the nodes in a line hold only tokens")]
+    fn the_line_node_check_rejects_a_node_nested_in_a_key() {
+        let entry = node(
+            SyntaxKind::ENTRY,
+            vec![node(SyntaxKind::KEY, vec![key("k")])],
+        );
+        debug_assert_line_nodes(&root_of(vec![entry]));
+    }
+
+    #[test]
+    #[cfg(all(debug_assertions, not(miri)))]
+    #[should_panic(expected = "only the last line may be unterminated")]
+    fn the_line_node_check_rejects_an_unterminated_line_before_another() {
+        debug_assert_line_nodes(&root_of(vec![comment_line(""), comment_line("")]));
+    }
+
+    /// An editor whose first entry has lost its line break, so that it runs
+    /// into the next line: `[s]\na=1b=2\n`. No edit does this; the test
+    /// detaches the token by hand.
+    #[cfg(all(debug_assertions, not(miri)))]
+    fn editor_with_a_joined_line() -> Editor {
+        let editor = Editor::new("[s]\na=1\nb=2\n");
+        let first_entry = editor.section("s").entries_mut().remove(0);
+        first_entry.node.last_token().unwrap().detach();
+        editor
+    }
+
+    #[test]
+    #[cfg(all(debug_assertions, not(miri)))]
+    #[should_panic(expected = "only the last line may be unterminated")]
+    fn finishing_checks_the_line_nodes() {
+        let _ = editor_with_a_joined_line().finish();
+    }
+
+    #[test]
+    #[cfg(all(debug_assertions, not(miri)))]
+    #[should_panic(expected = "only the last line may be unterminated")]
+    fn reading_the_file_checks_the_line_nodes() {
+        let _ = editor_with_a_joined_line().file();
+    }
+
+    #[test]
+    #[should_panic(expected = "the line already ends with a line break")]
+    fn terminating_a_terminated_line_fails() {
+        let editor = Editor::new("[s]\nk=v\n");
+        let entry = editor.section("s").entries_mut().remove(0);
+        terminate_line(&entry.node, "\n");
+    }
+
+    #[test]
+    #[should_panic(expected = "an insertion point past the end of the section")]
+    fn inserting_past_the_end_of_a_section_fails() {
+        // Coverage needs one instantiation of `insert_lines` that runs all
+        // of it. So this one first inserts two lines at the end of the
+        // section, the last valid insertion point, twice: after the
+        // unterminated header, then after a terminated line.
+        let editor = Editor::new("[s]");
+        let section = editor.section("s");
+        let build_lines = |ending| raw_lines(&["a", "b"], ending);
+        section.insert_lines(1, build_lines);
+        section.insert_lines(3, build_lines);
+        assert_eq!(editor.finish(), "[s]\na\nb\na\nb\n");
+        section.insert_lines(6, build_lines);
+    }
+
+    #[test]
+    #[should_panic(expected = "an entry's VALUE precedes its KEY")]
+    fn replacing_the_separator_of_a_reversed_entry_fails() {
+        let entry = node(
+            SyntaxKind::ENTRY,
+            vec![
+                node(SyntaxKind::VALUE, Vec::new()),
+                token(SyntaxKind::EQ, "="),
+                node(SyntaxKind::KEY, vec![token(SyntaxKind::IDENT, "k")]),
+            ],
+        );
+        let root = root_of(vec![entry]);
+        let gap = SeparatorSpacing::Preserve.gap();
+        replace_separator(&root.first_child().unwrap(), SyntaxKind::EQ, gap);
+    }
+
+    /// Move the comment of an entry with `children`, the only line of its
+    /// document.
+    fn move_comment_of_entry(children: Vec<GreenElement>) {
+        let root = root_of(vec![node(SyntaxKind::ENTRY, children)]);
+        move_inline_comment_before(&root.first_child().unwrap());
+    }
+
+    fn key(name: &str) -> GreenElement {
+        node(SyntaxKind::KEY, vec![token(SyntaxKind::IDENT, name)])
+    }
+
+    #[test]
+    #[should_panic(expected = "an inline comment at the start of its entry")]
+    fn moving_a_comment_that_starts_its_entry_fails() {
+        move_comment_of_entry(vec![
+            token(SyntaxKind::COMMENT, "; note"),
+            key("k"),
+            node(SyntaxKind::VALUE, Vec::new()),
+        ]);
+    }
+
+    #[test]
+    #[should_panic(expected = "an inline comment without whitespace before it")]
+    fn moving_a_comment_without_whitespace_before_it_fails() {
+        move_comment_of_entry(vec![
+            key("k"),
+            node(SyntaxKind::VALUE, Vec::new()),
+            token(SyntaxKind::COMMENT, "; note"),
+        ]);
+    }
+
+    #[test]
+    #[should_panic(expected = "the whitespace before an inline comment does not follow the value")]
+    fn moving_a_comment_that_does_not_follow_the_value_fails() {
+        move_comment_of_entry(vec![
+            key("k"),
+            token(SyntaxKind::WHITESPACE, " "),
+            token(SyntaxKind::COMMENT, "; note"),
+        ]);
     }
 
     #[test]
