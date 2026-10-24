@@ -21,20 +21,27 @@ body = """
     ## [Unreleased]
 {% endif %}\
 {% for group, commits in commits | group_by(attribute="group") %}
-    ### {{ group | upper_first }}
+    ### {{ group | striptags | trim | upper_first }}
     {% for commit in commits %}
-        - {{ commit.message | upper_first }}\
+        - {% if commit.breaking %}**Breaking:** {% endif %}{{ commit.message | upper_first }}\
     {% endfor %}
 {% endfor %}
 """
+# Keep a Changelog's order: the HTML comments sort the groups and the
+# template strips them. Breaking changes of any type go under Changed, and
+# protect_breaking_commits keeps a breaking refactor or chore from being
+# skipped.
 commit_parsers = [
-    { message = "^feat", group = "Added" },
-    { message = "^fix", group = "Fixed" },
-    { message = "^perf", group = "Performance" },
-    { message = "^docs", group = "Documentation" },
-    { message = "^refactor", group = "Changed" },
+    { message = "^[a-z]+(\\(.+\\))?!:", group = "<!-- 0 -->Changed" },
+    { footer = "^BREAKING[ -]CHANGE", group = "<!-- 0 -->Changed" },
+    { message = "^feat", group = "<!-- 1 -->Added" },
+    { message = "^fix", group = "<!-- 2 -->Fixed" },
+    { message = "^perf", group = "<!-- 3 -->Performance" },
+    { message = "^docs", group = "<!-- 4 -->Documentation" },
+    { message = "^refactor", skip = true },
     { message = "^test", skip = true },
     { message = "^chore", skip = true },
     { message = "^ci", skip = true },
     { message = "^style", skip = true },
 ]
+protect_breaking_commits = true
