@@ -9,31 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.5.0] - 2026-10-24
 
-### Added
-
-- Move to rowan 0.17 and rebuild edits immutably ([#99](https://github.com/jjant/ini-edit/pull/99))
-- Rebuild the editor so every edit agrees with a reparse ([#90](https://github.com/jjant/ini-edit/pull/90))
-
 ### Changed
 
-- Assert lexer and parser invariants ([#89](https://github.com/jjant/ini-edit/pull/89))
-- Assert editor invariants ([#83](https://github.com/jjant/ini-edit/pull/83))
-- Tidy the lexer and parser before asserting their invariants ([#81](https://github.com/jjant/ini-edit/pull/81))
-- Bound editor traversals and simplify insertion helpers ([#70](https://github.com/jjant/ini-edit/pull/70))
+- **Breaking:** a new editing API that can no longer corrupt a document. Every operation that can fail returns `Result<_, EditError>`, and a refused edit changes nothing. `Editor::new(source, &parse_options, &edit_options)?` replaces `new`, `with_parse_options`, `with_edit_options` and `with_options`. `Editor::section(name)` is a lookup that returns `Option` and never creates a section; `section_or_insert(name)?` creates one, and `preamble()` edits the keys before the first header (0.4's `section("")` appended a `[]` section instead). Positions count body lines, so the header is never one: `insert_entry`, `append_body_lines`, `insert_body_lines`, `remove_body_lines` and `body_line_count` replace `insert_entry_at_line`, `append_raw_lines`, `insert_raw_lines_at`, `remove_lines` and the header-at-0 indexing, and out-of-range positions and reversed ranges are errors instead of being clamped. Handles borrow the editor exclusively, so a stale or removed handle no longer compiles; `entry(key)` and `entry_at(index)` replace `entries_mut()`, and `EntryEditor::index()` and the new `body_line()` are always current. `remove_entry` and `rename_key` return `Result<bool, EditError>`, and a rename onto an existing key is `Err(DuplicateKey)`. `SeparatorSpacing::exact(before, after)?` validates its whitespace, and the `Exact` fields are the new `Whitespace` type. The `editor` module docs have a migration guide whose examples are compiled ([#90](https://github.com/jjant/ini-edit/pull/90))
+- **Breaking:** move to rowan 0.17. `SyntaxNode`, `SyntaxToken`, `SyntaxElement`, `Parse::green()` and `IniLang`'s `rowan::Language` impl now use rowan 0.17's types, so code that names rowan types needs `rowan = "0.17"`. rowan 0.17 removes its mutable tree API (`clone_for_update`, `detach`, `SyntaxNode::splice_children`, `new_root_mut`, the `*_by_kind` helpers), and `SyntaxNode::green()` returns `&GreenNodeData` instead of a `Cow`: replace `green().into_owned()` with `green().to_owned()`, and edit through `Editor` or by rebuilding green nodes with `replace_with` ([#99](https://github.com/jjant/ini-edit/pull/99))
+- Diagnostics describe the INI text instead of internal token names, and each position gets at most one diagnostic. `=bad` reports `expected a key before '='` (was `unexpected token: LEX_ERROR`), `:x` reports `expected a key before ':'`, `key junk` reports only `expected '=' or ':'` (or `unexpected text after key` when `allow_no_value` is on), and a lone `[` reports `expected section name and ']'` instead of two diagnostics. Code that matches on `ParseError::message` or counts diagnostics will see the new text ([#101](https://github.com/jjant/ini-edit/pull/101))
 
-### Documentation
+### Added
 
-- Add security and contributing guides and record deviations ([#86](https://github.com/jjant/ini-edit/pull/86))
+- `Editor` is `Send + Sync + UnwindSafe + RefUnwindSafe`, and `SectionEditor` and `EntryEditor` are `Send + Sync`. The crate docs' new "Threads" section lists which types can cross threads; syntax nodes, tokens and the `ast` types still cannot ([#99](https://github.com/jjant/ini-edit/pull/99), [#102](https://github.com/jjant/ini-edit/pull/102))
+- `ini_edit::MAX_INPUT_LEN`, the largest document a tree can describe (`u32::MAX` bytes). The editor refuses documents and edits past its limit with `EditError::DocumentTooLarge` ([#90](https://github.com/jjant/ini-edit/pull/90), [#93](https://github.com/jjant/ini-edit/pull/93))
 
 ### Fixed
 
-- Align diagnostic carets and drop internal token names from messages ([#101](https://github.com/jjant/ini-edit/pull/101))
-- Reject documents larger than u32::MAX bytes ([#93](https://github.com/jjant/ini-edit/pull/93))
-- Ship a crate whose own tests pass and test the package in CI ([#84](https://github.com/jjant/ini-edit/pull/84))
+- The editor no longer writes text that a reader would read back differently. Keys, values, section names, separator spacing and raw lines that would not round-trip are refused instead of written: for example, setting a value to `"a\n[evil]\nx=1"` used to move every following entry into a new `[evil]` section, a key like `a=b` read back as the key `a`, and padded section names created a duplicate section every time the file was reopened. Values ending in a backslash, which absorbed the next line, are refused too ([#90](https://github.com/jjant/ini-edit/pull/90))
+- The editor's view always equals a reparse of its text. Raw lines containing line breaks, lines inserted above a header and removing a header used to leave the editor's tree disagreeing with the saved file, so later edits went to different lines depending on whether the file was reopened in between. Raw lines are now parsed, so a raw `k=2` is an entry that `set` and `rename_key` find ([#90](https://github.com/jjant/ini-edit/pull/90))
+- `ParseError::display` puts the caret under the reported column. It was two columns to the left, three from line 1000 on, and further with tabs ([#101](https://github.com/jjant/ini-edit/pull/101))
+- `parse` and `parse_with` panic with a clear message on input longer than `MAX_INPUT_LEN` instead of returning a tree whose length wrapped around (a 4 GiB document gave an empty tree with no diagnostics in release builds) ([#93](https://github.com/jjant/ini-edit/pull/93))
+- The published crate's own tests pass: 0.4.0's package left out the snapshot files, so 31 tests failed on its crates.io sources ([#84](https://github.com/jjant/ini-edit/pull/84))
 
 ### Performance
 
-- Read AST strings from green nodes ([#100](https://github.com/jjant/ini-edit/pull/100))
+Measured against 0.4.0 from crates.io on the same machine; parsing speed is unchanged.
+
+- Editing is faster: `Editor::finish` is about three times faster (gitea's `app.example.ini`: 364 to 115 µs), 200 `set` calls in one section of a 10,000-entry file are 29% faster and 200 `append_entry` calls 55% faster, because each edit rebuilds one immutable section instead of splicing a mutable tree line by line ([#99](https://github.com/jjant/ini-edit/pull/99))
+- The typed AST reads keys, values, names and comments directly from the tree's green nodes: walking every entry of an already-parsed `app.example.ini` takes 7 µs instead of 22, and finding one key 0.8 µs instead of 2.4 ([#100](https://github.com/jjant/ini-edit/pull/100))
+
+### Documentation
+
+- Add SECURITY.md (private vulnerability reporting), CONTRIBUTING.md, and docs/standards.md, which records how ini-edit applies TigerStyle and SQLite's testing practices and the deliberate deviations ([#86](https://github.com/jjant/ini-edit/pull/86))
 
 ## [0.4.0] - 2026-10-08
 
