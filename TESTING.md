@@ -617,14 +617,19 @@ source lines through binutils when `llvm-symbolizer` is not installed:
 
 The `thread-sanitizer` job plays the part of SQLite's `threadtest3`, its
 stress test for threads that use SQLite at the same time. `tests/threads.rs`
-relies on the promises of the crate documentation's Threads section: an editor
-moves to another thread and is edited there; eight threads share one editor
-and one parse, read both, clone the parse and parse the text again; eight
-threads walk a snapshot of a tree while another thread edits the editor whose
-new trees share the snapshot's untouched nodes, and the last of them to let go
-frees it; section and entry handles move to another thread and are shared by
-eight; and eight threads edit editors of their own. Every result must equal
-the same work done in one thread.
+relies on the promises of the crate documentation's Threads section. An editor
+moves to another thread and is edited there. Eight threads share one editor
+and one parse, read both, clone the parse and parse the text again. Eight
+threads walk a snapshot of a tree while another thread edits the editor, whose
+new trees share the snapshot's untouched nodes; the writer edits on until the
+readers have let go of the snapshot, so the last of them frees it while the
+writer still rebuilds trees from the nodes they share. Section and entry
+handles move to another thread, and eight threads read each at once. Eight
+threads edit editors of their own. Threads that share something start together
+at a barrier and repeat their reads, so that they read at once: measured on
+2026-10-24, all eight did in 88 of 90 debug runs of the handle and snapshot
+tests, and at least five in the other two. Every result must equal the same
+work done in one thread.
 
 The job runs that binary and the library's unit tests under ThreadSanitizer
 (`-Zsanitizer=thread` on the latest nightly), which reports two accesses to
@@ -652,7 +657,13 @@ The promises themselves are pinned at compile time. The first test in
 `tests/threads.rs` requires every one of `Send`, `Sync`, `UnwindSafe` and
 `RefUnwindSafe` that a public type has, so it fails to build without one, and
 `src/auto_traits.rs` has a `compile_fail` doctest for every one that a type
-lacks, so a change that adds or removes one fails a test.
+lacks, so a change that adds or removes one fails a test. Only nightly rustdoc
+checks that such a doctest fails with the error it names, E0277, the missing
+trait: stable and the minimum supported version pass one that fails for any
+reason, a misspelled path included. Each of these doctests therefore has a
+compiling twin that names the same type and trait, so a wrong path fails on
+every toolchain, and the nightly doctest run of the `sanitizers` job checks
+the error code.
 
 Miri runs all lexer unit tests and independent lexer/diagnostic contracts with
 borrow checking enabled. These tests do not construct `rowan` trees. They run

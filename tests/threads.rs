@@ -12,6 +12,7 @@
 
 use std::panic::{RefUnwindSafe, UnwindSafe};
 use std::sync::Barrier;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 
 use ini_edit::ast::{AstNode, Entry, File};
@@ -21,9 +22,10 @@ use ini_edit::editor::{
 use ini_edit::lexer::Token;
 use ini_edit::{IniLang, Parse, ParseError, ParseOptions, SyntaxKind, SyntaxNode, parse_with};
 
-/// The traits of a type that owns its data. A parse and an editor own rowan's green tree, whose
-/// nodes count their references atomically.
-fn owns_its_data<T: Send + Sync + UnwindSafe + RefUnwindSafe>() {}
+/// The traits of a type that holds no cursor and no `&mut`. A parse and an editor hold rowan's
+/// green tree, whose nodes count their references atomically; a lexer token borrows its text as a
+/// `&str`.
+fn holds_no_cursor_and_no_mut<T: Send + Sync + UnwindSafe + RefUnwindSafe>() {}
 
 /// The traits of an editor's handles. A handle holds a `&mut Editor`, which is not `UnwindSafe`.
 fn borrows_an_editor<T: Send + Sync + RefUnwindSafe>() {}
@@ -31,17 +33,17 @@ fn borrows_an_editor<T: Send + Sync + RefUnwindSafe>() {}
 /// Checked when it compiles: a type that lacks one of its traits fails the build here.
 #[test]
 fn every_public_type_has_its_auto_traits() {
-    owns_its_data::<Parse>();
-    owns_its_data::<ParseError>();
-    owns_its_data::<ParseOptions>();
-    owns_its_data::<Editor>();
-    owns_its_data::<EditOptions>();
-    owns_its_data::<SeparatorSpacing>();
-    owns_its_data::<Whitespace>();
-    owns_its_data::<EditError>();
-    owns_its_data::<SyntaxKind>();
-    owns_its_data::<IniLang>();
-    owns_its_data::<Token<'static>>();
+    holds_no_cursor_and_no_mut::<Parse>();
+    holds_no_cursor_and_no_mut::<ParseError>();
+    holds_no_cursor_and_no_mut::<ParseOptions>();
+    holds_no_cursor_and_no_mut::<Editor>();
+    holds_no_cursor_and_no_mut::<EditOptions>();
+    holds_no_cursor_and_no_mut::<SeparatorSpacing>();
+    holds_no_cursor_and_no_mut::<Whitespace>();
+    holds_no_cursor_and_no_mut::<EditError>();
+    holds_no_cursor_and_no_mut::<SyntaxKind>();
+    holds_no_cursor_and_no_mut::<IniLang>();
+    holds_no_cursor_and_no_mut::<Token<'static>>();
     borrows_an_editor::<SectionEditor<'static>>();
     borrows_an_editor::<EntryEditor<'static>>();
 }
@@ -51,6 +53,11 @@ const THREADS: usize = 8;
 
 /// How many times each reader repeats its reads.
 const ROUNDS: usize = 64;
+
+/// The most edits that the writer of
+/// [`threads_walk_a_snapshot_while_another_thread_edits_the_editor`] makes while it waits for the
+/// readers, far more than they take.
+const WAITING_EDITS_MAX: usize = 100_000;
 
 /// A preamble, a continued value, an inline comment, a bare key, an unclosed header, a comment
 /// and CRLF line breaks.
@@ -226,6 +233,30 @@ fn threads_share_an_editor_and_a_parse() {
     assert_eq!(read_parse(&parse), parse_view);
 }
 
+/// Counts a reader as done when it drops, even if the reader panics, so that the writer stops.
+struct Done<'count>(&'count AtomicUsize);
+
+impl Drop for Done<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_add(1, Ordering::Release);
+    }
+}
+
+/// Edits `editor` until all [`THREADS`] readers are `done`, and returns how many edits that took.
+/// Setting the port to the value that [`edit`] gave it leaves the text as it is.
+fn edit_until_done(editor: &mut Editor, done: &AtomicUsize) -> Result<usize, EditError> {
+    for edits in 0..WAITING_EDITS_MAX {
+        if done.load(Ordering::Acquire) == THREADS {
+            return Ok(edits);
+        }
+        editor
+            .section("server")
+            .expect("server exists")
+            .set("port", "8080")?;
+    }
+    panic!("the readers are not done after {WAITING_EDITS_MAX} edits");
+}
+
 #[test]
 fn threads_walk_a_snapshot_while_another_thread_edits_the_editor() {
     let mut editor = open();
@@ -234,13 +265,14 @@ fn threads_walk_a_snapshot_while_another_thread_edits_the_editor() {
     // sections they change; the other nodes stay shared between this tree and the editor's.
     let snapshot = editor.file().syntax().green().to_owned();
     assert_eq!(snapshot.to_string(), SOURCE);
-    let barrier = Barrier::new(THREADS + 1);
-    let (before, barrier) = (&before, &barrier);
+    let (barrier, done) = (Barrier::new(THREADS + 1), AtomicUsize::new(0));
+    let (before, barrier, done) = (&before, &barrier, &done);
     thread::scope(|scope| {
         let readers: Vec<_> = (0..THREADS)
             .map(|_| {
                 let snapshot = snapshot.clone();
                 scope.spawn(move || {
+                    let done = Done(done);
                     barrier.wait();
                     for _ in 0..ROUNDS {
                         let root = SyntaxNode::new_root(snapshot.clone());
@@ -248,15 +280,20 @@ fn threads_walk_a_snapshot_while_another_thread_edits_the_editor() {
                         let file = File::cast(root).expect("the root is a file");
                         assert_eq!(read_tree(&file), before.tree);
                     }
+                    drop(snapshot);
+                    drop(done);
                 })
             })
             .collect();
-        // The editor and the readers now own the old tree. The last of them to let go frees
-        // it, which releases its shared nodes, perhaps while the writer still uses them.
+        // The editor and the readers now own the old tree, and the editor lets go at its first
+        // edit. The writer edits on until the readers are done, so the last reader frees the old
+        // tree, and releases the nodes it shares with the editor's tree, while the writer
+        // rebuilds trees from those nodes.
         drop(snapshot);
         let writer = scope.spawn(|| {
             barrier.wait();
-            edit(&mut editor)
+            edit(&mut editor)?;
+            edit_until_done(&mut editor, done)
         });
         writer.join().expect("no panic").expect("the edits succeed");
         for reader in readers {
@@ -271,18 +308,22 @@ fn a_section_handle_moves_to_another_thread_and_threads_share_it() {
     let mut editor = open();
     let mut server = editor.section("server").expect("server exists");
     let reads = (server.name(), server.entry_count(), SOURCE.to_owned());
+    let barrier = Barrier::new(THREADS);
     thread::scope(|scope| {
-        let server = &server;
+        let (server, reads, barrier) = (&server, &reads, &barrier);
         let readers: Vec<_> = (0..THREADS)
             .map(|_| {
                 scope.spawn(move || {
-                    let text = server.editor().finish();
-                    (server.name(), server.entry_count(), text)
+                    barrier.wait();
+                    for _ in 0..ROUNDS {
+                        let text = server.editor().finish();
+                        assert_eq!(&(server.name(), server.entry_count(), text), reads);
+                    }
                 })
             })
             .collect();
         for reader in readers {
-            assert_eq!(reader.join().expect("no panic"), reads);
+            reader.join().expect("no panic");
         }
     });
     // The handle moves to a thread, which edits through it and hands it back.
@@ -317,13 +358,21 @@ fn an_entry_handle_moves_to_another_thread_and_threads_share_it() {
         let worker = scope.spawn(move || port.set_value("9090").map(|()| port));
         worker.join().expect("no panic").expect("the edit succeeds")
     });
+    let barrier = Barrier::new(THREADS);
     thread::scope(|scope| {
-        let port = &port;
+        let (port, reads, barrier) = (&port, &reads, &barrier);
         let readers: Vec<_> = (0..THREADS)
-            .map(|_| scope.spawn(move || read_entry(port)))
+            .map(|_| {
+                scope.spawn(move || {
+                    barrier.wait();
+                    for _ in 0..ROUNDS {
+                        assert_eq!(&read_entry(port), reads);
+                    }
+                })
+            })
             .collect();
         for reader in readers {
-            assert_eq!(reader.join().expect("no panic"), reads);
+            reader.join().expect("no panic");
         }
     });
     assert_eq!(read_editor(port.editor()), read_editor(&expected));

@@ -11,13 +11,22 @@
 //!
 //! Only `cargo test --doc` compiles this module, as it does the README's examples.
 
-/// A doctest, in an item named `$item`, that fails with E0277 because `$type` does not implement
-/// `$bound`.
+/// Two doctests in an item named `$item`. The first fails with E0277 because `$type` does not
+/// implement `$bound`. Only nightly rustdoc checks that code: stable passes a `compile_fail`
+/// doctest that fails for any reason, a misspelled path included. So the second one names the same
+/// type and trait, and compiles: a wrong path fails it on every toolchain.
 macro_rules! lacks {
     ($item:ident, $type:literal, $bound:literal) => {
         #[doc = "```compile_fail,E0277"]
         #[doc = concat!("fn implements<T: ", $bound, ">() {}")]
         #[doc = concat!("implements::<", $type, ">();")]
+        #[doc = "```"]
+        #[doc = ""]
+        #[doc = "```"]
+        #[doc = concat!("fn implements<T: ", $bound, ">() {}")]
+        #[doc = "fn names<T>() {}"]
+        #[doc = "implements::<()>();"]
+        #[doc = concat!("names::<", $type, ">();")]
         #[doc = "```"]
         pub struct $item;
     };

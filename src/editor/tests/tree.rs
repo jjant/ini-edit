@@ -1,6 +1,6 @@
 //! The editor's tree: identity of its nodes, sharing between the trees before and after an edit,
-//! and moving or sharing an editor between threads. `tests/threads.rs` pins the auto traits of
-//! every public type.
+//! and moving or sharing an editor between threads. `tests/threads.rs` pins the auto traits that
+//! each public type has, and `src/auto_traits.rs` the ones it lacks.
 
 use super::support::{atomic, in_preamble, in_section, open};
 use crate::editor::{EditError, Editor, plan};

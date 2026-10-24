@@ -59,6 +59,15 @@
 //! ```
 //! use ini_edit::ast::{AstNode, File};
 //!
+//! // Move a parse to another thread, and build a cursor there.
+//! let parse = ini_edit::parse("[a]\n");
+//! let count = std::thread::spawn(move || {
+//!     let file = File::cast(parse.syntax()).expect("the root is a file");
+//!     file.sections().count()
+//! });
+//! assert_eq!(count.join().expect("no panic"), 1);
+//!
+//! // Or share one between threads, each with a cursor of its own.
 //! let parse = ini_edit::parse("[a]\nk = 1\n[b]\n");
 //! std::thread::scope(|scope| {
 //!     for _ in 0..2 {
@@ -70,12 +79,14 @@
 //! });
 //! ```
 //!
-//! A cursor that moves to another thread does not compile:
+//! A cursor that moves to another thread does not compile. This is the first example with the
+//! cursor built before the move:
 //!
 //! ```compile_fail,E0277
 //! use ini_edit::ast::{AstNode, File};
 //!
-//! let file = File::cast(ini_edit::parse("[a]\n").syntax()).expect("the root is a file");
+//! let parse = ini_edit::parse("[a]\n");
+//! let file = File::cast(parse.syntax()).expect("the root is a file");
 //! let count = std::thread::spawn(move || file.sections().count());
 //! assert_eq!(count.join().expect("no panic"), 1);
 //! ```
