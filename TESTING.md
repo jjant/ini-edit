@@ -513,7 +513,9 @@ gh workflow run fuzz-nightly.yml --ref main -f seconds=300
 ```
 
 Each fuzz input has a 10-second timeout and each target has a 1 GiB RSS limit.
-Input lengths are bounded per target (`-max_len`):
+Input lengths are bounded per target (`-max_len`). Both fuzz workflows read the
+bounds from `[package.metadata.max_len]` in `fuzz/Cargo.toml`, which the `fuzz`
+job requires to name every target:
 
 | Target | Input | Bytes at most |
 |---|---|---:|
@@ -530,8 +532,9 @@ python3 .github/scripts/seed_fuzz_corpus.py
 cargo +nightly fuzz run generated_edits fuzz/corpus/generated_edits \
   tests/fuzz_regressions/generated_edits -- \
   -max_len=4096 -max_total_time=120 -timeout=10 -rss_limit_mb=1024
-# Replay a downloaded crash/timeout artifact:
-cargo +nightly fuzz run generated_edits path/to/reproducer
+# Replay a downloaded crash/timeout artifact with the limits CI fuzzes with:
+cargo +nightly fuzz run generated_edits path/to/reproducer -- \
+  -timeout=10 -rss_limit_mb=1024
 ```
 
 ## Style limits
@@ -674,9 +677,10 @@ Clippy, rustdoc, and `cargo deny` cover static analysis, advisories
 (including unsound and unmaintained crates), yanked packages, licenses,
 duplicate dependencies, and unexpected dependency sources.
 
-The full matrix also runs every Sunday. Scheduled fuzzing gives each target 15
-minutes instead of the short pull-request smoke-test budget, and so does every
-push to `main` whose version is not released yet (see the release checklist).
+The full matrix also runs every Sunday. `ci.yml`'s scheduled fuzzing gives each
+target 15 minutes instead of the short pull-request smoke-test budget, and so
+does every push to `main` whose version is not released yet (see the release
+checklist).
 
 Allocation-failure, filesystem I/O-failure, crash-recovery, and concurrency
 tests from SQLite's strategy do not map directly to this crate: `ini-edit`

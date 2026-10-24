@@ -8,6 +8,17 @@ rust-version = "1.85"
 [package.metadata]
 cargo-fuzz = true
 
+# libFuzzer's -max_len for each target: the longest input that CI generates
+# (see TESTING.md's table of input lengths). Both fuzz workflows read it from
+# here, and ci.yml's fuzz job requires an entry for every [[bin]] below.
+[package.metadata.max_len]
+round_trip = 16384
+editor = 16384
+editor_reparse = 16384
+editor_stateful = 515
+generated_edits = 4096
+inputs = 256
+
 # The same tables as ../Cargo.toml: these targets compile the oracles in
 # tests/support/ too, and clippy reads ../clippy.toml for them.
 [lints.rust]

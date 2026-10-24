@@ -524,7 +524,10 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-fuzz
-      - name: Require FUZZ_TARGETS to name every fuzz target
+      - name: Require FUZZ_TARGETS and the input lengths to cover every fuzz target
+        # fuzz-nightly.yml, which pull requests do not run, fuzzes every
+        # target of fuzz/Cargo.toml with its max_len: without this check, a
+        # target without one would fail it only after the merge.
         shell: bash
         run: |
           listed=$(tr ' ' '\n' <<< "$FUZZ_TARGETS" | sort | paste --serial --delimiters=' ')
@@ -532,6 +535,20 @@ jobs:
           if [ "$listed" != "$declared" ]; then
             echo "::error file=fuzz/Cargo.toml::FUZZ_TARGETS in ci.yml lists '$listed'," \
               "but fuzz/Cargo.toml declares '$declared'."
+            exit 1
+          fi
+          max_len=$(cargo metadata --locked --no-deps --format-version 1 \
+            --manifest-path fuzz/Cargo.toml | jq '.packages[0].metadata.max_len // {}')
+          bounded=$(jq --raw-output 'keys[]' <<< "$max_len" \
+            | sort | paste --serial --delimiters=' ')
+          if [ "$bounded" != "$declared" ]; then
+            echo "::error file=fuzz/Cargo.toml::[package.metadata.max_len] names '$bounded'," \
+              "but fuzz/Cargo.toml declares '$declared'."
+            exit 1
+          fi
+          if ! jq --exit-status 'all(.[]; type == "number" and . >= 1 and . == floor)' \
+            <<< "$max_len" > /dev/null; then
+            echo "::error file=fuzz/Cargo.toml::Each max_len must be a positive whole number."
             exit 1
           fi
       - name: Fetch fuzz dependencies exactly as locked
@@ -627,16 +644,12 @@ jobs:
             fi
           fi
           echo "Fuzzing each target for $seconds seconds."
+          metadata=$(cargo metadata --locked --no-deps --format-version 1 \
+            --manifest-path fuzz/Cargo.toml)
           status=0
           for target in $FUZZ_TARGETS; do
-            max_len=16384
-            if [ "$target" = editor_stateful ]; then
-              max_len=515
-            elif [ "$target" = generated_edits ]; then
-              max_len=4096
-            elif [ "$target" = inputs ]; then
-              max_len=256
-            fi
+            max_len=$(jq --exit-status --raw-output --arg target "$target" \
+              '.packages[0].metadata.max_len[$target]' <<< "$metadata")
             cargo fuzz run \
               --target x86_64-unknown-linux-gnu "$target" -- \
               -max_len="$max_len" -max_total_time="$seconds" \

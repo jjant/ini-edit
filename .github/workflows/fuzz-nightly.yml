@@ -9,8 +9,10 @@ name: Nightly fuzzing
 on:
   schedule:
     # 21:23 UTC: off the top of the hour, when GitHub delays scheduled runs,
-    # outside the hours most commits land, and done before ci.yml's Sunday
-    # run at 03:17.
+    # and outside the hours most commits land. A run usually ends near 02:50;
+    # one that starts on time and uses its whole 350-minute limit ends at
+    # 03:13, 4 minutes before ci.yml's Sunday run. A late start can overlap
+    # that run, which then only waits longer for runners.
     - cron: "23 21 * * *"
   workflow_dispatch:
     inputs:
@@ -26,11 +28,11 @@ on:
 permissions:
   contents: read
 
-# One campaign at a time: a run that starts while another is in progress
-# waits for it instead of cancelling hours of fuzzing, and the two never
-# compete for the same corpus caches.
+# One campaign per branch at a time: a run that starts while another is in
+# progress waits for it instead of cancelling hours of fuzzing. Runs on other
+# branches, which save no corpus, neither wait for main's nor cancel it.
 concurrency:
-  group: fuzz-nightly
+  group: fuzz-nightly-${{ github.ref }}
   cancel-in-progress: false
 
 # Explicit bash adds pipefail, which the fuzz step's tee needs.
@@ -42,46 +44,25 @@ defaults:
 # new nightly lint must not cost a night of fuzzing.
 env:
   CARGO_TERM_COLOR: always
-  # The default and the largest budget: 300 minutes of fuzzing, plus up to 5
-  # while the last libFuzzer jobs finish, 20 for minimization and about 10 for
-  # the build, the replay and the caches, fit in timeout-minutes below.
+  # The default and the largest budget. 300 minutes of fuzzing, at most 11
+  # more for the fuzz step to stop (see its timeout), 20 for minimization
+  # and about 10 for the build, the replay and the caches fit in the fuzz
+  # job's timeout-minutes.
   MAX_SECONDS: 18000
 
 jobs:
-  fuzz:
-    name: fuzz ${{ matrix.target }}
+  targets:
     runs-on: ubuntu-latest
-    # GitHub stops any job after 360 minutes; this limit leaves room for the
-    # if: always() steps that save the corpus and upload findings.
-    timeout-minutes: 350
-    strategy:
-      # Each target is an independent campaign: one finding must not stop
-      # the other five.
-      fail-fast: false
-      matrix:
-        # -max_len of each target, as in ci.yml's fuzz job and TESTING.md's
-        # table of input lengths. A step below checks that this list names
-        # every target of fuzz/Cargo.toml exactly once.
-        include:
-          - target: round_trip
-            max_len: 16384
-          - target: editor
-            max_len: 16384
-          - target: editor_reparse
-            max_len: 16384
-          - target: editor_stateful
-            max_len: 515
-          - target: generated_edits
-            max_len: 4096
-          - target: inputs
-            max_len: 256
-    env:
-      TARGET: ${{ matrix.target }}
-      MAX_LEN: ${{ matrix.max_len }}
-      # Empty on schedule; the step below then uses MAX_SECONDS.
-      SECONDS_INPUT: ${{ inputs.seconds }}
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      seconds: ${{ steps.seconds.outputs.seconds }}
     steps:
       - name: Choose the fuzzing time
+        id: seconds
+        env:
+          # Empty on schedule, which uses MAX_SECONDS.
+          SECONDS_INPUT: ${{ inputs.seconds }}
         run: |
           seconds=$MAX_SECONDS
           if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
@@ -101,8 +82,50 @@ jobs:
               "not '$SECONDS_INPUT'."
             exit 1
           fi
-          echo "FUZZ_SECONDS=$seconds" >> "$GITHUB_ENV"
-          echo "Fuzzing $TARGET for $seconds seconds."
+          echo "seconds=$seconds" >> "$GITHUB_OUTPUT"
+          echo "Fuzzing each target for $seconds seconds."
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: List every fuzz target with its input length
+        id: matrix
+        # One job per [[bin]] of fuzz/Cargo.toml, with its -max_len from
+        # [package.metadata.max_len], so a new target is fuzzed without a
+        # change here. ci.yml's fuzz job requires both to name the same
+        # targets on every pull request. The runner's own cargo suffices to
+        # read the manifest.
+        run: |
+          if ! matrix=$(cargo metadata --locked --no-deps --format-version 1 \
+            --manifest-path fuzz/Cargo.toml | jq --compact-output --exit-status '
+              .packages[0]
+              | [.targets[] | select(.kind == ["bin"]) | .name] as $targets
+              | (.metadata.max_len // {}) as $max_len
+              | select(($targets | sort) == ($max_len | keys))
+              | {include: [$targets[] | {target: ., max_len: $max_len[.]}]}'); then
+            echo "::error file=fuzz/Cargo.toml::Listing the targets failed, or" \
+              "[package.metadata.max_len] does not name exactly the [[bin]] targets."
+            exit 1
+          fi
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          jq . <<< "$matrix"
+
+  fuzz:
+    name: fuzz ${{ matrix.target }}
+    needs: targets
+    runs-on: ubuntu-latest
+    # GitHub stops any job after 360 minutes; this limit leaves room for the
+    # if: always() steps that save the corpus and upload findings.
+    timeout-minutes: 350
+    strategy:
+      # Each target is an independent campaign: one finding must not stop
+      # the others.
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.targets.outputs.matrix) }}
+    env:
+      TARGET: ${{ matrix.target }}
+      MAX_LEN: ${{ matrix.max_len }}
+      FUZZ_SECONDS: ${{ needs.targets.outputs.seconds }}
+    steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
@@ -115,17 +138,6 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-fuzz
-      - name: Require the matrix to name every fuzz target once
-        run: |
-          workflow=.github/workflows/fuzz-nightly.yml
-          listed=$(yq '.jobs.fuzz.strategy.matrix.include[].target' "$workflow" \
-            | sort | paste --serial --delimiters=' ')
-          declared=$(cargo fuzz list | sort | paste --serial --delimiters=' ')
-          if [ "$listed" != "$declared" ]; then
-            echo "::error file=$workflow::The matrix lists '$listed'," \
-              "but fuzz/Cargo.toml declares '$declared'."
-            exit 1
-          fi
       - name: Fetch fuzz dependencies exactly as locked
         # cargo-fuzz has no --locked flag. Once this succeeds the lockfile is
         # consistent, so the fuzz builds below use it unchanged.
@@ -143,7 +155,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: fuzz/corpus
-          # ci.yml saves fuzz/corpus, all six targets, under
+          # ci.yml saves fuzz/corpus, every target, under
           # fuzz-corpus-v1-<os>-<run>-<attempt>. No run saves this exact
           # key, so the prefix restores the newest of them.
           key: fuzz-corpus-v1-${{ runner.os }}-nightly
@@ -185,23 +197,36 @@ jobs:
         # what they learn into fuzz/corpus/$TARGET. The -ignore_* flags record
         # each crash, timeout or out-of-memory input under fuzz/artifacts and
         # start a new process instead of ending the campaign.
+        #
+        # When libFuzzer exits with a nonzero status, cargo-fuzz runs every
+        # new input again to print it, which takes a few tenths of a second
+        # each: after a shallow bug, hours. The timeout leaves that report 10
+        # minutes, so the step ends in time for minimization.
         run: |
+          artifacts=fuzz/artifacts/$TARGET
+          mkdir --parents "$artifacts"
+          find "$artifacts" -type f -printf '%f\n' | sort > "$RUNNER_TEMP/before-fuzzing"
           status=0
-          cargo fuzz run --target x86_64-unknown-linux-gnu "$TARGET" -- \
+          timeout --kill-after=1m "$((FUZZ_SECONDS + 600))" \
+            cargo fuzz run --target x86_64-unknown-linux-gnu "$TARGET" -- \
             -fork="$(nproc)" -ignore_crashes=1 -ignore_timeouts=1 -ignore_ooms=1 \
             -max_total_time="$FUZZ_SECONDS" -max_len="$MAX_LEN" \
             -timeout=10 -rss_limit_mb=1024 \
             2>&1 | tee "$RUNNER_TEMP/fuzz.log" || status=$?
           echo "files=$(find "fuzz/corpus/$TARGET" -type f | wc -l)" >> "$GITHUB_OUTPUT"
           # In fork mode, libFuzzer exits with the status of the last process
-          # it waited for, so an ignored finding can end the campaign with a
-          # nonzero status. The last step fails the job for every finding.
+          # it waited for, so the last job's finding ends the campaign with a
+          # nonzero status, and cargo-fuzz's report may then reach the timeout
+          # (status 124). Either is expected only if this campaign recorded a
+          # new input; the last step fails the job for it.
           if [ "$status" -ne 0 ]; then
-            if [ -z "$(find "fuzz/artifacts/$TARGET" -type f -print -quit)" ]; then
-              echo "::error::Fuzzing exited with status $status and recorded no input."
+            new=$(find "$artifacts" -type f -printf '%f\n' | sort \
+              | comm -13 "$RUNNER_TEMP/before-fuzzing" - | wc -l)
+            if [ "$new" -eq 0 ]; then
+              echo "::error::Fuzzing exited with status $status and recorded no new input."
               exit "$status"
             fi
-            echo "Fuzzing exited with status $status after recording the inputs above."
+            echo "Fuzzing exited with status $status after recording $new new inputs."
           fi
       - name: Minimize the corpus
         id: minimize
@@ -257,12 +282,15 @@ jobs:
       - name: Summarize and require no findings
         if: always()
         env:
+          FUZZ_OUTCOME: ${{ steps.fuzz.outcome }}
           START_FILES: ${{ steps.seed.outputs.files }}
           FUZZED_FILES: ${{ steps.fuzz.outputs.files }}
           MINIMIZED_FILES: ${{ steps.minimize.outputs.files }}
           ARTIFACT: fuzz-nightly-${{ matrix.target }}-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
-          # The fork-mode status line that libFuzzer prints after each job:
+          # The status line that libFuzzer's fork mode prints after merging
+          # each job. Its counts are of the jobs merged before that one, and
+          # its exec/s is that one job's, so the rate below is computed.
           # #<executions>: cov: <n> ft: <n> corp: <n> exec/s: <n>
           # oom/timeout/crash: <n>/<n>/<n> time: <n>s job: <n> dft_time: <n>
           status_line=
@@ -270,15 +298,18 @@ jobs:
             status_line=$(grep --extended-regexp '^#[0-9]+: cov: ' "$RUNNER_TEMP/fuzz.log" \
               | tail --lines=1 || true)
           fi
-          pattern='^#([0-9]+): cov: ([0-9]+) ft: ([0-9]+) corp: [0-9]+ exec/s: ([0-9]+) '
+          pattern='^#([0-9]+): cov: ([0-9]+) ft: ([0-9]+) corp: [0-9]+ exec/s: [0-9]+ '
           pattern+='oom/timeout/crash: ([0-9]+)/([0-9]+)/([0-9]+) time: ([0-9]+)s'
-          executions=unknown coverage=unknown speed=unknown counts=unknown elapsed=unknown
+          executions=unknown coverage=unknown counts=unknown elapsed=unknown
+          failed_jobs=0
           if [[ $status_line =~ $pattern ]]; then
             executions=${BASH_REMATCH[1]}
             coverage="${BASH_REMATCH[2]} edges, ${BASH_REMATCH[3]} features"
-            speed="${BASH_REMATCH[4]} per second"
-            counts="${BASH_REMATCH[7]} / ${BASH_REMATCH[6]} / ${BASH_REMATCH[5]}"
-            elapsed="${BASH_REMATCH[8]} s"
+            counts="${BASH_REMATCH[6]} / ${BASH_REMATCH[5]} / ${BASH_REMATCH[4]}"
+            failed_jobs=$(( BASH_REMATCH[4] + BASH_REMATCH[5] + BASH_REMATCH[6] ))
+            elapsed=${BASH_REMATCH[7]}
+            executions+=" ($(( executions / (elapsed > 0 ? elapsed : 1) )) per second)"
+            elapsed+=" s"
           fi
           artifacts=fuzz/artifacts/$TARGET
           findings=()
@@ -292,21 +323,24 @@ jobs:
             echo "|---|---|"
             echo "| Fuzzing time | ${FUZZ_SECONDS:-unknown} s requested, $elapsed run," \
               "on $(nproc) cores |"
-            echo "| Executions | $executions ($speed) |"
+            echo "| Executions | $executions |"
             echo "| Coverage | $coverage |"
             echo "| Corpus files at the start | ${START_FILES:-unknown} |"
             echo "| Corpus files after fuzzing | ${FUZZED_FILES:-unknown} |"
             echo "| Corpus files after minimization | ${MINIMIZED_FILES:-not minimized} |"
-            echo "| Crashes / timeouts / out-of-memory inputs counted by libFuzzer | $counts |"
+            echo "| libFuzzer jobs that crashed / timed out / ran out of memory," \
+              "all but the last job | $counts |"
             echo "| Files under fuzz/artifacts/$TARGET | ${#findings[@]} |"
             if [ "${#findings[@]}" -gt 0 ]; then
               echo
-              echo "Download the inputs, then replay one (see TESTING.md):"
+              echo "Download the inputs, then replay one with the limits it was found with" \
+                "(see TESTING.md):"
               echo
               echo '```sh'
               echo "gh run download $GITHUB_RUN_ID --repo $GITHUB_REPOSITORY" \
                 "--name $ARTIFACT --dir $ARTIFACT"
-              echo "cargo +nightly fuzz run $TARGET $ARTIFACT/${findings[0]}"
+              echo "cargo +nightly fuzz run $TARGET $ARTIFACT/${findings[0]} --" \
+                "-timeout=10 -rss_limit_mb=1024"
               echo '```'
               echo
               for finding in "${findings[@]:0:50}"; do
@@ -317,8 +351,23 @@ jobs:
               fi
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+          status=0
           if [ "${#findings[@]}" -gt 0 ]; then
             echo "::error::Fuzzing $TARGET found ${#findings[@]} inputs;" \
               "they are in the $ARTIFACT artifact."
-            exit 1
+            status=1
           fi
+          # A process can die without writing its input: killed by the
+          # kernel's OOM killer, say, or over the RSS limit between inputs.
+          # libFuzzer then counts a crash and the campaign goes on. The last
+          # job's result is the fuzz step's exit status, checked there.
+          if [ "$failed_jobs" -gt 0 ]; then
+            echo "::error::libFuzzer counted $counts (crash / timeout / out-of-memory)" \
+              "failed jobs while fuzzing $TARGET."
+            status=1
+          fi
+          if [ "$FUZZ_OUTCOME" = success ] && [ "$counts" = unknown ]; then
+            echo "::error::The fuzz log of $TARGET has no libFuzzer status line to check."
+            status=1
+          fi
+          exit "$status"
