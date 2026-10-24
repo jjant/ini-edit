@@ -146,6 +146,10 @@ pub struct ParseOptions {
 }
 
 /// Result of parsing an INI source string.
+///
+/// `Send`, `Sync`, `UnwindSafe` and `RefUnwindSafe`: it holds the green tree and the errors.
+/// [`syntax`](Self::syntax) builds a cursor, which is not `Send` or `Sync`, so to read one parse
+/// in several threads, share the `Parse` and call `syntax` in each ([Threads](crate#threads)).
 #[derive(Debug, Clone)]
 pub struct Parse {
     green: rowan::GreenNode,

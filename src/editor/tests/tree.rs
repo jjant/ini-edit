@@ -1,8 +1,9 @@
 //! The editor's tree: identity of its nodes, sharing between the trees before and after an edit,
-//! and moving or sharing an editor between threads.
+//! and moving or sharing an editor between threads. `tests/threads.rs` pins the auto traits that
+//! each public type has, and `src/auto_traits.rs` the ones it lacks.
 
 use super::support::{atomic, in_preamble, in_section, open};
-use crate::editor::{EditError, Editor, EntryEditor, SectionEditor, plan};
+use crate::editor::{EditError, Editor, plan};
 use crate::syntax_kind::SyntaxNode;
 
 /// For each child node of `new`, whether it is a child node of `old` itself, not an equal copy.
@@ -150,16 +151,6 @@ fn a_new_section_shares_the_last_section_unless_that_section_gets_a_new_last_lin
         let new = after.first_child().unwrap();
         assert_eq!(kept(&old, &new), lines, "{source:?}");
     }
-}
-
-#[test]
-fn editors_and_handles_are_send_and_sync() {
-    fn send_and_sync<T: Send + Sync>() {}
-    fn unwind_safe<T: std::panic::UnwindSafe + std::panic::RefUnwindSafe>() {}
-    send_and_sync::<Editor>();
-    send_and_sync::<SectionEditor<'_>>();
-    send_and_sync::<EntryEditor<'_>>();
-    unwind_safe::<Editor>();
 }
 
 #[test]

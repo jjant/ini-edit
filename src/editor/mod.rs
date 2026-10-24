@@ -395,8 +395,12 @@ const _: () = assert!(LEN_MAX < ISIZE_MAX);
 
 /// A format-preserving INI editor. Its tree always equals a parse of its text (C1).
 ///
-/// `Send` and `Sync`: it holds rowan's immutable green tree, whose nodes are shared through atomic
-/// reference counts, and every edit replaces the tree with a new one.
+/// `Send`, `Sync`, `UnwindSafe` and `RefUnwindSafe`: it holds rowan's immutable green tree, whose
+/// nodes are shared through atomic reference counts, and every edit replaces the tree with a new
+/// one. Move an editor to another thread to edit it there, or share `&Editor` between threads
+/// that read it at the same time; its handles are `Send` and `Sync` too. The tree that
+/// [`file`](Self::file) returns is a cursor, which is not `Send` or `Sync`, so each thread calls
+/// `file` itself. [Threads](crate#threads) lists every type.
 ///
 /// # Cost of an edit
 ///
@@ -490,7 +494,9 @@ impl Editor {
 
     /// A snapshot of the current tree, O(1): later edits replace the editor's tree and leave this
     /// one as it is. Its lines are the editor's body lines: [`File::preamble_lines`] and
-    /// [`Section::body_lines`](crate::ast::Section::body_lines) list them in position order.
+    /// [`Section::body_lines`](crate::ast::Section::body_lines) list them in position order. The
+    /// snapshot is a cursor, which stays in this thread: it is not `Send` or `Sync`
+    /// ([Threads](crate#threads)).
     #[must_use]
     #[expect(
         clippy::missing_panics_doc,

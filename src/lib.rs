@@ -36,6 +36,63 @@
 //! assert_eq!(editor.finish(), "[server]\nport = 9090\n");
 //! # Ok::<(), ini_edit::editor::EditError>(())
 //! ```
+//!
+//! ## Threads
+//!
+//! [`Parse`] and [`Editor`](editor::Editor) own rowan's green tree, which is immutable and shares
+//! its nodes through atomic reference counts. Both are `Send` and `Sync`: move one to another
+//! thread, or share `&Parse` or `&Editor` between threads that read it at the same time. So are
+//! the editor's handles, [`SectionEditor`](editor::SectionEditor) and
+//! [`EntryEditor`](editor::EntryEditor), and the types that hold no tree: the options, the
+//! errors, [`SyntaxKind`], [`IniLang`] and [`lexer::Token`]. All of them are also `UnwindSafe` and
+//! `RefUnwindSafe`, except that the handles, like every `&mut` borrow, are not `UnwindSafe`.
+//!
+//! A syntax tree, such as the ones that [`Parse::syntax`] and
+//! [`Editor::file`](editor::Editor::file) return, is a rowan cursor, which counts its references
+//! without atomics. [`SyntaxNode`], [`SyntaxToken`], [`SyntaxElement`] and the [`ast`] types are
+//! therefore not `Send`, `Sync`, `UnwindSafe` or `RefUnwindSafe`: a cursor stays in the thread
+//! that made it. To read one tree in several threads, share the parse or the editor and build a
+//! cursor in each thread. A green tree crosses threads too: [`Parse::green`] returns one,
+//! `node.green().to_owned()` returns the one under any cursor in O(1), sharing its nodes, and
+//! `SyntaxNode::new_root` builds a cursor on it.
+//!
+//! ```
+//! use ini_edit::ast::{AstNode, File};
+//!
+//! // Move a parse to another thread, and build a cursor there.
+//! let parse = ini_edit::parse("[a]\n");
+//! let count = std::thread::spawn(move || {
+//!     let file = File::cast(parse.syntax()).expect("the root is a file");
+//!     file.sections().count()
+//! });
+//! assert_eq!(count.join().expect("no panic"), 1);
+//!
+//! // Or share one between threads, each with a cursor of its own.
+//! let parse = ini_edit::parse("[a]\nk = 1\n[b]\n");
+//! std::thread::scope(|scope| {
+//!     for _ in 0..2 {
+//!         scope.spawn(|| {
+//!             let file = File::cast(parse.syntax()).expect("the root is a file");
+//!             assert_eq!(file.sections().count(), 2);
+//!         });
+//!     }
+//! });
+//! ```
+//!
+//! A cursor that moves to another thread does not compile. This is the first example with the
+//! cursor built before the move:
+//!
+//! ```compile_fail,E0277
+//! use ini_edit::ast::{AstNode, File};
+//!
+//! let parse = ini_edit::parse("[a]\n");
+//! let file = File::cast(parse.syntax()).expect("the root is a file");
+//! let count = std::thread::spawn(move || file.sections().count());
+//! assert_eq!(count.join().expect("no panic"), 1);
+//! ```
+//!
+//! These traits are part of the API: tests pin every one that each public type has or lacks. The
+//! crate itself starts no thread and holds no lock.
 
 #![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 // Users copy the examples, so they compile without a warning.
@@ -69,3 +126,6 @@ const _: () = assert!(MAX_INPUT_LEN == u32::MAX as usize);
 #[cfg(doctest)]
 #[doc = include_str!("../README.md")]
 pub struct ReadmeDoctests;
+
+#[cfg(doctest)]
+pub mod auto_traits;

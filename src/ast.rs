@@ -10,6 +10,10 @@
 //! makes: reaching one of them before the last walks a cursor over every child before it. The line
 //! iterators, [`File::preamble_lines`] and [`Section::body_lines`], return almost every child node
 //! and use rowan's iterator.
+//!
+//! Every wrapper holds a [`SyntaxNode`], a rowan cursor that counts its references without
+//! atomics, so none of them is `Send` or `Sync`: build them in the thread that reads them, from a
+//! shared [`Parse`](crate::Parse) or [`Editor`](crate::editor::Editor) ([Threads](crate#threads)).
 
 use std::iter::Enumerate;
 
