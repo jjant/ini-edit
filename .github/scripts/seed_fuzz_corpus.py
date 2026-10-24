@@ -44,7 +44,8 @@ def seed_corpus(root):
             add("round_trip", fixture.read_bytes())
     for source in ("", "\ufeff", "[s]\r\nk=one \\\r\n tail ; note\r\n", "bad key\n", "[]\r[missing"):
         add("round_trip", source.encode())
-    for flags in range(8):
+    # tests/fuzz_regressions.rs: bit 3 of the first byte is mixed line endings.
+    for flags in range(16):
         for spacing in range(3):
             for operations in (4, 32, 128):
                 data = bytearray((flags, spacing, flags % 3))

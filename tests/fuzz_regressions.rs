@@ -216,10 +216,12 @@ fn every_read_agrees_with_the_file() {
 }
 
 /// Longer edit sequences, hostile keys and values among them, checked against a model that
-/// tracks entry identity.
+/// tracks entry identity and the body lines of every container. Bit 3 of the first byte starts
+/// half of the sequences with mixed line endings, where removals merge an LF blank line into a CR
+/// line break (rule D).
 #[test]
 fn duplicate_keys_and_refused_input_follow_the_identity_model() {
-    for flags in 0u8..8 {
+    for flags in 0u8..16 {
         for spacing in 0u8..3 {
             let mut state = u64::from(flags) * 7 + u64::from(spacing) + 1;
             let mut data = vec![flags, spacing, flags % 3];
