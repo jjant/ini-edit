@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-24
+
+### Added
+
+- Move to rowan 0.17 and rebuild edits immutably ([#99](https://github.com/jjant/ini-edit/pull/99))
+- Rebuild the editor so every edit agrees with a reparse ([#90](https://github.com/jjant/ini-edit/pull/90))
+
+### Changed
+
+- Assert lexer and parser invariants ([#89](https://github.com/jjant/ini-edit/pull/89))
+- Assert editor invariants ([#83](https://github.com/jjant/ini-edit/pull/83))
+- Tidy the lexer and parser before asserting their invariants ([#81](https://github.com/jjant/ini-edit/pull/81))
+- Bound editor traversals and simplify insertion helpers ([#70](https://github.com/jjant/ini-edit/pull/70))
+
+### Documentation
+
+- Add security and contributing guides and record deviations ([#86](https://github.com/jjant/ini-edit/pull/86))
+
+### Fixed
+
+- Align diagnostic carets and drop internal token names from messages ([#101](https://github.com/jjant/ini-edit/pull/101))
+- Reject documents larger than u32::MAX bytes ([#93](https://github.com/jjant/ini-edit/pull/93))
+- Ship a crate whose own tests pass and test the package in CI ([#84](https://github.com/jjant/ini-edit/pull/84))
+
+### Performance
+
+- Read AST strings from green nodes ([#100](https://github.com/jjant/ini-edit/pull/100))
+
 ## [0.4.0] - 2026-10-08
 
 ### Changed
